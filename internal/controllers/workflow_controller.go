@@ -115,17 +115,25 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 			return ctrl.Result{}, r.Status().Update(ctx, &workflow)
 		}
 		return ctrl.Result{}, r.createAttempt(ctx, &workflow, next, 1)
-	// On PhaseFailed or PhaseInterrupted, we need to evaluate
+	// On PhaseFailed or PhaseInterrupted, we need to evaluate whether retry is possible
 	case v1alpha1.PhaseFailed, v1alpha1.PhaseInterrupted:
+		// Locate current step
 		step, found := findStep(workflow.Spec.Steps, attempt.Spec.StepName)
 		if !found {
 			return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepMissing", attempt.Spec.StepName)
 		}
+
+		// Catch-all for max attempt count to be minimum 1
 		maxAttempts := step.MaxAttempts
 		if maxAttempts == 0 {
 			maxAttempts = 1
 		}
+
+		// If attempt is retryable append a recovery event and create a new attempt
 		if attempt.Status.Retryable && attempt.Spec.Attempt < maxAttempts {
+			if err := r.appendRecoveryEvents(ctx, &workflow, &attempt, step, attempt.Spec.Attempt+1); err != nil {
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{}, r.createAttempt(ctx, &workflow, step, attempt.Spec.Attempt+1)
 		}
 		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepFailed", attempt.Status.FailureReason)
@@ -133,6 +141,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	return ctrl.Result{}, nil
 }
 
+// Verifies valid PVC is referenced by a workflow
 func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) error {
 	name := workflow.Name + "-workspace"
 	var existing corev1.PersistentVolumeClaim
@@ -141,6 +150,7 @@ func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1al
 		return err
 	}
 	if apierrors.IsNotFound(err) {
+		// Specify volume size
 		size := workflow.Spec.RequestedVolumeSize
 		if size == "" {
 			size = defaultVolumeSize
@@ -149,6 +159,7 @@ func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1al
 		if err != nil {
 			return r.failWorkflow(ctx, workflow, "InvalidWorkspaceSize", err.Error())
 		}
+
 		claim := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: workflow.Namespace, Labels: map[string]string{LabelWorkflow: workflow.Spec.WorkflowID}},
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -156,9 +167,13 @@ func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1al
 				Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: quantity}},
 			},
 		}
+
+		// Choose default storage class
 		if r.StorageClass != "" {
 			claim.Spec.StorageClassName = &r.StorageClass
 		}
+
+		// Set collapsing reference & create
 		if err := controllerutil.SetControllerReference(workflow, claim, r.Scheme); err != nil {
 			return err
 		}
@@ -166,11 +181,16 @@ func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1al
 			return err
 		}
 	}
+
+	// Updates PVC reference on workflow
 	workflow.Status.PvcName = name
-	return r.Status().Update(ctx, workflow)
+	if err := r.Status().Update(ctx, workflow); err != nil {
+		return err
+	}
+	return r.appendWorkflowEvent(ctx, workflow, "WorkspaceCreated", "", 0, "create", name, "created", "", map[string]string{"pvc": name}, map[string]string{"requestedVolumeSize": workflow.Spec.RequestedVolumeSize})
 }
 
-// CreateAttempt generates a new StepAttempt CRD to
+// CreateAttempt generates a new StepAttempt CRD
 func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, step v1alpha1.StepConfig, number int32) error {
 	name := attemptName(step.Name, number)
 	attempt := &v1alpha1.StepAttempt{
@@ -214,23 +234,7 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 	if err := r.Status().Update(ctx, workflow); err != nil {
 		return err
 	}
-	if r.Audit != nil {
-		now := time.Now().UTC()
-		if r.Now != nil {
-			now = r.Now().UTC()
-		}
-		event := audit.Event{
-			ID:   audit.DeterministicID(string(workflow.UID), step.Name, fmt.Sprint(number), "created"),
-			Type: "StepAttemptCreated", SchemaVersion: "v1", OccurredAt: now,
-			Actor:   audit.Actor{Kind: "Controller", ID: "workflow-controller"},
-			Subject: audit.Subject{Project: workflow.Spec.ProjectName, Namespace: workflow.Namespace, Workflow: workflow.Name, Step: step.Name, Attempt: number},
-			Action:  "create", Target: name, Outcome: "created", CorrelationID: workflow.Name,
-		}
-		if err := r.Audit.Append(ctx, event); err != nil {
-			return err
-		}
-	}
-	return nil
+	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptCreated", step.Name, number, "create", name, "created", "", map[string]string{"attempt": name}, nil)
 }
 
 // Update Workflow status to failed
@@ -240,7 +244,49 @@ func (r *WorkflowReconciler) failWorkflow(ctx context.Context, workflow *v1alpha
 		Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: message,
 		ObservedGeneration: workflow.Generation, LastTransitionTime: metav1.Now(),
 	}}
-	return r.Status().Update(ctx, workflow)
+	if err := r.Status().Update(ctx, workflow); err != nil {
+		return err
+	}
+	return r.appendWorkflowEvent(ctx, workflow, "WorkflowFailed", workflow.Status.ActiveStepName, 0, "complete", workflow.Name, "failed", reason, nil, map[string]string{"message": message})
+}
+
+// Handles converted recovery/retry into workflow events
+func (r *WorkflowReconciler) appendRecoveryEvents(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, failedAttempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig, nextAttempt int32) error {
+	references := map[string]string{
+		"failedAttempt": failedAttempt.Name,
+		"retryAttempt":  attemptName(step.Name, nextAttempt),
+	}
+	data := map[string]any{
+		"retryFrom":        step.Name,
+		"previousAttempt":  failedAttempt.Spec.Attempt,
+		"nextAttempt":      nextAttempt,
+		"failureReason":    failedAttempt.Status.FailureReason,
+		"interruptedPhase": failedAttempt.Status.Phase,
+	}
+	if err := r.appendWorkflowEvent(ctx, workflow, "RecoveryDecisionSelected", step.Name, failedAttempt.Spec.Attempt, "select", step.Name, "selected", failedAttempt.Status.FailureReason, references, data); err != nil {
+		return err
+	}
+	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptRetried", step.Name, nextAttempt, "retry", attemptName(step.Name, nextAttempt), "created", failedAttempt.Status.FailureReason, references, data)
+}
+
+func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, eventType, step string, attempt int32, action, target, outcome, reason string, references map[string]string, data any) error {
+	return appendControllerEvent(ctx, r.Audit, "workflow-controller", r.Now, audit.EventOptions{
+		Type: eventType,
+		Subject: audit.Subject{
+			Project:   workflow.Spec.ProjectName,
+			Namespace: workflow.Namespace,
+			Workflow:  workflow.Name,
+			Step:      step,
+			Attempt:   attempt,
+		},
+		Action:        action,
+		Target:        target,
+		Outcome:       outcome,
+		Reason:        reason,
+		CorrelationID: workflow.Name,
+		References:    references,
+		Data:          data,
+	})
 }
 
 func attemptName(step string, number int32) string {
