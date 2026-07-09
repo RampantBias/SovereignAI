@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
@@ -38,16 +39,28 @@ func Collect(stagingRoot, artifactRoot, workflow, producer, sourceRevision strin
 		if err := copyIfAbsent(source, destination); err != nil {
 			return nil, err
 		}
+		contract, err := contractReference(output.Contract)
+		if err != nil {
+			return nil, err
+		}
 		collected = append(collected, Collected{Spec: v1alpha1.ArtifactSpec{
 			WorkflowRef:    workflow,
 			ProducerRef:    producer,
-			Contract:       v1alpha1.ContractReference{Name: output.Contract, Version: "v1"},
+			Contract:       contract,
 			Digest:         "sha256:" + digest,
 			Path:           destination,
 			SourceRevision: sourceRevision,
 		}})
 	}
 	return collected, nil
+}
+
+func contractReference(contract string) (v1alpha1.ContractReference, error) {
+	name, version, ok := strings.Cut(contract, "/")
+	if !ok || name == "" || version == "" {
+		return v1alpha1.ContractReference{}, fmt.Errorf("artifact contract %q must use name/version form", contract)
+	}
+	return v1alpha1.ContractReference{Name: name, Version: version}, nil
 }
 
 func containedPath(root, candidate string) (string, error) {

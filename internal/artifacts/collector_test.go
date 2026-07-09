@@ -19,7 +19,7 @@ func TestCollectCreatesContentAddressedArtifactIdempotently(t *testing.T) {
 	if err := os.WriteFile(file, []byte("plan"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	output := []agentcontract.ArtifactOutput{{Contract: "implementation-plan", Path: file}}
+	output := []agentcontract.ArtifactOutput{{Contract: "implementation-plan/v1", Path: file}}
 	first, err := Collect(staging, store, "wf", "architect-001", "abc", output)
 	if err != nil {
 		t.Fatal(err)
@@ -33,5 +33,8 @@ func TestCollectCreatesContentAddressedArtifactIdempotently(t *testing.T) {
 	}
 	if _, err := os.Stat(first[0].Spec.Path); err != nil {
 		t.Fatal(err)
+	}
+	if first[0].Spec.Contract.Name != "implementation-plan" || first[0].Spec.Contract.Version != "v1" {
+		t.Fatalf("unexpected contract reference: %#v", first[0].Spec.Contract)
 	}
 }

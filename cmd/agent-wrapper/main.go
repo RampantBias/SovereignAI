@@ -40,7 +40,7 @@ func main() {
 	if err := run(ctx, command, *inputPath, *resultPath, *grace); err != nil {
 		fail(*resultPath, err)
 	}
-	result, err := agentcontract.ReadResult(*resultPath, input.StagingPath)
+	result, err := agentcontract.ReadResultForInput(*resultPath, input)
 	if err != nil {
 		fail(*resultPath, fmt.Errorf("agent returned an invalid result: %w", err))
 	}

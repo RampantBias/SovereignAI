@@ -300,6 +300,15 @@ func (r *StepAttemptReconciler) ensureAgentWorkload(ctx context.Context, attempt
 	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Spec.WorkflowRef}, &workflow); err != nil {
 		return err
 	}
+
+	// Map output contracts to output obligations
+	var outputObligations []agentcontract.OutputObligation
+	for _, output := range attempt.Spec.OutputContracts {
+		outputObligations = append(outputObligations,
+			agentcontract.OutputObligation{Name: output.Name, Version: output.Version, Required: true})
+	}
+
+	// Generate input contract and write it to a configmap
 	input := agentcontract.Input{
 		SchemaVersion:     agentcontract.Version,
 		WorkflowID:        workflow.Spec.WorkflowID,
@@ -308,6 +317,7 @@ func (r *StepAttemptReconciler) ensureAgentWorkload(ctx context.Context, attempt
 		Role:              attempt.Spec.StepName,
 		Goal:              attempt.Spec.Goal,
 		Capabilities:      append([]string(nil), attempt.Spec.Capabilities...),
+		Outputs:           outputObligations,
 		InferenceEndpoint: endpoint,
 		MCPServer:         "https://sovereign-mcp.sovereign-orchestrator-system.svc",
 		WorkspacePath:     "/workspace",

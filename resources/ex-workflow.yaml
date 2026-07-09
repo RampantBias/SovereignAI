@@ -14,8 +14,8 @@ spec:
       kind: Agent
       order: 1
       goal: Produce an implementation plan for the supplied change request.
-      image: registry.internal/sovereign/reference-agent:dev
-      executable: ["/reference-agent", "--role", "architect"]
+      image: registry.internal/sovereign/software-dev-agent:dev
+      executable: ["/domain-agent", "--role", "architect"]
       modelName: code-small
       requestedVRAMAllocation: 2048
       maxAttempts: 2

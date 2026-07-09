@@ -2,8 +2,10 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	batchv1 "k8s.io/api/batch/v1"
@@ -26,7 +28,8 @@ func TestAgentAttemptCreatesRestrictedPod(t *testing.T) {
 	attempt := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", Labels: map[string]string{LabelWorkflow: "wf"}},
 		Spec: v1alpha1.StepAttemptSpec{WorkflowRef: "wf", StepName: "architect", Attempt: 1, Kind: v1alpha1.ExecutionKindAgent,
-			Goal: "plan", Image: "agent@sha256:test", Executable: []string{"/reference-agent", "--role", "architect"}},
+			Goal: "plan", Image: "agent@sha256:test", Executable: []string{"/domain-agent", "--role", "architect"},
+			OutputContracts: []v1alpha1.ContractReference{{Name: "implementation-plan", Version: "v1"}}},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.StepAttempt{}).
@@ -61,6 +64,19 @@ func TestAgentAttemptCreatesRestrictedPod(t *testing.T) {
 	}
 	if input.Data["input.json"] == "" {
 		t.Fatal("input contract was not generated")
+	}
+	var contract agentcontract.Input
+	if err := json.Unmarshal([]byte(input.Data["input.json"]), &contract); err != nil {
+		t.Fatal(err)
+	}
+	if len(contract.Outputs) != 1 {
+		t.Fatalf("output obligations = %#v, want one obligation", contract.Outputs)
+	}
+	if contract.Outputs[0].Name != "implementation-plan" || contract.Outputs[0].Version != "v1" {
+		t.Fatalf("unexpected output obligation: %#v", contract.Outputs[0])
+	}
+	if !contract.Outputs[0].Required {
+		t.Fatalf("workflow output obligation should be required: %#v", contract.Outputs[0])
 	}
 }
 

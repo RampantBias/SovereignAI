@@ -17,19 +17,27 @@ type ArtifactInput struct {
 	Path     string `json:"path"`
 }
 
+type OutputObligation struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Required  bool   `json:"required,omitempty"`
+	MediaType string `json:"mediaType,omitempty"`
+}
+
 type Input struct {
-	SchemaVersion     string          `json:"schemaVersion"`
-	WorkflowID        string          `json:"workflowId"`
-	StepName          string          `json:"stepName"`
-	Attempt           int32           `json:"attempt"`
-	Role              string          `json:"role"`
-	Goal              string          `json:"goal"`
-	Inputs            []ArtifactInput `json:"inputs,omitempty"`
-	Capabilities      []string        `json:"capabilities,omitempty"`
-	InferenceEndpoint string          `json:"inferenceEndpoint,omitempty"`
-	MCPServer         string          `json:"mcpServer,omitempty"`
-	WorkspacePath     string          `json:"workspacePath"`
-	StagingPath       string          `json:"stagingPath"`
+	SchemaVersion     string             `json:"schemaVersion"`
+	WorkflowID        string             `json:"workflowId"`
+	StepName          string             `json:"stepName"`
+	Attempt           int32              `json:"attempt"`
+	Role              string             `json:"role"`
+	Goal              string             `json:"goal"`
+	Inputs            []ArtifactInput    `json:"inputs,omitempty"`
+	Outputs           []OutputObligation `json:"outputs,omitempty"`
+	Capabilities      []string           `json:"capabilities,omitempty"`
+	InferenceEndpoint string             `json:"inferenceEndpoint,omitempty"`
+	MCPServer         string             `json:"mcpServer,omitempty"`
+	WorkspacePath     string             `json:"workspacePath"`
+	StagingPath       string             `json:"stagingPath"`
 }
 
 type ArtifactOutput struct {
@@ -75,6 +83,20 @@ func ReadResult(path, stagingRoot string) (Result, error) {
 	return result, nil
 }
 
+func ReadResultForInput(path string, input Input) (Result, error) {
+	result, err := ReadResult(path, input.StagingPath)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := result.ValidateAgainst(input); err != nil {
+		return Result{}, err
+	}
+	if err := result.ValidateArtifactFiles(input.StagingPath); err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+
 func WriteResult(path string, result Result) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -103,6 +125,17 @@ func (i Input) Validate() error {
 	if !filepath.IsAbs(i.WorkspacePath) || !filepath.IsAbs(i.StagingPath) {
 		return fmt.Errorf("workspacePath and stagingPath must be absolute")
 	}
+	seen := map[string]struct{}{}
+	for _, output := range i.Outputs {
+		if output.Name == "" || output.Version == "" {
+			return fmt.Errorf("output obligation name and version are required")
+		}
+		contract := output.contract()
+		if _, ok := seen[contract]; ok {
+			return fmt.Errorf("duplicate output obligation %q", contract)
+		}
+		seen[contract] = struct{}{}
+	}
 	return nil
 }
 
@@ -113,22 +146,83 @@ func (r Result) Validate(stagingRoot string) error {
 	if r.Outcome != "Succeeded" && r.Outcome != "Failed" && r.Outcome != "Intervention" {
 		return fmt.Errorf("invalid result outcome %q", r.Outcome)
 	}
-	root, err := filepath.Abs(stagingRoot)
-	if err != nil {
-		return fmt.Errorf("resolve staging root: %w", err)
-	}
 	for _, artifact := range r.Artifacts {
 		if artifact.Contract == "" || artifact.Path == "" {
 			return fmt.Errorf("artifact contract and path are required")
 		}
-		path, err := filepath.Abs(artifact.Path)
-		if err != nil {
-			return fmt.Errorf("resolve artifact path: %w", err)
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("artifact path %q escapes staging root", artifact.Path)
+		if _, err := artifactPath(stagingRoot, artifact.Path); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (r Result) ValidateAgainst(input Input) error {
+	if r.Outcome != "Succeeded" {
+		return nil
+	}
+	declared := make(map[string]OutputObligation, len(input.Outputs))
+	for _, output := range input.Outputs {
+		declared[output.contract()] = output
+	}
+	seen := make(map[string]struct{}, len(r.Artifacts))
+	for _, artifact := range r.Artifacts {
+		obligation, ok := declared[artifact.Contract]
+		if len(declared) > 0 && !ok {
+			return fmt.Errorf("artifact contract %q was not declared by input obligations", artifact.Contract)
+		}
+		if ok && obligation.MediaType != "" && artifact.MediaType != obligation.MediaType {
+			return fmt.Errorf("artifact contract %q mediaType %q does not satisfy required mediaType %q", artifact.Contract, artifact.MediaType, obligation.MediaType)
+		}
+		seen[artifact.Contract] = struct{}{}
+	}
+	for contract, obligation := range declared {
+		if !obligation.Required {
+			continue
+		}
+		if _, ok := seen[contract]; !ok {
+			return fmt.Errorf("required output contract %q was not produced", contract)
+		}
+	}
+	return nil
+}
+
+func (r Result) ValidateArtifactFiles(stagingRoot string) error {
+	for _, artifact := range r.Artifacts {
+		path, err := artifactPath(stagingRoot, artifact.Path)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("inspect artifact %q: %w", artifact.Path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("artifact %q must be a regular file", artifact.Path)
+		}
+	}
+	return nil
+}
+
+func artifactPath(stagingRoot, candidate string) (string, error) {
+	root, err := filepath.Abs(stagingRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve staging root: %w", err)
+	}
+	path, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", fmt.Errorf("resolve artifact path: %w", err)
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("artifact path %q escapes staging root", candidate)
+	}
+	return path, nil
+}
+
+func (o OutputObligation) contract() string {
+	if o.Version == "" {
+		return o.Name
+	}
+	return o.Name + "/" + o.Version
 }

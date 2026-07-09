@@ -11,8 +11,36 @@
     "attempt": { "type": "integer", "minimum": 1 },
     "role": { "type": "string", "minLength": 1 },
     "goal": { "type": "string", "minLength": 1 },
-    "inputs": { "type": "array" },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "contract", "digest", "path"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "contract": { "type": "string", "minLength": 1 },
+          "digest": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "mediaType": { "type": "string", "minLength": 1 }
+        }
+      },
+      "uniqueItems": true
+    },
     "inferenceEndpoint": { "type": "string" },
     "mcpServer": { "type": "string" },
     "workspacePath": { "type": "string", "minLength": 1 },
