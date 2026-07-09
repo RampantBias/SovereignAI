@@ -76,6 +76,9 @@ func NewMemoryRecorder() *MemoryRecorder {
 func (m *MemoryRecorder) Append(_ context.Context, event Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.events == nil {
+		m.events = make(map[string]Event)
+	}
 	if _, exists := m.events[event.ID]; exists {
 		return nil
 	}
