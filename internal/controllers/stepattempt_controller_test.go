@@ -8,6 +8,7 @@ import (
 	"github.com/SovereignAI/internal/audit"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -121,6 +122,58 @@ func TestAgentAttemptMarksMissingPodInterrupted(t *testing.T) {
 	}
 	if !updated.Status.Retryable || updated.Status.FailureReason != "AgentPodLost" {
 		t.Fatalf("unexpected retry state: retryable=%v reason=%q", updated.Status.Retryable, updated.Status.FailureReason)
+	}
+	if !recorder.Has("StepAttemptInterrupted") {
+		t.Fatalf("expected StepAttemptInterrupted audit event, got %#v", recorder.AllEvents())
+	}
+}
+
+func TestAgentAttemptDeletesPodWhenInferenceLeaseInterrupted(t *testing.T) {
+	scheme := attemptScheme(t)
+	attempt := &v1alpha1.StepAttempt{
+		ObjectMeta: metav1.ObjectMeta{Name: "developer-001", Namespace: "wf", Labels: map[string]string{LabelWorkflow: "wf"}},
+		Spec: v1alpha1.StepAttemptSpec{
+			WorkflowRef:       "wf",
+			StepName:          "developer",
+			Attempt:           1,
+			Kind:              v1alpha1.ExecutionKindAgent,
+			Image:             "agent@sha256:test",
+			Inference:         &v1alpha1.InferenceRequestSpec{},
+			InferenceLeaseRef: "inference-001",
+		},
+		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhaseRunning, PodRef: "developer-001"},
+	}
+	lease := &v1alpha1.InferenceLease{
+		ObjectMeta: metav1.ObjectMeta{Name: "inference-001", Namespace: "wf"},
+		Status:     v1alpha1.InferenceLeaseStatus{Phase: v1alpha1.PhaseInterrupted, Reason: "EvictedByHigherPriorityLease"},
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "developer-001", Namespace: "wf"}}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.StepAttempt{}, &v1alpha1.InferenceLease{}).
+		WithObjects(attempt, lease, pod).Build()
+
+	recorder := audit.NewMemoryRecorder()
+	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme, Audit: recorder}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "wf", Name: attempt.Name}}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	var updated v1alpha1.StepAttempt
+	if err := client.Get(context.Background(), request.NamespacedName, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Phase != v1alpha1.PhaseInterrupted {
+		t.Fatalf("phase = %s, want %s", updated.Status.Phase, v1alpha1.PhaseInterrupted)
+	}
+	if !updated.Status.Retryable || updated.Status.FailureReason != "EvictedByHigherPriorityLease" {
+		t.Fatalf("unexpected retry state: retryable=%v reason=%q", updated.Status.Retryable, updated.Status.FailureReason)
+	}
+	var deleted corev1.Pod
+	err := client.Get(context.Background(), types.NamespacedName{Namespace: "wf", Name: "developer-001"}, &deleted)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("agent pod should be deleted after lease interruption, got err=%v pod=%#v", err, deleted)
 	}
 	if !recorder.Has("StepAttemptInterrupted") {
 		t.Fatalf("expected StepAttemptInterrupted audit event, got %#v", recorder.AllEvents())

@@ -52,7 +52,7 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	//
+	// Transition to pending
 	if attempt.Status.Phase == "" {
 		return ctrl.Result{}, r.setPhase(ctx, &attempt, v1alpha1.PhasePending, "Initialized", "attempt initialized")
 	}
@@ -60,6 +60,7 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
+	// Reconcile each step type separately
 	switch attempt.Spec.Kind {
 	case v1alpha1.ExecutionKindAgent:
 		return r.reconcileAgent(ctx, &attempt)
@@ -76,19 +77,32 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 
 func (r *StepAttemptReconciler) reconcileAgent(ctx context.Context, attempt *v1alpha1.StepAttempt) (ctrl.Result, error) {
 	endpoint := ""
+
+	// Verify lease
 	if attempt.Spec.Inference != nil {
 		lease, err := r.ensureLease(ctx, attempt)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if lease.Status.Phase == v1alpha1.PhaseFailed {
+
+		// Evaluate lease phase
+		switch lease.Status.Phase {
+		case v1alpha1.PhaseInterrupted:
+			// Must delete agent pod to avoid concurrent attempts running after inference interrupt
+			if err := r.deleteAgentPod(ctx, attempt); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, r.interrupt(ctx, attempt, lease.Status.Reason, true)
+		case v1alpha1.PhaseFailed:
 			return ctrl.Result{}, r.fail(ctx, attempt, "InferenceAdmissionFailed", true)
-		}
-		if lease.Status.Phase != v1alpha1.PhaseRunning {
+		case v1alpha1.PhaseRunning:
+			endpoint = lease.Status.EndpointURL
+		default:
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
-		endpoint = lease.Status.EndpointURL
 	}
+
+	// Create or observe agent pod
 	if attempt.Status.PodRef == "" {
 		if err := r.ensureAgentWorkload(ctx, attempt, endpoint); err != nil {
 			return ctrl.Result{}, err
@@ -96,6 +110,8 @@ func (r *StepAttemptReconciler) reconcileAgent(ctx context.Context, attempt *v1a
 		attempt.Status.PodRef = attempt.Name
 		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhasePreparing, "PodCreated", "agent pod created")
 	}
+
+	// Get agent pod
 	var pod corev1.Pod
 	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Status.PodRef}, &pod); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -103,6 +119,8 @@ func (r *StepAttemptReconciler) reconcileAgent(ctx context.Context, attempt *v1a
 		}
 		return ctrl.Result{}, err
 	}
+
+	// Evaluate agent phase
 	switch pod.Status.Phase {
 	case corev1.PodSucceeded:
 		if len(attempt.Spec.OutputContracts) > 0 {
@@ -118,6 +136,24 @@ func (r *StepAttemptReconciler) reconcileAgent(ctx context.Context, attempt *v1a
 	}
 }
 
+func (r *StepAttemptReconciler) deleteAgentPod(ctx context.Context, attempt *v1alpha1.StepAttempt) error {
+	if attempt.Status.PodRef == "" {
+		return nil
+	}
+
+	var pod corev1.Pod
+	key := types.NamespacedName{
+		Namespace: attempt.Namespace,
+		Name:      attempt.Status.PodRef,
+	}
+	if err := r.Get(ctx, key, &pod); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	return client.IgnoreNotFound(r.Delete(ctx, &pod))
+}
+
+// Reconciles artifacts created upon agent success
 func (r *StepAttemptReconciler) reconcileCollection(ctx context.Context, attempt *v1alpha1.StepAttempt) (ctrl.Result, error) {
 	if attempt.Status.JobRef == "" {
 		var workflow v1alpha1.SovereignWorkflow
