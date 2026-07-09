@@ -1,0 +1,17 @@
+Agent Checkpoint Strategy
+
+Status: Accepted
+
+Context:
+- Agents may be killed or crash due to VRAM allocation challenges before finishing a Step.
+
+Decision:
+- When an agent is nearing its maximum VRAM allocation, a two tiered strategy will be implemented.
+  - First, attempt to purge old cache history to free up memory.
+  - If that fails to free up memory, force the agent to generate a checkpoint.json file
+    to secure continuous processing by a new agent.
+
+Consequences:
+- Prevents VRAM issues like swaps
+
+Notes: Miscellaneous notes that may add clarity/background deemed not essential

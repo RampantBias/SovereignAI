@@ -1,0 +1,30 @@
+Method for Creating new Project Manifests
+
+Status: Accepted
+
+Context:
+- A user creates a new Project, which must trigger the creation
+  of a Project and ApplicationSet manifest so ArgoCD recognizes
+  the project, workflows can be assigned, and test environments
+  can be utilized. I must decide whether the Orchestrator uses
+  the Kubernetes API to create the manifests or the established
+  cluster repository (which would be consistent with bootstrapper).
+
+Decision:
+- The Orchestrator will use the Kubernetes API to provision the 
+  Project manifests, explicitly rejecting the App-of-Apps GitOps pattern for now.
+
+Other options:
+- Utilizing the ArgoCD GitOps route.
+
+Consequences:
+- Much faster/easier implementation 
+- Highly deterministic and less error prone.
+  (relies on etcd optimistic concurrency)
+
+- Not 100% auditable
+- Not safe in the case of cluster meltdown/etcd failure
+  (Configuration lives purely within k8s)
+
+Justification/Notes:
+- While GitOps is the best candidate, there's a lot of things that can go wrong and would need to be handled by the Orchestrator (concurrent branch changes, bad yaml w/o immediate feedback, handling of secrets, need for additional polling)

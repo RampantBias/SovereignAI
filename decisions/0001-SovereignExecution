@@ -1,0 +1,19 @@
+Local-First Sovereign Execution
+
+Status: Accepted
+
+Context: 
+- AI workflows today are mostly focused on using the best models over the cloud or through dedicated APIs. 
+  This means your data must leave on-prem, secure environments to one or more third parties. 
+  This is an impossible ask for data in sectors like healthcare, defense, or finance.
+
+Decision: 
+- Project must focus on workflow and agent lifecycle management from cradle to grave on local hardware.
+
+Consequences: 
+- Local AI requires orchestration mechanisms for memory management, scheduling, and stability across CPU, Memory, and GPU. 
+- Scalability will be a significant challenge as workflow count increases.
+- Local models have more limited intelligence.
+- Hardware may be non-heterogeneous (multiple different GPUs/nodes), and must be accounted for.
+
+Notes: 

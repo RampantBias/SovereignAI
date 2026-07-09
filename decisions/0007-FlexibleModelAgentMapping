@@ -1,0 +1,20 @@
+Flexible Model-to-Agent Mapping
+
+Status: Accepted
+
+Context:
+- Local execution requires resource optimization.
+- Concurrent Workflows may share the same model, or use different models.
+  This leads to resource contention and concurrency bottlenecks at scale.
+
+Decision:
+- Orchestrator must support both one to many and many to many model deployments.
+  - One to Many: One model pod service multiple Agent pods in Workflows.
+  - Many to Many: Models deployed per need for dedicated or high security tasks.
+
+Consequences:
+- Complicates VRAM management; Orchestrator must implement a ledger system to 
+  track loaded models along with VRAM usage for KV cache needs by each agent.
+- Requires warm models to lower latency.
+
+Notes:

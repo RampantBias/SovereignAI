@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: project-*-testground-generator
+  namespace: argocd
+spec:
+  # 1. Look for any branch in the repository matching our workflow naming convention
+  generators:
+    - git:
+        repoURL: 'http://your-project-repo.git'
+        revision: '*' # Wildcard tells ArgoCD to scan ALL branches
+        branches: true
+  template:
+    metadata:
+      # 2. Dynamically name the application based on the branch name (e.g., project-alpha-wf-123)
+      name: 'project-alpha-{{branch}}'
+    spec:
+      project: project-alpha
+      source:
+        repoURL: 'http://your-project-repo.git'
+        # 3. Pull the code from that specific workflow's branch
+        targetRevision: '{{branch}}'
+        path: deployments/testground
+      destination:
+        server: https://kubernetes.default.svc
+        # 4. Dynamically generate an isolated namespace for this specific feature test run
+        namespace: 'aim-test-alpha-{{branch}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true # Forces ArgoCD to provision the namespace on demand

@@ -1,0 +1,16 @@
+Using Go as the Orchestrator Infrastructure
+
+Status: Accepted
+
+Context:
+- Orchestrator software needs to be written in an infrastructure friendly language
+  for ease of writing and maintainability.
+
+Decision: 
+- Use Go as the primary language for Orchestrator logic.
+
+Consequences:
+- 
+
+Notes: 
+- Go is an industry standard for software similar to this

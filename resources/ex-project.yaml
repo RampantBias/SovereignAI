@@ -1,0 +1,23 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignProject
+metadata:
+  name: sovereign-ai
+spec:
+  tenant: application-platform
+  policyProfileRef: mvp-default
+  applicationRepository:
+    url: ssh://git.internal/sovereign-ai.git
+    defaultRevision: main
+    credentialRef:
+      namespace: sovereign-orchestrator-system
+      name: sovereign-ai-git
+  validation:
+    provider: argocd-kustomize
+    infrastructureRepository: ssh://git.internal/sovereign-ai-infra.git
+    overlayPath: deployments/overlays/testground
+  testJob:
+    image: registry.internal/sovereign/utility:dev
+    command: ["/utility", "test"]
+  buildJob:
+    image: registry.internal/sovereign/utility:dev
+    command: ["/utility", "build"]

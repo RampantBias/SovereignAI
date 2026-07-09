@@ -1,0 +1,40 @@
+Hierarchical State Ownership (Project->Workflows->Steps)
+
+Status: Superseded by ADR-0030
+
+Amended: 5/9/26
+
+Context:
+- We need a structured way to manage concurrent task resolutions.
+- Multi-tenancy is likely and we must ensure data isolation, resource fairness, 
+  and logical organization.
+
+Decision: 
+- Implement a Tree-based ownership model
+  - Registry: Holds the set of Projects added registered with Orchestrator.
+
+  - Project: Holds high-level configuration on a project and the associated Workflows.
+    It has no physical isolation in Kubernetes but is represented as a CRD in the cluster.
+
+  - Workflow: Resides within a Project. Represents a single task execution or problem-solving session.
+    Every Workflow is represented in Kubernetes as a Namespace for isolation, security, and resource cleanup.
+
+  - Step: Resides within a Workflow. A step represents one stage of a task resolution.
+
+
+Consequences:
+- Isolation: Workflows cannot leak outside of their namespace.
+- Lifecycle Management: Deleting a Workflow is a simple cascading operation.
+- Indirection: Adds a layer of complexity to the API; All commands must be project-aware.
+- Workflows are tied to a Project in Kubernetes via labeling.
+
+Notes:
+- Step Example: A software development workflow would likely start with an Architecture step to decide the 
+    requirements of a task and reflect on how it fits into the code architecture. The following Step
+    may then be the Test Writer, that uses the information from prior Step(s) to write unit tests.
+
+
+Updates:
+- [5/9/26] Project originally stated "no physical isolation in Kubernetes.". This is still somewhat true
+  but implied no Kubernetes resources were tied to it. This has been amended to specify a project is
+  represented in the cluster as a CRD.

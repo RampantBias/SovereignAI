@@ -1,0 +1,17 @@
+Project Thread Safety and Locking Strategy
+
+Status: Accepted
+
+Context:
+- To support concurrent Orchestration, the state hierarchy must be read and modified safely.
+
+Decision:
+- The Registry, Project, and Workflow levels must each implement their own RWMutex to ensure
+  thread safety.
+
+Consequences:
+- Parallel execution of Workflow orchestration becomes possible but difficult to scale.
+- Only valid (consistent) states should exist for each model under this locking strategy.
+
+Notes:
+- No lock needed on a Step?

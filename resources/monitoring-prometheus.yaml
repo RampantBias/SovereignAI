@@ -1,0 +1,24 @@
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: sovereign-prometheus
+  namespace: sovereign-monitoring
+spec:
+  image: quay.io/prometheus/prometheus:v2.51.0
+  serviceAccountName: prometheus-k8s
+  replicas: 1
+  serviceMonitorSelector:
+    matchLabels:
+      sovereign/monitored: "true"
+  podMonitorSelector:
+    matchLabels:
+      sovereign/monitored: "true"
+  retention: 7d
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: "local-path"
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

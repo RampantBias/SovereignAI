@@ -1,0 +1,10 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: PolicyProfile
+metadata:
+  name: mvp-default
+spec:
+  revision: mvp1-v1
+  query: data.sovereign.decision
+  bundleRef:
+    namespace: sovereign-orchestrator-system
+    name: mvp-default-policy

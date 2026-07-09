@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/agent/v1/result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "outcome"],
+  "properties": {
+    "schemaVersion": { "const": "sovereign.ai/agent-contract/v1" },
+    "outcome": { "enum": ["Succeeded", "Failed", "Intervention"] },
+    "message": { "type": "string" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["contract", "path"],
+        "properties": {
+          "contract": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "mediaType": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+VRAM Leder
+
+Status: Accepted
+
+Context:
+- Local consumer grade hardware lacks hardware-level memory isolation (i.e. 4060 Ti)
+
+
+Decision:
+- Implement a software-based ledger, with Time-Slicing, to protect stability and reject pods that would
+  lead to OOM state on GPU resources.
+
+Other options:
+- MiG (Not supported on consumer silicon)
+- MPS ()
+
+Consequences: 
+- Time-slicing is not physically bound
+- Must decide on how to handle what workloads should be killed.
+
+Notes: 
+- 

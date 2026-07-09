@@ -1,0 +1,23 @@
+Context as a Service
+
+Status: Accepted
+
+Context:
+- I need a way for Workflows/Steps to obtain the context needed to solve a problem.
+
+Decision: 
+- Expose underlying project data through a controlled Context API endpoint
+- For the first iteration, I'll stick with RAG because it's quicker for me to build a basic model of a project, though it is not enterprise ready.
+
+Other Considerations:
+- Passing all context directly (even for an MVP that's silly; token overload)
+- Utilizing Supervisor to provision context (boundaries are eradicated under this)
+- Relying on Orchestrator (again, boundaries)
+- Having an individual aspect of the Step architecture be responsible (boundaries again, but this also puts too many hands in the cookie jar and makes context model security more difficult to enforce; same issue with observability)
+
+Consequences:
+- Better/Easier tracking of context use and that data can more easily refine context model over time
+- If multiple workflows are hitting the same regions of a context model, I could (in the future) incorporate a way for the Context API to raise an event to detect this and raise that to a human as we might be modifying similar areas of a project.
+- Need additional networking/identification chains to constrain Context API access.
+
+Notes: 

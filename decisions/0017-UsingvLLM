@@ -1,0 +1,25 @@
+Choice of vLLM versus other Inference Engines
+
+Status: Accepted
+
+Context: 
+- Need an inference engine to fit multiple agents onto a single GPU and maximize usage
+
+Decision:
+- Will implement vLLM, per GPU, to manage resource and scheduling
+
+Other Options:
+- Triton (complex for the current use case)
+- HuggingFace
+- 
+
+Consequences:
+- vLLM's Paged Attention technique allows for more flexible agent/VRAM management
+- vLLM exposes observability metrics with little effort
+- High quantization support
+
+- Must be configured per GPU
+- Require additional pre-emption logic to detect swap count increases
+- 
+
+Notes: 

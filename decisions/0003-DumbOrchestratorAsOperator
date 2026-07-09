@@ -1,0 +1,17 @@
+Dumb Orchestrator as the Infrastructure Operator/Manager
+
+Status: Accepted
+
+Context:
+- We need a way to schedule, manage, and execute tasks in an AI-accelerated 
+  environment.
+
+Decision:
+- We must design an Orchestrator capable of controlling the lifecycle of 
+  task execution and cluster resources/health.
+- The Orchestrator must be 'dumb', not having Git credentials, API keys, ssss
+
+Consequences: 
+- Orchestrator must 
+
+Notes:

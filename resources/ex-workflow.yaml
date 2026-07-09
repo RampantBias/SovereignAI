@@ -1,0 +1,35 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: controller-change
+  namespace: controller-change-demo
+spec:
+  projectRef: sovereign-ai
+  workflowId: controller-change-demo
+  definitionRevision: mvp1-v1
+  classification: internal
+  requestedVolumeSize: 5Gi
+  steps:
+    - name: architect
+      kind: Agent
+      order: 1
+      goal: Produce an implementation plan for the supplied change request.
+      image: registry.internal/sovereign/reference-agent:dev
+      executable: ["/reference-agent", "--role", "architect"]
+      modelName: code-small
+      requestedVRAMAllocation: 2048
+      maxAttempts: 2
+      capabilities: ["context.read", "artifact.publish"]
+      outputs:
+        - name: implementation-plan
+          version: v1
+    - name: tests
+      kind: Utility
+      order: 2
+      goal: Execute the project test contract.
+      maxAttempts: 1
+      inputs:
+        - name: implementation-plan
+      outputs:
+        - name: test-report
+          version: v1

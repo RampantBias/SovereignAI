@@ -1,0 +1,22 @@
+Migrating from Imperative Pod Management to Declarative CRDs
+
+Status: Accepted
+
+Context:
+- Originally I designed the orchestrator to 
+
+Decision:
+- Change internal registry/core management 
+
+Consequences:
+- No hierarchicial locking
+
+Notes: Miscellaneous notes that may add clarity/background deemed not essential
+
+
+
+Vendor Lock-in: You are permanently tying the Sovereign orchestrator to Kubernetes. You cannot easily port this Go binary to run on a raw Docker Swarm or Nomad cluster. Given the complexity of GPU scheduling and multi-agent networking, relying on the K8s API is a calculated and necessary trade-off.
+
+Cache Staleness: controller-runtime relies on an Informer cache. When you issue a Create command for a Pod, the API server processes it, but it takes a few milliseconds for that change to propagate back down to your local cache. If your Reconciler loops too quickly, it will misread the cache and attempt to create the Pod again. You must write strictly idempotent code.
+
+Testing Complexity: You can no longer write simple unit tests using standard Go mocks for your execution engine. Testing a Reconciler requires spinning up a localized Kubernetes API plane (using envtest) to validate how your code reacts to actual cluster events.

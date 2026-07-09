@@ -1,0 +1,27 @@
+Workflow Labeling Strategy for Kubernetes Resources
+
+Status: Accepted
+
+Context: 
+- Project Workflows must incorporate a Kubernetes labeling
+  strategy to support observability and Orchestrator reconstruction.
+
+Decision:
+- All Kubernetes resources created and managed by the Orchestrator must implement this label:
+  - app.kubernetes.io/managed-by=sovereign-orchestrator
+
+- Namespaces will have the following labels:
+  - sovereign-orchestrator/workflow-id=<ID of the workflow>
+
+- Pods created within a workflow will have the following labels:
+  - sovereign-orchestrator/step-name=<Step name>
+  - sovereign-orchestrator/requires-review=<true || false>
+      Used to  
+  - 
+
+- PVCs will have the following labels:
+  - 
+
+Consequences: Both +/- effects of this decision, covers limitations as well
+
+Notes: Miscellaneous notes that may add clarity/background deemed not essential

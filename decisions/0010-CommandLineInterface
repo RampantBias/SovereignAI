@@ -1,0 +1,17 @@
+Command Line Interface
+
+Status: Accepted
+
+Context:
+- Users need a way to use the Sovereign Orchestrator.
+
+Decision:
+- A CLI will be built to provide the necessary API calls.
+- CobraCLI will be used 
+
+Consequences:
+- CLI is more limited and less human-centric from the 'accelerating' point of view.
+  The need for a real interface will be necessary in the future.
+- Ties project directly to CobraCLI
+
+Notes:

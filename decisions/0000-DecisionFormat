@@ -1,0 +1,11 @@
+Title of ADR
+
+Status: Proposed/Accepted/Rejected/Deprecated/Superseded
+
+Context: The issue motivating the decision/change
+
+Decision: Description of the change
+
+Consequences: Both +/- effects of this decision, covers limitations as well
+
+Notes: Miscellaneous notes that may add clarity/background deemed not essential

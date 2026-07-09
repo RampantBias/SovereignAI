@@ -1,0 +1,19 @@
+Kubernetes as the Control Plane
+
+Status: Accepted
+
+Context: 
+- Running AI workloads requires a secure, controllable, and scalable solution.
+- Control Plane drift is a significant challenge as things break.
+
+Decision:
+- Kubernetes will be used as the substrate for orchestration.
+- Kubernetes labeling will be the primary discovery mechanism for state.
+
+Consequences:
+- Workflow is pod based and requires significant background operations to execute on a kubernetes cluster.
+- Different users will have different deployment preferences (local hardware vs. local server), must
+    ensure orchestrator is setup agnostic.
+
+Notes: 
+- Kubernetes can be used to solve control plane drift by incorporating a reconciliation loop.

@@ -1,0 +1,28 @@
+Integrating Human In the Loop 
+
+Status: Superseded by ADR-0021
+
+Context:
+- AI cannot automate all Workflows.
+- Humans can't just review code.
+
+Decision:
+- Workflow lifecycle must center around human (user) acceleration.
+  Users must be able to halt AI, execute into a running Step, and 
+  make modifications to the work done by an Agent. HITL gates
+  will still exist and be be specified in Step definitions.
+- HITL will occur through ephemeral collaboration. We will inject
+  an ephemeral container containing the necessary tools for 
+
+Consequences:
+- Workflows will not be automated upfront.
+- Ephemeral credentials must be generated for user to safely exec into 
+  running Steps.
+- Proper tooling must be provided at each Step so a user could accomplish
+  the work while the AI acts as the assistant, being given only the 
+  necessary context.
+- Ephemeral containers expose a larger attack surface, we must implement
+  additional malicious detection and prevention methods.
+
+Notes: 
+- Superseded 5/21/26: Human in the loop should not be an ephemeral operation. It must be a core part of a Step, and should be natively owned in a separate pod. Advantages/Disadvantages discussed in ADR-0021

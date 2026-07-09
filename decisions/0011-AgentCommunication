@@ -1,0 +1,18 @@
+Agent Communication
+
+Status: Accepted
+
+Context: 
+- Agents need a way to receive context & tasking, and provide or receive 
+  information from other Steps.
+
+Decision:
+- When a new Step is started, the Orchestrator is responsible for creating
+  a task.json file containing task goal, context, and other pertinent information.
+- All Steps must produce a results.json file containing information about artifacts
+  and changes.
+- All Steps must define a contract
+
+Consequences: Both +/- effects of this decision, covers limitations as well
+
+Notes: Miscellaneous notes that may add clarity/background deemed not essential

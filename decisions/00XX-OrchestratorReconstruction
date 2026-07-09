@@ -1,0 +1,36 @@
+Reconstructing the Orchestrator after Failure
+
+Status: Superseded by ADR-0030
+
+Context:
+- If the Orchestrator fails but the cluster remains operational,
+  the Orchestrator has no way to understand what the prior state
+  of the store was.
+
+Decision:
+- The Orchestrator must be able to rebuild its understanding of 
+  the Project state; It must analyze the cluster to accomplish this.
+
+- From ArgoCD (reconstruct intent):
+  - Active Projects (AppProjects)
+  - Registered Apps (AppSets)
+  - Associated Git Repos
+- From Kubernetes API (runtime progress):
+  - Active pods/jobs
+  - Execution step logic & logs
+  - Resource status conditions
+
+Other Considerations:
+- Saving the state to a database or hard file was possible but if the cluster
+  remains operational, and the time to recovery is unknown, we'd likely
+  run into control plane drift.
+- CRDs are a potential alternative, but would likely be more complex
+  and have a higher maintainability cost at this early development stage.
+  These may be a better solution once I finish MVP 1.
+
+Consequences: 
+- Current state of the Project is rebuilt perfectly to reflect the actual state.
+- Logic for 
+
+Notes:
+- No state reconstruction necessary by better adopting the controller-operator pattern as outlined in ADR-0030. Essentially move to event driven architectures.

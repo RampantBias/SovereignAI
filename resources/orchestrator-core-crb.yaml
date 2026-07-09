@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: orchestrator-core-binding
+subjects:
+  - kind: ServiceAccount
+    name: orchestrator-sa
+    namespace: aim-system
+roleRef:
+  kind: ClusterRole
+  name: aim-orchestrator-core
+  apiGroup: rbac.authorization.k8s.io

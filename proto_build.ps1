@@ -1,0 +1,1 @@
+protoc --go_out=internal/ --go-grpc_out=internal/ internal/api/v1/orchestrator.proto

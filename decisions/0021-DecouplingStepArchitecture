@@ -1,0 +1,35 @@
+Decoupling the Step Architecture
+
+Status: Accepted
+
+Context:
+- Previously, I had accepted the definition of a Step meaning a single Pod (Pod per step). This pod contained the agent, ephemeral container for human access, etc.
+  But now, given my deeper understanding of identities/SPIFFE, stability, performance, etc. I believe this model is too limiting.
+
+Decision:
+- Adjust Step architecture to decouple the agent from the human access.
+- Model/Inference engine (vLLM; see ADR-0017) remains the same as 1 instance per GPU (Inference remains an endpoint).
+
+- Summary Breakdown:
+  - Inference Plane (vLLM) remains the same
+  - Agent Execution Plane - communication bridge between Inference and Human Plane, communicates with inference via gRPC
+  - Human Interaction Plane - pre-warmed idle pods holding tools specific to the Step that remains inactive until connected to.
+  - Utility Plane - Background atomic tasks (i.e. git operations, emails)
+
+Consequences:
+- I must create new CRDs to better control Workflow/Step operations otherwise the Orchestrator drowns in complexity of status checking. Orchestrator must stay high-level.
+- Step definition can now be more purpose-specific (agent, human, deterministic job) rather than a smattering.
+- This is far more scalable across Workflows, and opens up the possibility to better schedule Pod resources during I/O bound operations or longer inference cycles.
+- When an agent needs to be killed/shutdown for GPU stability, or swapped to use a cheaper model, this would be a lot easier and would not interrupt human container.
+- Identification is tied to pod level, helping observability and security.
+
+- I need a better way to bridge the communication between the human and agent, possibly Mediator Pattern over direct gRPC access.
+- Each pod in a step has different networking requirements, which can now be enforced strategically. 
+- Policy enforcement is now split. I haven't yet fleshed out details on the governance/policy model but I predict there will be some challenges in implementing this, but I think it's a net benefit.
+
+- Need to architect a proper bridge connecting the different pieces.
+- Workflows become more complex to manage, including networking and security.
+
+Notes:
+- It was a bit silly I missed this earlier on, but I think it's a better resolution. My understanding of how
+  AI/ML engineers typically deploy models/agents in production instances led to this decision.

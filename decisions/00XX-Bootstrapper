@@ -1,0 +1,16 @@
+Bootstrapping Platform Infrastructure
+
+Status: Accepted
+
+Context:
+- To facilitate ease of using this platform, it should be necessary
+  for the orchestrator to bootstrap not just the necessary infrastructure,
+  but the base substrate (kubernetes) necessary.
+
+Decision:
+- Orchestrator will have an init command which completes the following actions:
+  1. Provides method to 
+
+Consequences: Both +/- effects of this decision, covers limitations as well
+
+Notes: Miscellaneous notes that may add clarity/background deemed not essential

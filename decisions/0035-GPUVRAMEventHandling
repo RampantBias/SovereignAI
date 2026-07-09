@@ -1,0 +1,33 @@
+Determining how VRAM usage critical thresholds should be handled
+
+Status: Accepted
+
+Context:
+- Dynamic Key-Value (KV) cache allocations can cause unpredictable VRAM spikes
+  leading to undesired states (swaps/OOMs).
+- We require a highly responsive mechanism to detect VRAM pressure and trigger 
+  workload interventions.
+
+Decision:
+- Kubelet Sensor pattern: Boundary between Hardware Abstraction Layer and Business Logic Layer
+- gpu-watcher daemonset (DS) is responsible for detecting threshold conditions as an edge sensor.
+  - When critical threshold is reached, the DS will patch the GPU CRD with a new k8s condition:
+      type: VRAMPressure, status: True
+- The SovereignWorkflowController will watch the GPU CRD for changes to this specific condition 
+  Using an event mapping function it will identify Workflows running on the affected node
+  and execute the appropriate policy to try to relieve VRAM pressure.
+
+Alternatives Considered (rejected):
+- I considered using a GPU controller to handle the threshold logic and CRD updates. I decided
+  to reject this as it could introduce API bottlenecks and violates a separation of concerns. It 
+  would have also led to tight coupling of hardware and workflows leading to a circular dependency.
+
+Consequences: 
+- Less Kubernetes API calls results in better efficiency (reduces etcd loading).
+- Better solution scalability because of the mapping used by the Workflow controller.
+- gpu-watcher DS is fully independent of the Workflow orchestration layer (mimics Kubelet).
+
+Notes: 
+- gpu-watcher needs some mechanism to allow a more modifiable critical threshold %, rather
+  than be hardcoded in the binary. I think either a configmap, modified GPU CRD, or a combination
+  of the two would accomplish this. For now it'll just stay in the binary and be decided later.
