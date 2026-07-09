@@ -94,19 +94,24 @@ func main() {
 		&controllers.StepAttemptReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
+			Audit:          recorder,
 			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev")},
 		&controllers.ArtifactReconciler{
-			Client: mgr.GetClient()},
+			Client: mgr.GetClient(),
+			Audit:  recorder},
 		&controllers.HumanSessionReconciler{
 			Client:          mgr.GetClient(),
 			Scheme:          mgr.GetScheme(),
+			Audit:           recorder,
 			CodeServerImage: env("SOVEREIGN_CODE_SERVER_IMAGE", "ghcr.io/coder/code-server:4.99.4")},
 		&controllers.ValidationRunReconciler{
 			Client:   mgr.GetClient(),
-			Provider: validationProvider},
+			Provider: validationProvider,
+			Audit:    recorder},
 		&controllers.InferenceEndpointReconciler{
 			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme()},
+			Scheme: mgr.GetScheme(),
+			Audit:  recorder},
 		&controllers.InferenceLeaseReconciler{
 			Client:               mgr.GetClient(),
 			Scheme:               mgr.GetScheme(),
@@ -115,6 +120,7 @@ func main() {
 			DefaultMaxKVRAMMiB:   int64(envInt("SOVEREIGN_KV_VRAM_MIB", 8192)),
 			SafetyHeadroomMiB:    int64(envInt("SOVEREIGN_VRAM_HEADROOM_MIB", 1024)),
 			Policy:               policyEvaluator,
+			Audit:                recorder,
 		},
 	}
 	for _, reconciler := range reconcilers {
