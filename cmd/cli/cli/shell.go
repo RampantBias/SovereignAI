@@ -31,6 +31,7 @@ func RunShell(ctx context.Context, shellDependencies ShellDependencies) {
 		NewStatusCmd(shellDependencies.Client),
 		NewCreateCmd(shellDependencies.Client),
 		NewCleanCmd(shellDependencies.Client),
+		NewPlaybackCmd(shellDependencies.Client),
 	)
 
 	reader := bufio.NewReader(os.Stdin)

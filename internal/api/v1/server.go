@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -158,6 +157,28 @@ func (s *Server) ListWorkflows(ctx context.Context, req *pb.ListWorkflowsRequest
 	}, nil
 }
 
+func (s *Server) GetWorkflowTimeline(ctx context.Context, req *pb.GetWorkflowTimelineRequest) (*pb.GetWorkflowTimelineResponse, error) {
+	workflowID := strings.TrimSpace(req.GetWorkflowId())
+	if workflowID == "" {
+		return nil, status.Error(codes.InvalidArgument, "workflow_id is required")
+	}
+	if s.Auditor == nil {
+		return nil, status.Error(codes.FailedPrecondition, "audit recorder is not configured")
+	}
+
+	events, err := s.Auditor.ListWorkflow(ctx, workflowID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to read workflow timeline: %v", err)
+	}
+
+	timeline := audit.BuildTimeline(events)
+	response := &pb.GetWorkflowTimelineResponse{Events: make([]*pb.AuditEventDTO, 0, len(timeline))}
+	for _, event := range timeline {
+		response.Events = append(response.Events, timelineEventDTO(event))
+	}
+	return response, nil
+}
+
 func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowRequest) (*pb.CreateWorkflowResponse, error) {
 	// Validate workflow request via unmarshal
 	var workflowCRD v1alpha1.SovereignWorkflow
@@ -302,23 +323,9 @@ func generateRandomSuffix() string {
 
 // Helper method for building API events consistently within the API server
 func (s *Server) appendAPIEvent(ctx context.Context, eventType string, subject audit.Subject, action, target, outcome, reason, correlationID string, references map[string]string, data any) error {
-	if s.Auditor == nil {
-		return nil
-	}
-	payload, err := marshalAuditData(data)
-	if err != nil {
-		return err
-	}
-	if correlationID == "" {
-		correlationID = subject.Workflow
-	}
-	if correlationID == "" {
-		correlationID = subject.Project
-	}
-	event := audit.Event{
-		ID:            audit.DeterministicID("api", eventType, subject.Project, subject.Namespace, subject.Workflow, target, action, outcome, reason),
+	return audit.AppendEvent(ctx, s.Auditor, audit.EventOptions{
+		Source:        "api",
 		Type:          eventType,
-		SchemaVersion: "v1",
 		OccurredAt:    time.Now().UTC(),
 		Actor:         audit.Actor{Kind: "API", ID: "api-server"},
 		Subject:       subject,
@@ -328,20 +335,45 @@ func (s *Server) appendAPIEvent(ctx context.Context, eventType string, subject a
 		Reason:        reason,
 		CorrelationID: correlationID,
 		References:    references,
-		Data:          payload,
-	}
-	return s.Auditor.Append(ctx, event)
+		Data:          data,
+	})
 }
 
-func marshalAuditData(data any) (json.RawMessage, error) {
-	if data == nil {
-		return nil, nil
+func timelineEventDTO(event audit.TimelineEvent) *pb.AuditEventDTO {
+	return &pb.AuditEventDTO{
+		Id:            event.ID,
+		Type:          event.Type,
+		SchemaVersion: event.SchemaVersion,
+		OccurredAt:    formatAuditTime(event.OccurredAt),
+		RecordedAt:    formatAuditTime(event.RecordedAt),
+		Actor: &pb.AuditActorDTO{
+			Kind: event.Actor.Kind,
+			Id:   event.Actor.ID,
+		},
+		Subject: &pb.AuditSubjectDTO{
+			Project:   event.Subject.Project,
+			Namespace: event.Subject.Namespace,
+			Workflow:  event.Subject.Workflow,
+			Step:      event.Subject.Step,
+			Attempt:   event.Subject.Attempt,
+		},
+		Action:        event.Action,
+		Target:        event.Target,
+		Outcome:       event.Outcome,
+		Reason:        event.Reason,
+		CorrelationId: event.CorrelationID,
+		CausationId:   event.CausationID,
+		DecisionId:    event.DecisionID,
+		References:    event.References,
+		DataJson:      string(event.Data),
 	}
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return nil, fmt.Errorf("marshal audit event data: %w", err)
+}
+
+func formatAuditTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
 	}
-	return payload, nil
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func normalizeName(value string) string {

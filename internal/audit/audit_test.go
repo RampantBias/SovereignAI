@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -32,5 +33,37 @@ func TestDeterministicID(t *testing.T) {
 	}
 	if first == DeterministicID("wf-1", "developer", "2", "started") {
 		t.Fatal("different attempt produced the same ID")
+	}
+}
+
+func TestBuildTimelineProjectsEventForPlayback(t *testing.T) {
+	event := Event{
+		ID:            "evt-1",
+		Type:          "StepAttemptInterrupted",
+		SchemaVersion: "v1",
+		OccurredAt:    time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+		Actor:         Actor{Kind: "Controller", ID: "stepattempt-controller"},
+		Subject:       Subject{Project: "platform", Namespace: "platform-wf", Workflow: "wf", Step: "developer", Attempt: 1},
+		Action:        "interrupt",
+		Target:        "developer-001",
+		Outcome:       "interrupted",
+		Reason:        "AgentPodLost",
+		CorrelationID: "wf",
+		References:    map[string]string{"pod": "developer-001"},
+		Data:          json.RawMessage(`{"retryable":true}`),
+	}
+
+	timeline := BuildTimeline([]Event{event})
+	if len(timeline) != 1 {
+		t.Fatalf("timeline length = %d, want 1", len(timeline))
+	}
+	if timeline[0].ID != event.ID || timeline[0].Type != event.Type {
+		t.Fatalf("identity fields not projected: %#v", timeline[0])
+	}
+	if timeline[0].Subject.Step != "developer" || timeline[0].Subject.Attempt != 1 {
+		t.Fatalf("subject not projected: %#v", timeline[0].Subject)
+	}
+	if string(timeline[0].Data) != `{"retryable":true}` {
+		t.Fatalf("data not projected: %s", timeline[0].Data)
 	}
 }

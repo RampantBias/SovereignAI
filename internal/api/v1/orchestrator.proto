@@ -9,6 +9,7 @@ service OrchestratorService {
   rpc CleanWorkflow (CleanWorkflowRequest) returns (CleanWorkflowResponse);
   rpc CreateWorkflow(CreateWorkflowRequest) returns (CreateWorkflowResponse);
   rpc ListWorkflows (ListWorkflowsRequest) returns (ListWorkflowsResponse);
+  rpc GetWorkflowTimeline (GetWorkflowTimelineRequest) returns (GetWorkflowTimelineResponse);
 }
 
 message CreateProjectRequest {
@@ -64,4 +65,44 @@ message WorkflowStatusDTO {
 
 message ListWorkflowsResponse {
   repeated WorkflowStatusDTO workflows = 1; // 'repeated' represents an array/slice in Go
+}
+
+message GetWorkflowTimelineRequest {
+  string workflow_id = 1;
+}
+
+message AuditActorDTO {
+  string kind = 1;
+  string id = 2;
+}
+
+message AuditSubjectDTO {
+  string project = 1;
+  string namespace = 2;
+  string workflow = 3;
+  string step = 4;
+  int32 attempt = 5;
+}
+
+message AuditEventDTO {
+  string id = 1;
+  string type = 2;
+  string schema_version = 3;
+  string occurred_at = 4;
+  string recorded_at = 5;
+  AuditActorDTO actor = 6;
+  AuditSubjectDTO subject = 7;
+  string action = 8;
+  string target = 9;
+  string outcome = 10;
+  string reason = 11;
+  string correlation_id = 12;
+  string causation_id = 13;
+  string decision_id = 14;
+  map<string, string> references = 15;
+  string data_json = 16;
+}
+
+message GetWorkflowTimelineResponse {
+  repeated AuditEventDTO events = 1;
 }
