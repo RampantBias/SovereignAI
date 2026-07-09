@@ -78,6 +78,15 @@ func TestAgentAttemptCreatesRestrictedPod(t *testing.T) {
 	if !contract.Outputs[0].Required {
 		t.Fatalf("workflow output obligation should be required: %#v", contract.Outputs[0])
 	}
+	if contract.ControlPath != "/workspace/attempts/architect-001/control" {
+		t.Fatalf("controlPath = %q", contract.ControlPath)
+	}
+	if contract.ResultPath != "/workspace/attempts/architect-001/control/result.json" {
+		t.Fatalf("resultPath = %q", contract.ResultPath)
+	}
+	if contract.AuditEventsPath != "/workspace/attempts/architect-001/control/events.jsonl" {
+		t.Fatalf("auditEventsPath = %q", contract.AuditEventsPath)
+	}
 }
 
 func TestUtilityAttemptCreatesNonRetryingJob(t *testing.T) {
@@ -104,6 +113,36 @@ func TestUtilityAttemptCreatesNonRetryingJob(t *testing.T) {
 	}
 	if !recorder.Has("UtilityJobCreated") {
 		t.Fatalf("expected UtilityJobCreated audit event, got %#v", recorder.AllEvents())
+	}
+}
+
+func TestCollectorJobReceivesRuntimeAuditPath(t *testing.T) {
+	t.Setenv("SOVEREIGN_AUDIT_DSN", "postgres://audit")
+	attempt := &v1alpha1.StepAttempt{
+		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf"},
+		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: "wf"},
+	}
+	workflow := &v1alpha1.SovereignWorkflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf", Namespace: "wf"},
+		Status:     v1alpha1.SovereignWorkflowStatus{PvcName: "wf-workspace"},
+	}
+	objects := buildCollectorResources(attempt, workflow, "collector:test")
+	var job *batchv1.Job
+	for _, object := range objects {
+		if candidate, ok := object.(*batchv1.Job); ok {
+			job = candidate
+			break
+		}
+	}
+	if job == nil {
+		t.Fatal("collector job was not created")
+	}
+	container := job.Spec.Template.Spec.Containers[0]
+	if !containsArgPair(container.Args, "--audit-events", "/workspace/attempts/architect-001/control/events.jsonl") {
+		t.Fatalf("collector args do not include runtime audit path: %#v", container.Args)
+	}
+	if !containsEnv(container.Env, "SOVEREIGN_AUDIT_DSN", "postgres://audit") {
+		t.Fatalf("collector env does not include audit DSN: %#v", container.Env)
 	}
 }
 
@@ -194,6 +233,24 @@ func TestAgentAttemptDeletesPodWhenInferenceLeaseInterrupted(t *testing.T) {
 	if !recorder.Has("StepAttemptInterrupted") {
 		t.Fatalf("expected StepAttemptInterrupted audit event, got %#v", recorder.AllEvents())
 	}
+}
+
+func containsArgPair(args []string, name, value string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == name && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func containsEnv(env []corev1.EnvVar, name, value string) bool {
+	for _, item := range env {
+		if item.Name == name && item.Value == value {
+			return true
+		}
+	}
+	return false
 }
 
 func attemptScheme(t *testing.T) *runtime.Scheme {

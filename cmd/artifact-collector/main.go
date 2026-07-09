@@ -10,6 +10,7 @@ import (
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifacts"
+	"github.com/SovereignAI/internal/audit"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,10 +25,14 @@ func main() {
 	resultPath := flag.String("result", "", "agent result contract")
 	stagingPath := flag.String("staging", "", "attempt staging directory")
 	artifactPath := flag.String("artifact-store", "", "content-addressed artifact directory")
+	auditEventsPath := flag.String("audit-events", "", "agent wrapper audit event JSONL path")
 	sourceRevision := flag.String("source-revision", "", "source revision")
 	flag.Parse()
 	if *namespace == "" || *workflow == "" || *attempt == "" || *resultPath == "" || *stagingPath == "" || *artifactPath == "" {
 		log.Fatal("namespace, workflow, attempt, result, staging, and artifact-store are required")
+	}
+	if err := ingestRuntimeAudit(context.Background(), *auditEventsPath); err != nil {
+		log.Fatalf("ingest runtime audit: %v", err)
 	}
 	result, err := agentcontract.ReadResult(*resultPath, *stagingPath)
 	if err != nil {
@@ -58,6 +63,28 @@ func main() {
 			log.Fatalf("create Artifact %s: %v", name, err)
 		}
 	}
+}
+
+func ingestRuntimeAudit(ctx context.Context, path string) error {
+	if path == "" {
+		return nil
+	}
+	config := audit.ConfigFromEnv()
+	if config.DSN == "" && !config.Required {
+		log.Print("SOVEREIGN_AUDIT_DSN is unset; skipping runtime audit ingestion")
+		return nil
+	}
+	recorder, closeAudit, auditMode, err := audit.OpenConfigured(ctx, config)
+	if err != nil {
+		return err
+	}
+	defer closeAudit()
+	count, err := audit.IngestEventFile(ctx, recorder, path)
+	if err != nil {
+		return err
+	}
+	log.Printf("ingested %d runtime audit events using %s backend", count, auditMode)
+	return nil
 }
 
 func artifactName(attempt, contract string, index int) string {

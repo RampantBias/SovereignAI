@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"time"
 
 	"github.com/SovereignAI/internal/agentcontract"
@@ -123,12 +124,9 @@ func (r *StepAttemptReconciler) reconcileAgent(ctx context.Context, attempt *v1a
 	// Evaluate agent phase
 	switch pod.Status.Phase {
 	case corev1.PodSucceeded:
-		if len(attempt.Spec.OutputContracts) > 0 {
-			return r.reconcileCollection(ctx, attempt)
-		}
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseSucceeded, "AgentCompleted", "agent contract completed")
+		return r.reconcileCollection(ctx, attempt, v1alpha1.PhaseSucceeded, "ArtifactsCollected", false)
 	case corev1.PodFailed:
-		return ctrl.Result{}, r.fail(ctx, attempt, "AgentPodFailed", true)
+		return r.reconcileCollection(ctx, attempt, v1alpha1.PhaseFailed, "AgentPodFailed", true)
 	case corev1.PodRunning:
 		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseRunning, "AgentRunning", "agent is running")
 	default:
@@ -154,7 +152,7 @@ func (r *StepAttemptReconciler) deleteAgentPod(ctx context.Context, attempt *v1a
 }
 
 // Reconciles artifacts created upon agent success
-func (r *StepAttemptReconciler) reconcileCollection(ctx context.Context, attempt *v1alpha1.StepAttempt) (ctrl.Result, error) {
+func (r *StepAttemptReconciler) reconcileCollection(ctx context.Context, attempt *v1alpha1.StepAttempt, finalPhase v1alpha1.ResourcePhase, finalReason string, retryable bool) (ctrl.Result, error) {
 	if attempt.Status.JobRef == "" {
 		var workflow v1alpha1.SovereignWorkflow
 		if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Spec.WorkflowRef}, &workflow); err != nil {
@@ -178,9 +176,15 @@ func (r *StepAttemptReconciler) reconcileCollection(ctx context.Context, attempt
 	}
 	if job.Status.Succeeded > 0 {
 		attempt.Status.ResultRef = job.Name
+		if finalPhase == v1alpha1.PhaseFailed {
+			return ctrl.Result{}, r.fail(ctx, attempt, finalReason, retryable)
+		}
 		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseSucceeded, "ArtifactsCollected", "result contract and artifacts accepted")
 	}
 	if job.Status.Failed > 0 {
+		if finalPhase == v1alpha1.PhaseFailed {
+			return ctrl.Result{}, r.fail(ctx, attempt, finalReason, retryable)
+		}
 		return ctrl.Result{}, r.fail(ctx, attempt, "ArtifactCollectionFailed", false)
 	}
 	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
@@ -309,19 +313,23 @@ func (r *StepAttemptReconciler) ensureAgentWorkload(ctx context.Context, attempt
 	}
 
 	// Generate input contract and write it to a configmap
+	controlPath := attemptControlPath(attempt.Name)
 	input := agentcontract.Input{
 		SchemaVersion:     agentcontract.Version,
 		WorkflowID:        workflow.Spec.WorkflowID,
 		StepName:          attempt.Spec.StepName,
 		Attempt:           attempt.Spec.Attempt,
 		Role:              attempt.Spec.StepName,
-		Goal:              attempt.Spec.Goal,
+		Responsibility:    attempt.Spec.Goal,
 		Capabilities:      append([]string(nil), attempt.Spec.Capabilities...),
 		Outputs:           outputObligations,
 		InferenceEndpoint: endpoint,
 		MCPServer:         "https://sovereign-mcp.sovereign-orchestrator-system.svc",
 		WorkspacePath:     "/workspace",
-		StagingPath:       "/workspace/attempts/" + attempt.Name + "/staging",
+		StagingPath:       attemptStagingPath(attempt.Name),
+		ControlPath:       controlPath,
+		ResultPath:        attemptResultPath(attempt.Name),
+		AuditEventsPath:   attemptAuditEventsPath(attempt.Name),
 	}
 	data, err := json.Marshal(input)
 	if err != nil {
@@ -355,7 +363,7 @@ func buildAgentPod(attempt *v1alpha1.StepAttempt, pvcName, configName string) *c
 	runAsUser := int64(65532)
 
 	executable, _ := json.Marshal(attempt.Spec.Executable)
-	resultPath := "/workspace/attempts/" + attempt.Name + "/control/result.json"
+	resultPath := attemptResultPath(attempt.Name)
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace, Labels: map[string]string{LabelWorkflow: attempt.Labels[LabelWorkflow], LabelStep: attempt.Spec.StepName, "sovereign-ai.io/attempt": attempt.Name}},
 		Spec: corev1.PodSpec{
@@ -374,6 +382,22 @@ func buildAgentPod(attempt *v1alpha1.StepAttempt, pvcName, configName string) *c
 			},
 		},
 	}
+}
+
+func attemptControlPath(attemptName string) string {
+	return "/workspace/attempts/" + attemptName + "/control"
+}
+
+func attemptStagingPath(attemptName string) string {
+	return "/workspace/attempts/" + attemptName + "/staging"
+}
+
+func attemptResultPath(attemptName string) string {
+	return attemptControlPath(attemptName) + "/result.json"
+}
+
+func attemptAuditEventsPath(attemptName string) string {
+	return attemptControlPath(attemptName) + "/events.jsonl"
 }
 
 func buildUtilityJob(attempt *v1alpha1.StepAttempt) *batchv1.Job {
@@ -413,8 +437,9 @@ func buildCollectorResources(attempt *v1alpha1.StepAttempt, workflow *v1alpha1.S
 	jobName := attempt.Name + "-collect"
 	automount := true
 	backoff := int32(0)
-	resultPath := "/workspace/attempts/" + attempt.Name + "/control/result.json"
-	stagingPath := "/workspace/attempts/" + attempt.Name + "/staging"
+	resultPath := attemptResultPath(attempt.Name)
+	stagingPath := attemptStagingPath(attempt.Name)
+	auditEventsPath := attemptAuditEventsPath(attempt.Name)
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace}, AutomountServiceAccountToken: &automount}
 	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"artifacts"}, Verbs: []string{"create", "get"}}}}
 	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: attempt.Namespace}}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}}
@@ -423,11 +448,21 @@ func buildCollectorResources(attempt *v1alpha1.StepAttempt, workflow *v1alpha1.S
 		Containers: []corev1.Container{{Name: "collector", Image: image, Args: []string{
 			"--namespace", attempt.Namespace, "--workflow", workflow.Name, "--attempt", attempt.Name,
 			"--result", resultPath, "--staging", stagingPath, "--artifact-store", "/workspace/.sovereign/artifacts",
-			"--source-revision", workflow.Spec.DefinitionRevision,
-		}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
+			"--audit-events", auditEventsPath, "--source-revision", workflow.Spec.DefinitionRevision,
+		}, Env: collectorAuditEnv(), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
 		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workflow.Status.PvcName}}}},
 	}}}}
 	return []client.Object{serviceAccount, role, binding, job}
+}
+
+func collectorAuditEnv() []corev1.EnvVar {
+	var env []corev1.EnvVar
+	for _, name := range []string{"SOVEREIGN_AUDIT_DSN", "SOVEREIGN_AUDIT_REQUIRED"} {
+		if value := os.Getenv(name); value != "" {
+			env = append(env, corev1.EnvVar{Name: name, Value: value})
+		}
+	}
+	return env
 }
 
 func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.StepAttempt, phase v1alpha1.ResourcePhase, reason, message string) error {

@@ -22,7 +22,11 @@ func TestWriteAndReadResult(t *testing.T) {
 	root := t.TempDir()
 	artifact := filepath.Join(root, "patch.diff")
 	resultPath := filepath.Join(root, "control", "result.json")
-	want := Result{SchemaVersion: Version, Outcome: "Succeeded", Artifacts: []ArtifactOutput{{Contract: "patch/v1", Path: artifact}}}
+	want := Result{
+		SchemaVersion: Version,
+		Outcome:       "Succeeded",
+		Artifacts:     []ArtifactOutput{{Contract: "patch/v1", Path: artifact}},
+	}
 	if err := WriteResult(resultPath, want); err != nil {
 		t.Fatal(err)
 	}
@@ -35,17 +39,49 @@ func TestWriteAndReadResult(t *testing.T) {
 	}
 }
 
+func TestWriteAndReadFailedResultWithStructuredError(t *testing.T) {
+	root := t.TempDir()
+	resultPath := filepath.Join(root, "control", "result.json")
+	want := Result{
+		SchemaVersion: Version,
+		Outcome:       "Failed",
+		Message:       "agent returned an invalid result",
+		Error:         &ResultError{Code: "InvalidResultContract", Message: "required output contract was not produced"},
+	}
+	if err := WriteResult(resultPath, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadResult(resultPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Error == nil || got.Error.Code != want.Error.Code || got.Error.Message != want.Error.Message {
+		t.Fatalf("structured error was not preserved: %#v", got.Error)
+	}
+}
+
+func TestResultRejectsIncompleteStructuredError(t *testing.T) {
+	result := Result{
+		SchemaVersion: Version,
+		Outcome:       "Failed",
+		Error:         &ResultError{Code: "InvalidResultContract"},
+	}
+	if err := result.Validate(t.TempDir()); err == nil {
+		t.Fatal("expected incomplete result error to be rejected")
+	}
+}
+
 func TestResultMustSatisfyRequiredOutputObligations(t *testing.T) {
 	root := t.TempDir()
 	input := Input{
-		SchemaVersion: Version,
-		WorkflowID:    "wf",
-		StepName:      "architect",
-		Attempt:       1,
-		Role:          "architect",
-		Goal:          "plan",
-		WorkspacePath: root,
-		StagingPath:   root,
+		SchemaVersion:  Version,
+		WorkflowID:     "wf",
+		StepName:       "architect",
+		Attempt:        1,
+		Role:           "architect",
+		Responsibility: "plan",
+		WorkspacePath:  root,
+		StagingPath:    root,
 		Outputs: []OutputObligation{{
 			Name:     "implementation-plan",
 			Version:  "v1",
@@ -64,14 +100,14 @@ func TestResultMustSatisfyRequiredOutputObligations(t *testing.T) {
 func TestResultRejectsUndeclaredArtifactsWhenOutputsAreDeclared(t *testing.T) {
 	root := t.TempDir()
 	input := Input{
-		SchemaVersion: Version,
-		WorkflowID:    "wf",
-		StepName:      "architect",
-		Attempt:       1,
-		Role:          "architect",
-		Goal:          "plan",
-		WorkspacePath: root,
-		StagingPath:   root,
+		SchemaVersion:  Version,
+		WorkflowID:     "wf",
+		StepName:       "architect",
+		Attempt:        1,
+		Role:           "architect",
+		Responsibility: "plan",
+		WorkspacePath:  root,
+		StagingPath:    root,
 		Outputs: []OutputObligation{{
 			Name:     "implementation-plan",
 			Version:  "v1",
@@ -91,14 +127,14 @@ func TestResultRejectsUndeclaredArtifactsWhenOutputsAreDeclared(t *testing.T) {
 func TestResultSatisfiesDeclaredOutput(t *testing.T) {
 	root := t.TempDir()
 	input := Input{
-		SchemaVersion: Version,
-		WorkflowID:    "wf",
-		StepName:      "architect",
-		Attempt:       1,
-		Role:          "architect",
-		Goal:          "plan",
-		WorkspacePath: root,
-		StagingPath:   root,
+		SchemaVersion:  Version,
+		WorkflowID:     "wf",
+		StepName:       "architect",
+		Attempt:        1,
+		Role:           "architect",
+		Responsibility: "plan",
+		WorkspacePath:  root,
+		StagingPath:    root,
 		Outputs: []OutputObligation{{
 			Name:      "implementation-plan",
 			Version:   "v1",
@@ -177,14 +213,14 @@ func TestReadResultForInputAcceptsRegularDeclaredArtifact(t *testing.T) {
 
 func inputWithRequiredOutput(root string) Input {
 	return Input{
-		SchemaVersion: Version,
-		WorkflowID:    "wf",
-		StepName:      "architect",
-		Attempt:       1,
-		Role:          "architect",
-		Goal:          "plan",
-		WorkspacePath: root,
-		StagingPath:   root,
+		SchemaVersion:  Version,
+		WorkflowID:     "wf",
+		StepName:       "architect",
+		Attempt:        1,
+		Role:           "architect",
+		Responsibility: "plan",
+		WorkspacePath:  root,
+		StagingPath:    root,
 		Outputs: []OutputObligation{{
 			Name:     "implementation-plan",
 			Version:  "v1",

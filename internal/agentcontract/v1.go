@@ -30,7 +30,7 @@ type Input struct {
 	StepName          string             `json:"stepName"`
 	Attempt           int32              `json:"attempt"`
 	Role              string             `json:"role"`
-	Goal              string             `json:"goal"`
+	Responsibility    string             `json:"responsibility"`
 	Inputs            []ArtifactInput    `json:"inputs,omitempty"`
 	Outputs           []OutputObligation `json:"outputs,omitempty"`
 	Capabilities      []string           `json:"capabilities,omitempty"`
@@ -38,6 +38,9 @@ type Input struct {
 	MCPServer         string             `json:"mcpServer,omitempty"`
 	WorkspacePath     string             `json:"workspacePath"`
 	StagingPath       string             `json:"stagingPath"`
+	ControlPath       string             `json:"controlPath,omitempty"`
+	ResultPath        string             `json:"resultPath,omitempty"`
+	AuditEventsPath   string             `json:"auditEventsPath,omitempty"`
 }
 
 type ArtifactOutput struct {
@@ -50,7 +53,13 @@ type Result struct {
 	SchemaVersion string           `json:"schemaVersion"`
 	Outcome       string           `json:"outcome"`
 	Message       string           `json:"message,omitempty"`
+	Error         *ResultError     `json:"error,omitempty"`
 	Artifacts     []ArtifactOutput `json:"artifacts,omitempty"`
+}
+
+type ResultError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func ReadInput(path string) (Input, error) {
@@ -119,11 +128,20 @@ func (i Input) Validate() error {
 	if i.SchemaVersion != Version {
 		return fmt.Errorf("unsupported input schema %q", i.SchemaVersion)
 	}
-	if i.WorkflowID == "" || i.StepName == "" || i.Attempt < 1 || i.Goal == "" {
-		return fmt.Errorf("workflowId, stepName, positive attempt, and goal are required")
+	if i.WorkflowID == "" || i.StepName == "" || i.Attempt < 1 || i.Responsibility == "" {
+		return fmt.Errorf("workflowId, stepName, positive attempt, and responsibility are required")
 	}
 	if !filepath.IsAbs(i.WorkspacePath) || !filepath.IsAbs(i.StagingPath) {
 		return fmt.Errorf("workspacePath and stagingPath must be absolute")
+	}
+	for name, path := range map[string]string{
+		"controlPath":     i.ControlPath,
+		"resultPath":      i.ResultPath,
+		"auditEventsPath": i.AuditEventsPath,
+	} {
+		if path != "" && !filepath.IsAbs(path) {
+			return fmt.Errorf("%s must be absolute when provided", name)
+		}
 	}
 	seen := map[string]struct{}{}
 	for _, output := range i.Outputs {
@@ -145,6 +163,9 @@ func (r Result) Validate(stagingRoot string) error {
 	}
 	if r.Outcome != "Succeeded" && r.Outcome != "Failed" && r.Outcome != "Intervention" {
 		return fmt.Errorf("invalid result outcome %q", r.Outcome)
+	}
+	if r.Error != nil && (r.Error.Code == "" || r.Error.Message == "") {
+		return fmt.Errorf("result error code and message are required when error is provided")
 	}
 	for _, artifact := range r.Artifacts {
 		if artifact.Contract == "" || artifact.Path == "" {

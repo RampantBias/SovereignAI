@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -65,5 +66,59 @@ func TestBuildTimelineProjectsEventForPlayback(t *testing.T) {
 	}
 	if string(timeline[0].Data) != `{"retryable":true}` {
 		t.Fatalf("data not projected: %s", timeline[0].Data)
+	}
+}
+
+func TestFileRecorderRoundTripsWorkflowEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	recorder := NewFileRecorder(path)
+	base := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	events := []Event{
+		{ID: "late", Type: "AgentResultAccepted", SchemaVersion: "v1", OccurredAt: base.Add(time.Minute), Subject: Subject{Workflow: "wf"}},
+		{ID: "early", Type: "AgentWrapperStarted", SchemaVersion: "v1", OccurredAt: base, Subject: Subject{Workflow: "wf"}},
+		{ID: "other", Type: "AgentWrapperStarted", SchemaVersion: "v1", OccurredAt: base, Subject: Subject{Workflow: "other"}},
+	}
+	for _, event := range events {
+		if err := recorder.Append(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	timeline, err := recorder.ListWorkflow(context.Background(), "wf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline) != 2 || timeline[0].ID != "early" || timeline[1].ID != "late" {
+		t.Fatalf("unexpected file timeline: %#v", timeline)
+	}
+	if !recorder.Has("AgentResultAccepted") {
+		t.Fatal("expected file recorder to find event type")
+	}
+}
+
+func TestIngestEventFileAppendsToRecorder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	fileRecorder := NewFileRecorder(path)
+	event := Event{
+		ID:            "runtime-1",
+		Type:          "AgentResultRejected",
+		SchemaVersion: "v1",
+		OccurredAt:    time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
+		Subject:       Subject{Workflow: "wf"},
+		Action:        "validate",
+		Outcome:       "rejected",
+		CorrelationID: "wf",
+	}
+	if err := fileRecorder.Append(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := NewMemoryRecorder()
+	count, err := IngestEventFile(context.Background(), recorder, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || !recorder.Has("AgentResultRejected") {
+		t.Fatalf("runtime event was not ingested: count=%d events=%#v", count, recorder.AllEvents())
 	}
 }

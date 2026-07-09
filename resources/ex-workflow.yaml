@@ -13,7 +13,7 @@ spec:
     - name: architect
       kind: Agent
       order: 1
-      goal: Produce an implementation plan for the supplied change request.
+      responsibility: Produce an implementation plan for the supplied change request.
       image: registry.internal/sovereign/software-dev-agent:dev
       executable: ["/domain-agent", "--role", "architect"]
       modelName: code-small
@@ -23,9 +23,22 @@ spec:
       outputs:
         - name: implementation-plan
           version: v1
-    - name: tests
-      kind: Utility
+    - name: test-writer
+      kind: Agent
       order: 2
+      responsibility: Use the implementation plan to build a test suite
+      image: registry.internal/sovereign/software-dev-agent:dev
+      executable: ["/domain-agent", "--role", "architect"]
+      modelName: code-small
+      requestedVRAMAllocation: 2048
+      maxAttempts: 2
+      capabilities: ["context.read", "artifact.publish"]
+      inputs:
+        - name: implementation-plan
+          version: v1
+    - name: tester
+      kind: Utility
+      order: 3
       goal: Execute the project test contract.
       maxAttempts: 1
       inputs:
