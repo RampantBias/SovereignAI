@@ -7,6 +7,7 @@ import (
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -23,6 +24,7 @@ import (
 type StepAttemptReconciler struct {
 	client.Client
 	Scheme         *runtime.Scheme
+	Audit          audit.Recorder
 	Now            func() time.Time
 	CollectorImage string
 }
@@ -97,8 +99,7 @@ func (r *StepAttemptReconciler) reconcileAgent(ctx context.Context, attempt *v1a
 	var pod corev1.Pod
 	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Status.PodRef}, &pod); err != nil {
 		if apierrors.IsNotFound(err) {
-			attempt.Status.PodRef = ""
-			return ctrl.Result{}, r.Status().Update(ctx, attempt)
+			return ctrl.Result{}, r.interrupt(ctx, attempt, "AgentPodLost", true)
 		}
 		return ctrl.Result{}, err
 	}
@@ -214,6 +215,9 @@ func (r *StepAttemptReconciler) ensureLease(ctx context.Context, attempt *v1alph
 	var lease v1alpha1.InferenceLease
 	err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: name}, &lease)
 	if err == nil {
+		if err := r.appendInferenceLeaseRequested(ctx, attempt, lease.Name); err != nil {
+			return nil, err
+		}
 		return &lease, nil
 	}
 	if !apierrors.IsNotFound(err) {
@@ -245,7 +249,14 @@ func (r *StepAttemptReconciler) ensureLease(ctx context.Context, attempt *v1alph
 	if err := r.Create(ctx, &lease); err != nil {
 		return nil, err
 	}
+	if err := r.appendInferenceLeaseRequested(ctx, attempt, lease.Name); err != nil {
+		return nil, err
+	}
 	return &lease, nil
+}
+
+func (r *StepAttemptReconciler) appendInferenceLeaseRequested(ctx context.Context, attempt *v1alpha1.StepAttempt, leaseName string) error {
+	return r.appendAttemptEvent(ctx, attempt, "InferenceLeaseRequested", "request", leaseName, "requested", "", map[string]string{"lease": leaseName}, nil)
 }
 
 func (r *StepAttemptReconciler) ensureAgentWorkload(ctx context.Context, attempt *v1alpha1.StepAttempt, endpoint string) error {
@@ -393,7 +404,10 @@ func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.
 		attempt.Status.CompletedAt = &now
 	}
 	apiMeta.SetStatusCondition(&attempt.Status.Conditions, metav1.Condition{Type: "Ready", Status: conditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: attempt.Generation})
-	return r.Status().Update(ctx, attempt)
+	if err := r.Status().Update(ctx, attempt); err != nil {
+		return err
+	}
+	return r.appendPhaseEvent(ctx, attempt, phase, reason)
 }
 
 func (r *StepAttemptReconciler) fail(ctx context.Context, attempt *v1alpha1.StepAttempt, reason string, retryable bool) error {
@@ -402,8 +416,101 @@ func (r *StepAttemptReconciler) fail(ctx context.Context, attempt *v1alpha1.Step
 	return r.setPhase(ctx, attempt, v1alpha1.PhaseFailed, reason, "attempt failed")
 }
 
+func (r *StepAttemptReconciler) interrupt(ctx context.Context, attempt *v1alpha1.StepAttempt, reason string, retryable bool) error {
+	attempt.Status.FailureReason = reason
+	attempt.Status.Retryable = retryable
+	return r.setPhase(ctx, attempt, v1alpha1.PhaseInterrupted, reason, "attempt interrupted")
+}
+
+func (r *StepAttemptReconciler) appendPhaseEvent(ctx context.Context, attempt *v1alpha1.StepAttempt, phase v1alpha1.ResourcePhase, reason string) error {
+	eventType, action, outcome := phaseEvent(attempt.Spec.Kind, phase, reason)
+	if eventType == "" {
+		return nil
+	}
+	references := make(map[string]string)
+	if attempt.Status.PodRef != "" {
+		references["pod"] = attempt.Status.PodRef
+	}
+	if attempt.Status.JobRef != "" {
+		references["job"] = attempt.Status.JobRef
+	}
+	if attempt.Spec.InferenceLeaseRef != "" {
+		references["lease"] = attempt.Spec.InferenceLeaseRef
+	}
+	if attempt.Status.ResultRef != "" {
+		references["result"] = attempt.Status.ResultRef
+	}
+	return r.appendAttemptEvent(ctx, attempt, eventType, action, attempt.Name, outcome, reason, references, nil)
+}
+
+func (r *StepAttemptReconciler) appendAttemptEvent(ctx context.Context, attempt *v1alpha1.StepAttempt, eventType, action, target, outcome, reason string, references map[string]string, data any) error {
+	if r.Audit == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	if r.Now != nil {
+		now = r.Now().UTC()
+	}
+	return audit.AppendEvent(ctx, r.Audit, audit.EventOptions{
+		Source:     "stepattempt-controller",
+		Type:       eventType,
+		OccurredAt: now,
+		Actor:      audit.Actor{Kind: "Controller", ID: "stepattempt-controller"},
+		Subject: audit.Subject{
+			Namespace: attempt.Namespace,
+			Workflow:  attempt.Spec.WorkflowRef,
+			Step:      attempt.Spec.StepName,
+			Attempt:   attempt.Spec.Attempt,
+		},
+		Action:        action,
+		Target:        target,
+		Outcome:       outcome,
+		Reason:        reason,
+		CorrelationID: attempt.Spec.WorkflowRef,
+		References:    references,
+		Data:          data,
+	})
+}
+
+func phaseEvent(kind v1alpha1.ExecutionKind, phase v1alpha1.ResourcePhase, reason string) (eventType, action, outcome string) {
+	switch phase {
+	case v1alpha1.PhasePreparing:
+		if reason == "JobCreated" {
+			return "UtilityJobCreated", "create", "created"
+		}
+		if reason == "PodCreated" {
+			return "StepAttemptPodCreated", "create", "created"
+		}
+	case v1alpha1.PhaseRunning:
+		return "StepAttemptStarted", "start", "started"
+	case v1alpha1.PhaseAwaitingApproval:
+		return "HumanApprovalRequested", "request", "awaitingApproval"
+	case v1alpha1.PhaseValidating:
+		return "ValidationRunCreated", "create", "created"
+	case v1alpha1.PhaseSucceeded:
+		if kind == v1alpha1.ExecutionKindUtility {
+			return "UtilityJobSucceeded", "complete", "succeeded"
+		}
+		if kind == v1alpha1.ExecutionKindValidation {
+			return "ValidationRunReady", "complete", "succeeded"
+		}
+		return "StepAttemptSucceeded", "complete", "succeeded"
+	case v1alpha1.PhaseFailed:
+		if kind == v1alpha1.ExecutionKindUtility {
+			return "UtilityJobFailed", "complete", "failed"
+		}
+		if kind == v1alpha1.ExecutionKindValidation {
+			return "ValidationRunFailed", "complete", "failed"
+		}
+		return "StepAttemptFailed", "complete", "failed"
+	case v1alpha1.PhaseInterrupted:
+		return "StepAttemptInterrupted", "interrupt", "interrupted"
+	}
+	return "", "", ""
+}
+
 func terminalAttempt(phase v1alpha1.ResourcePhase) bool {
-	return phase == v1alpha1.PhaseSucceeded || phase == v1alpha1.PhaseFailed || phase == v1alpha1.PhaseCancelled
+	return phase == v1alpha1.PhaseSucceeded || phase == v1alpha1.PhaseFailed || phase == v1alpha1.PhaseCancelled || phase == v1alpha1.PhaseInterrupted
 }
 
 func conditionStatus(phase v1alpha1.ResourcePhase) metav1.ConditionStatus {

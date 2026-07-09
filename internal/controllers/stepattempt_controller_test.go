@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,7 +72,8 @@ func TestUtilityAttemptCreatesNonRetryingJob(t *testing.T) {
 		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.StepAttempt{}).WithObjects(attempt).Build()
-	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme}
+	recorder := audit.NewMemoryRecorder()
+	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme, Audit: recorder}
 	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "wf", Name: attempt.Name}}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
@@ -82,6 +84,46 @@ func TestUtilityAttemptCreatesNonRetryingJob(t *testing.T) {
 	}
 	if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 {
 		t.Fatalf("utility job backoff = %v, want 0", job.Spec.BackoffLimit)
+	}
+	if !recorder.Has("UtilityJobCreated") {
+		t.Fatalf("expected UtilityJobCreated audit event, got %#v", recorder.AllEvents())
+	}
+}
+
+func TestAgentAttemptMarksMissingPodInterrupted(t *testing.T) {
+	scheme := attemptScheme(t)
+	attempt := &v1alpha1.StepAttempt{
+		ObjectMeta: metav1.ObjectMeta{Name: "developer-001", Namespace: "wf", Labels: map[string]string{LabelWorkflow: "wf"}},
+		Spec: v1alpha1.StepAttemptSpec{
+			WorkflowRef: "wf",
+			StepName:    "developer",
+			Attempt:     1,
+			Kind:        v1alpha1.ExecutionKindAgent,
+			Image:       "agent@sha256:test",
+		},
+		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhaseRunning, PodRef: "developer-001"},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.StepAttempt{}).WithObjects(attempt).Build()
+	recorder := audit.NewMemoryRecorder()
+	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme, Audit: recorder}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "wf", Name: attempt.Name}}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	var updated v1alpha1.StepAttempt
+	if err := client.Get(context.Background(), request.NamespacedName, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Phase != v1alpha1.PhaseInterrupted {
+		t.Fatalf("phase = %s, want %s", updated.Status.Phase, v1alpha1.PhaseInterrupted)
+	}
+	if !updated.Status.Retryable || updated.Status.FailureReason != "AgentPodLost" {
+		t.Fatalf("unexpected retry state: retryable=%v reason=%q", updated.Status.Retryable, updated.Status.FailureReason)
+	}
+	if !recorder.Has("StepAttemptInterrupted") {
+		t.Fatalf("expected StepAttemptInterrupted audit event, got %#v", recorder.AllEvents())
 	}
 }
 
