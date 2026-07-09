@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/validation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -18,6 +19,8 @@ const ValidationFinalizer = "sovereign-ai.io/validation-cleanup"
 type ValidationRunReconciler struct {
 	client.Client
 	Provider validation.Provider
+	Audit    audit.Recorder
+	Now      func() time.Time
 }
 
 func (r *ValidationRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -57,7 +60,10 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		run.Status.ProviderRef = reference
 		run.Status.Phase = v1alpha1.PhaseValidating
 		run.Status.ObservedGeneration = run.Generation
-		return ctrl.Result{}, r.Status().Update(ctx, &run)
+		if err := r.Status().Update(ctx, &run); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.appendValidationEvent(ctx, &run, "ValidationRunCreated", "create", "created", "")
 	}
 	status, err := r.Provider.Status(ctx, run.Status.ProviderRef)
 	if err != nil {
@@ -71,7 +77,42 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	} else {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-	return ctrl.Result{}, r.Status().Update(ctx, &run)
+	if err := r.Status().Update(ctx, &run); err != nil {
+		return ctrl.Result{}, err
+	}
+	eventType := "ValidationRunReady"
+	outcome := "ready"
+	if run.Status.Phase == v1alpha1.PhaseFailed {
+		eventType = "ValidationRunFailed"
+		outcome = "failed"
+	}
+	return ctrl.Result{}, r.appendValidationEvent(ctx, &run, eventType, "observe", outcome, string(run.Status.Phase))
+}
+
+func (r *ValidationRunReconciler) appendValidationEvent(ctx context.Context, run *v1alpha1.ValidationRun, eventType, action, outcome, reason string) error {
+	return appendControllerEvent(ctx, r.Audit, "validationrun-controller", r.Now, audit.EventOptions{
+		Type: eventType,
+		Subject: audit.Subject{
+			Namespace: run.Namespace,
+			Workflow:  run.Spec.WorkflowRef,
+		},
+		Action:  action,
+		Target:  run.Name,
+		Outcome: outcome,
+		Reason:  reason,
+		References: map[string]string{
+			"validationRun": run.Name,
+			"providerRef":   run.Status.ProviderRef,
+			"validationURL": run.Status.AccessURL,
+			"commit":        run.Spec.Commit,
+			"imageDigest":   run.Spec.ImageDigest,
+		},
+		Data: map[string]any{
+			"provider":    run.Spec.Provider,
+			"overlayPath": run.Spec.OverlayPath,
+			"destination": run.Spec.Destination,
+		},
+	})
 }
 
 func (r *ValidationRunReconciler) providerRequest(ctx context.Context, run *v1alpha1.ValidationRun) (validation.Request, error) {
