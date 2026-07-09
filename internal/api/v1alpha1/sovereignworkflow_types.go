@@ -25,7 +25,7 @@ type StepConfig struct {
 	Name                    string              `json:"name"`
 	Kind                    ExecutionKind       `json:"kind"`
 	Image                   string              `json:"image,omitempty"`
-	Goal                    string              `json:"goal"`
+	Responsibility          string              `json:"responsibility"`
 	Executable              []string            `json:"executable,omitempty"`
 	Capabilities            []string            `json:"capabilities,omitempty"`
 	Inputs                  []ArtifactReference `json:"inputs,omitempty"`

@@ -39,7 +39,7 @@ spec:
     - name: tester
       kind: Utility
       order: 3
-      goal: Execute the project test contract.
+      responsibility: Execute the project test contract.
       maxAttempts: 1
       inputs:
         - name: implementation-plan

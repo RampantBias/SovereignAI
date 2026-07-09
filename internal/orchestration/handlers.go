@@ -356,10 +356,10 @@ func (c *SovereignWorkflowController) updateStepPhase(sw *v1alpha1.SovereignWork
 
 // 	// Create task to submit to orchestrator
 // 	task := Task{
-// 		StepName:   step.Name,
-// 		WorkflowID: workflow.ID,
-// 		Goal:       "PLACEHOLDER",
-// 		CreatedAt:  time.Now(),
+// 		StepName:       step.Name,
+// 		WorkflowID:     workflow.ID,
+// 		Responsibility: "PLACEHOLDER",
+// 		CreatedAt:      time.Now(),
 // 	}
 
 // 	// Convert task to json format

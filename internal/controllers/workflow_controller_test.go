@@ -24,7 +24,7 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 	}
 	workflow := &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
-		Spec:       v1alpha1.SovereignWorkflowSpec{ProjectName: "project", WorkflowID: "wf-1", Steps: []v1alpha1.StepConfig{{Name: "architect", Kind: v1alpha1.ExecutionKindAgent, Goal: "plan"}}},
+		Spec:       v1alpha1.SovereignWorkflowSpec{ProjectName: "project", WorkflowID: "wf-1", Steps: []v1alpha1.StepConfig{{Name: "architect", Kind: v1alpha1.ExecutionKindAgent, Responsibility: "plan"}}},
 		Status:     v1alpha1.SovereignWorkflowStatus{Phase: string(v1alpha1.PhasePending)},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).

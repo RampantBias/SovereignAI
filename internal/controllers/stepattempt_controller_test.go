@@ -28,7 +28,7 @@ func TestAgentAttemptCreatesRestrictedPod(t *testing.T) {
 	attempt := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", Labels: map[string]string{LabelWorkflow: "wf"}},
 		Spec: v1alpha1.StepAttemptSpec{WorkflowRef: "wf", StepName: "architect", Attempt: 1, Kind: v1alpha1.ExecutionKindAgent,
-			Goal: "plan", Image: "agent@sha256:test", Executable: []string{"/domain-agent", "--role", "architect"},
+			Responsibility: "plan", Image: "agent@sha256:test", Executable: []string{"/domain-agent", "--role", "architect"},
 			OutputContracts: []v1alpha1.ContractReference{{Name: "implementation-plan", Version: "v1"}}},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).
@@ -94,7 +94,7 @@ func TestUtilityAttemptCreatesNonRetryingJob(t *testing.T) {
 	attempt := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{Name: "tests-001", Namespace: "wf"},
 		Spec: v1alpha1.StepAttemptSpec{WorkflowRef: "wf", StepName: "tests", Attempt: 1, Kind: v1alpha1.ExecutionKindUtility,
-			Goal: "test", Image: "utility@sha256:test", Executable: []string{"/utility", "test"}},
+			Responsibility: "test", Image: "utility@sha256:test", Executable: []string{"/utility", "test"}},
 		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.StepAttempt{}).WithObjects(attempt).Build()

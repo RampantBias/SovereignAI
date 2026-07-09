@@ -35,11 +35,11 @@ type SovereignWorkflowController struct {
 
 // Task represents the order details sent to the agent pod
 type Task struct {
-	StepName   string            `json:"step_name"`
-	WorkflowID string            `json:"workflow_id"`
-	Goal       string            `json:"goal"`
-	Parameters map[string]string `json:"parameters"`
-	CreatedAt  time.Time         `json:"created_at"`
+	StepName       string            `json:"step_name"`
+	WorkflowID     string            `json:"workflow_id"`
+	Responsibility string            `json:"responsibility"`
+	Parameters     map[string]string `json:"parameters"`
+	CreatedAt      time.Time         `json:"created_at"`
 }
 
 // Status represents the result sent back by the agent pod

@@ -204,7 +204,7 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 			StepName:        step.Name,
 			Attempt:         number,
 			Kind:            step.Kind,
-			Goal:            step.Goal,
+			Responsibility:  step.Responsibility,
 			Image:           step.Image,
 			Executable:      append([]string(nil), step.Executable...),
 			Inputs:          append([]v1alpha1.ArtifactReference(nil), step.Inputs...),

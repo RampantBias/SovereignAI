@@ -320,7 +320,7 @@ func (r *StepAttemptReconciler) ensureAgentWorkload(ctx context.Context, attempt
 		StepName:          attempt.Spec.StepName,
 		Attempt:           attempt.Spec.Attempt,
 		Role:              attempt.Spec.StepName,
-		Responsibility:    attempt.Spec.Goal,
+		Responsibility:    attempt.Spec.Responsibility,
 		Capabilities:      append([]string(nil), attempt.Spec.Capabilities...),
 		Outputs:           outputObligations,
 		InferenceEndpoint: endpoint,

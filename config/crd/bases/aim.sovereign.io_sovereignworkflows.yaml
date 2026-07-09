@@ -64,7 +64,7 @@ spec:
                       items:
                         type: string
                       type: array
-                    goal:
+                    responsibility:
                       type: string
                     image:
                       type: string
@@ -115,7 +115,7 @@ spec:
                     timeout:
                       type: string
                   required:
-                  - goal
+                  - responsibility
                   - kind
                   - name
                   - order
