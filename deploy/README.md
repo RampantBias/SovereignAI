@@ -60,6 +60,13 @@ bash deploy/linux/apply-smoke-workflow.sh success
 bash deploy/linux/apply-smoke-workflow.sh invalid-result
 ```
 
+To show conflict retry logs while debugging reconciliation timing:
+
+```bash
+kubectl -n sovereign-orchestrator-system set env deploy/sovereign-controller SOVEREIGN_LOG_VERBOSITY=1
+kubectl -n sovereign-orchestrator-system logs deploy/sovereign-controller -f
+```
+
 ## Uninstall
 
 Remove control-plane workloads while keeping CRDs and workflow data:

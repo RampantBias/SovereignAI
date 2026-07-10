@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -50,6 +51,15 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 
 	// Check for deletion
 	if !attempt.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
+	// Check for namespace termination
+	terminating, err := namespaceTerminating(ctx, r.Client, attempt.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if terminating {
 		return ctrl.Result{}, nil
 	}
 
@@ -361,6 +371,7 @@ func buildAgentPod(attempt *v1alpha1.StepAttempt, pvcName, configName string) *c
 	readOnly := true
 	allowPrivilegeEscalation := false
 	runAsUser := int64(65532)
+	fsGroup := runAsUser
 
 	executable, _ := json.Marshal(attempt.Spec.Executable)
 	resultPath := attemptResultPath(attempt.Name)
@@ -368,7 +379,7 @@ func buildAgentPod(attempt *v1alpha1.StepAttempt, pvcName, configName string) *c
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace, Labels: map[string]string{LabelWorkflow: attempt.Labels[LabelWorkflow], LabelStep: attempt.Spec.StepName, "sovereign-ai.io/attempt": attempt.Name}},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
-			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAsUser},
+			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAsUser, FSGroup: &fsGroup},
 			Containers: []corev1.Container{{
 				Name: "agent", Image: attempt.Spec.Image, Command: []string{"/agent-wrapper"},
 				Args:            []string{"--input", "/control/input.json", "--result", resultPath},
@@ -466,29 +477,40 @@ func collectorAuditEnv() []corev1.EnvVar {
 }
 
 func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.StepAttempt, phase v1alpha1.ResourcePhase, reason, message string) error {
-	if attempt.Status.Phase == phase {
-		condition := apiMeta.FindStatusCondition(attempt.Status.Conditions, "Ready")
-		if condition != nil && condition.Reason == reason && condition.Message == message {
-			return nil
+	updated, changed, err := r.updateAttemptStatus(ctx, client.ObjectKeyFromObject(attempt), func(latest *v1alpha1.StepAttempt) bool {
+		if terminalAttempt(latest.Status.Phase) && latest.Status.Phase != phase {
+			return false
 		}
-	}
-	now := metav1.Now()
-	if r.Now != nil {
-		now = metav1.NewTime(r.Now())
-	}
-	attempt.Status.Phase = phase
-	attempt.Status.ObservedGeneration = attempt.Generation
-	if phase == v1alpha1.PhaseRunning && attempt.Status.StartedAt == nil {
-		attempt.Status.StartedAt = &now
-	}
-	if terminalAttempt(phase) {
-		attempt.Status.CompletedAt = &now
-	}
-	apiMeta.SetStatusCondition(&attempt.Status.Conditions, metav1.Condition{Type: "Ready", Status: conditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: attempt.Generation})
-	if err := r.Status().Update(ctx, attempt); err != nil {
+		if latest.Status.Phase == phase {
+			condition := apiMeta.FindStatusCondition(latest.Status.Conditions, "Ready")
+			if condition != nil && condition.Reason == reason && condition.Message == message {
+				return false
+			}
+		}
+		carryAttemptStatusIntent(attempt, latest)
+		now := metav1.Now()
+		if r.Now != nil {
+			now = metav1.NewTime(r.Now())
+		}
+		latest.Status.Phase = phase
+		latest.Status.ObservedGeneration = latest.Generation
+		if phase == v1alpha1.PhaseRunning && latest.Status.StartedAt == nil {
+			latest.Status.StartedAt = &now
+		}
+		if terminalAttempt(phase) {
+			latest.Status.CompletedAt = &now
+			latest.Status.Retryable = attempt.Status.Retryable
+		}
+		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: conditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: latest.Generation})
+		return true
+	})
+	if err != nil {
 		return err
 	}
-	return r.appendPhaseEvent(ctx, attempt, phase, reason)
+	if !changed {
+		return nil
+	}
+	return r.appendPhaseEvent(ctx, updated, phase, reason)
 }
 
 func (r *StepAttemptReconciler) fail(ctx context.Context, attempt *v1alpha1.StepAttempt, reason string, retryable bool) error {
@@ -501,6 +523,51 @@ func (r *StepAttemptReconciler) interrupt(ctx context.Context, attempt *v1alpha1
 	attempt.Status.FailureReason = reason
 	attempt.Status.Retryable = retryable
 	return r.setPhase(ctx, attempt, v1alpha1.PhaseInterrupted, reason, "attempt interrupted")
+}
+
+func (r *StepAttemptReconciler) updateAttemptStatus(ctx context.Context, key types.NamespacedName, mutate func(*v1alpha1.StepAttempt) bool) (*v1alpha1.StepAttempt, bool, error) {
+	logger := ctrl.LoggerFrom(ctx).WithValues("stepAttempt", key.String())
+	var updated v1alpha1.StepAttempt
+	changed := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.StepAttempt
+		if err := r.Get(ctx, key, &latest); err != nil {
+			return err
+		}
+		if !mutate(&latest) {
+			updated = latest
+			changed = false
+			return nil
+		}
+		if err := r.Status().Update(ctx, &latest); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.V(1).Info("retrying step attempt status update after conflict", "resourceVersion", latest.ResourceVersion)
+			}
+			return err
+		}
+		updated = latest
+		changed = true
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return &updated, changed, nil
+}
+
+func carryAttemptStatusIntent(source, target *v1alpha1.StepAttempt) {
+	if source.Status.PodRef != "" {
+		target.Status.PodRef = source.Status.PodRef
+	}
+	if source.Status.JobRef != "" {
+		target.Status.JobRef = source.Status.JobRef
+	}
+	if source.Status.ResultRef != "" {
+		target.Status.ResultRef = source.Status.ResultRef
+	}
+	if source.Status.FailureReason != "" {
+		target.Status.FailureReason = source.Status.FailureReason
+	}
 }
 
 func (r *StepAttemptReconciler) appendPhaseEvent(ctx context.Context, attempt *v1alpha1.StepAttempt, phase v1alpha1.ResourcePhase, reason string) error {

@@ -58,6 +58,9 @@ func TestAgentAttemptCreatesRestrictedPod(t *testing.T) {
 	if len(security.Capabilities.Drop) != 1 || security.Capabilities.Drop[0] != "ALL" {
 		t.Fatalf("agent capabilities were not dropped: %#v", security.Capabilities)
 	}
+	if pod.Spec.SecurityContext.FSGroup == nil || *pod.Spec.SecurityContext.FSGroup != 65532 {
+		t.Fatalf("agent pod fsGroup = %v, want 65532", pod.Spec.SecurityContext.FSGroup)
+	}
 	var input corev1.ConfigMap
 	if err := client.Get(context.Background(), types.NamespacedName{Namespace: "wf", Name: attempt.Name + "-input"}, &input); err != nil {
 		t.Fatal(err)
@@ -113,6 +116,48 @@ func TestUtilityAttemptCreatesNonRetryingJob(t *testing.T) {
 	}
 	if !recorder.Has("UtilityJobCreated") {
 		t.Fatalf("expected UtilityJobCreated audit event, got %#v", recorder.AllEvents())
+	}
+}
+
+func TestStepAttemptSkipsNormalReconcileWhenNamespaceTerminating(t *testing.T) {
+	scheme := attemptScheme(t)
+	now := metav1.Now()
+	namespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "wf",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"kubernetes"},
+		},
+	}
+	attempt := &v1alpha1.StepAttempt{
+		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", Labels: map[string]string{LabelWorkflow: "wf"}},
+		Spec: v1alpha1.StepAttemptSpec{
+			WorkflowRef:    "wf",
+			StepName:       "architect",
+			Attempt:        1,
+			Kind:           v1alpha1.ExecutionKindAgent,
+			Responsibility: "plan",
+			Image:          "agent@sha256:test",
+			Executable:     []string{"/domain-agent"},
+		},
+		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.StepAttempt{}).
+		WithObjects(namespace, attempt).Build()
+	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "wf", Name: attempt.Name}}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+
+	var pods corev1.PodList
+	if err := client.List(context.Background(), &pods); err != nil {
+		t.Fatal(err)
+	}
+	if len(pods.Items) != 0 {
+		t.Fatalf("expected no pods while namespace terminates, got %#v", pods.Items)
 	}
 }
 

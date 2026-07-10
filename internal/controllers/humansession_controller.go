@@ -69,6 +69,15 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
+	// Check for namespace termination
+	terminating, err := namespaceTerminating(ctx, r.Client, session.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if terminating {
+		return ctrl.Result{}, nil
+	}
+
 	// Trigger new session
 	if session.Status.Phase == "" {
 		ttl := 2 * time.Hour

@@ -11,6 +11,8 @@ import (
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/validation"
+	"github.com/go-logr/logr"
+	"go.uber.org/zap/zapcore"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -38,7 +40,7 @@ func init() {
 func main() {
 	// Controller-runtime signal observer context
 	ctx := ctrl.SetupSignalHandler()
-	ctrl.SetLogger(zap.New(zap.UseDevMode(envBool("SOVEREIGN_DEV_LOGGING", false))))
+	ctrl.SetLogger(newLogger())
 
 	log.Println("Initializing Sovereign Workflow Controller Substrate...")
 
@@ -176,3 +178,14 @@ func envInt(name string, fallback int) int {
 }
 
 func durationPtr(value time.Duration) *time.Duration { return &value }
+
+func newLogger() logr.Logger {
+	opts := []zap.Opts{zap.UseDevMode(envBool("SOVEREIGN_DEV_LOGGING", false))}
+	if value := os.Getenv("SOVEREIGN_LOG_VERBOSITY"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err == nil {
+			opts = append(opts, zap.Level(zapcore.Level(-parsed)))
+		}
+	}
+	return zap.New(opts...)
+}

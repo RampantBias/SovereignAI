@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -52,14 +53,25 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	// Check if workflow has been deleted
 	if !workflow.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(&workflow, WorkflowFinalizer) {
-			controllerutil.RemoveFinalizer(&workflow, WorkflowFinalizer)
-			return ctrl.Result{}, r.Update(ctx, &workflow)
+			return ctrl.Result{}, r.updateWorkflow(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+				controllerutil.RemoveFinalizer(latest, WorkflowFinalizer)
+			})
 		}
 		return ctrl.Result{}, nil
 	}
 	if !controllerutil.ContainsFinalizer(&workflow, WorkflowFinalizer) {
-		controllerutil.AddFinalizer(&workflow, WorkflowFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &workflow)
+		return ctrl.Result{}, r.updateWorkflow(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+			controllerutil.AddFinalizer(latest, WorkflowFinalizer)
+		})
+	}
+
+	// Check for namespace termination
+	terminating, err := namespaceTerminating(ctx, r.Client, workflow.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if terminating {
+		return ctrl.Result{}, nil
 	}
 
 	// Ensure workflow has steps
@@ -69,9 +81,11 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 
 	// Trigger new workflow into pending
 	if workflow.Status.Phase == "" {
-		workflow.Status.Phase = string(v1alpha1.PhasePending)
-		workflow.Status.ObservedGeneration = workflow.Generation
-		return ctrl.Result{}, r.Status().Update(ctx, &workflow)
+		_, err := r.updateWorkflowStatus(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+			latest.Status.Phase = string(v1alpha1.PhasePending)
+			latest.Status.ObservedGeneration = latest.Generation
+		})
+		return ctrl.Result{}, err
 	}
 
 	// Verify there is a pvc registered (skipping actual validation)
@@ -108,11 +122,13 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	case v1alpha1.PhaseSucceeded:
 		next, found := nextStep(workflow.Spec.Steps, attempt.Spec.StepName)
 		if !found {
-			workflow.Status.Phase = string(v1alpha1.PhaseSucceeded)
-			workflow.Status.ActiveStepName = ""
-			workflow.Status.ActiveAttemptRef = ""
-			workflow.Status.ObservedGeneration = workflow.Generation
-			return ctrl.Result{}, r.Status().Update(ctx, &workflow)
+			_, err := r.updateWorkflowStatus(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+				latest.Status.Phase = string(v1alpha1.PhaseSucceeded)
+				latest.Status.ActiveStepName = ""
+				latest.Status.ActiveAttemptRef = ""
+				latest.Status.ObservedGeneration = latest.Generation
+			})
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, r.createAttempt(ctx, &workflow, next, 1)
 	// On PhaseFailed or PhaseInterrupted, we need to evaluate whether retry is possible
@@ -183,11 +199,13 @@ func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1al
 	}
 
 	// Updates PVC reference on workflow
-	workflow.Status.PvcName = name
-	if err := r.Status().Update(ctx, workflow); err != nil {
+	updated, err := r.updateWorkflowStatus(ctx, client.ObjectKeyFromObject(workflow), func(latest *v1alpha1.SovereignWorkflow) {
+		latest.Status.PvcName = name
+	})
+	if err != nil {
 		return err
 	}
-	return r.appendWorkflowEvent(ctx, workflow, "WorkspaceCreated", "", 0, "create", name, "created", "", map[string]string{"pvc": name}, map[string]string{"requestedVolumeSize": workflow.Spec.RequestedVolumeSize})
+	return r.appendWorkflowEvent(ctx, updated, "WorkspaceCreated", "", 0, "create", name, "created", "", map[string]string{"pvc": name}, map[string]string{"requestedVolumeSize": updated.Spec.RequestedVolumeSize})
 }
 
 // CreateAttempt generates a new StepAttempt CRD
@@ -227,27 +245,73 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 	if err := r.Create(ctx, attempt); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
-	workflow.Status.Phase = string(v1alpha1.PhaseRunning)
-	workflow.Status.ActiveStepName = step.Name
-	workflow.Status.ActiveAttemptRef = name
-	workflow.Status.ObservedGeneration = workflow.Generation
-	if err := r.Status().Update(ctx, workflow); err != nil {
+	updated, err := r.updateWorkflowStatus(ctx, client.ObjectKeyFromObject(workflow), func(latest *v1alpha1.SovereignWorkflow) {
+		latest.Status.Phase = string(v1alpha1.PhaseRunning)
+		latest.Status.ActiveStepName = step.Name
+		latest.Status.ActiveAttemptRef = name
+		latest.Status.ObservedGeneration = latest.Generation
+	})
+	if err != nil {
 		return err
 	}
-	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptCreated", step.Name, number, "create", name, "created", "", map[string]string{"attempt": name}, nil)
+	return r.appendWorkflowEvent(ctx, updated, "StepAttemptCreated", step.Name, number, "create", name, "created", "", map[string]string{"attempt": name}, nil)
 }
 
 // Update Workflow status to failed
 func (r *WorkflowReconciler) failWorkflow(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, reason, message string) error {
-	workflow.Status.Phase = string(v1alpha1.PhaseFailed)
-	workflow.Status.Conditions = []metav1.Condition{{
-		Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: message,
-		ObservedGeneration: workflow.Generation, LastTransitionTime: metav1.Now(),
-	}}
-	if err := r.Status().Update(ctx, workflow); err != nil {
+	updated, err := r.updateWorkflowStatus(ctx, client.ObjectKeyFromObject(workflow), func(latest *v1alpha1.SovereignWorkflow) {
+		latest.Status.Phase = string(v1alpha1.PhaseFailed)
+		latest.Status.Conditions = []metav1.Condition{{
+			Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: message,
+			ObservedGeneration: latest.Generation, LastTransitionTime: metav1.Now(),
+		}}
+	})
+	if err != nil {
 		return err
 	}
-	return r.appendWorkflowEvent(ctx, workflow, "WorkflowFailed", workflow.Status.ActiveStepName, 0, "complete", workflow.Name, "failed", reason, nil, map[string]string{"message": message})
+	return r.appendWorkflowEvent(ctx, updated, "WorkflowFailed", updated.Status.ActiveStepName, 0, "complete", updated.Name, "failed", reason, nil, map[string]string{"message": message})
+}
+
+func (r *WorkflowReconciler) updateWorkflow(ctx context.Context, key types.NamespacedName, mutate func(*v1alpha1.SovereignWorkflow)) error {
+	logger := ctrl.LoggerFrom(ctx).WithValues("workflow", key.String())
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.SovereignWorkflow
+		if err := r.Get(ctx, key, &latest); err != nil {
+			return err
+		}
+		mutate(&latest)
+		if err := r.Update(ctx, &latest); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.V(1).Info("retrying workflow update after conflict", "resourceVersion", latest.ResourceVersion)
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *WorkflowReconciler) updateWorkflowStatus(ctx context.Context, key types.NamespacedName, mutate func(*v1alpha1.SovereignWorkflow)) (*v1alpha1.SovereignWorkflow, error) {
+	logger := ctrl.LoggerFrom(ctx).WithValues("workflow", key.String())
+	var updated v1alpha1.SovereignWorkflow
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.SovereignWorkflow
+		if err := r.Get(ctx, key, &latest); err != nil {
+			return err
+		}
+		mutate(&latest)
+		if err := r.Status().Update(ctx, &latest); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.V(1).Info("retrying workflow status update after conflict", "resourceVersion", latest.ResourceVersion)
+			}
+			return err
+		}
+		updated = latest
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 // Handles converted recovery/retry into workflow events

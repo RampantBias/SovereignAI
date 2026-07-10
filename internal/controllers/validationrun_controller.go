@@ -32,6 +32,8 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if err := r.Get(ctx, request.NamespacedName, &run); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	// Check for deletion
 	if !run.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(&run, ValidationFinalizer) {
 			if run.Status.ProviderRef != "" {
@@ -44,6 +46,16 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		}
 		return ctrl.Result{}, nil
 	}
+
+	// Check for namespace termination
+	terminating, err := namespaceTerminating(ctx, r.Client, workflow.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if terminating {
+		return ctrl.Result{}, nil
+	}
+
 	if !controllerutil.ContainsFinalizer(&run, ValidationFinalizer) {
 		controllerutil.AddFinalizer(&run, ValidationFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &run)

@@ -30,6 +30,15 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	phase := v1alpha1.PhaseSucceeded
 	condition := metav1.Condition{Type: "Valid", Status: metav1.ConditionTrue, Reason: "ContractAccepted", Message: "artifact metadata is valid", ObservedGeneration: artifact.Generation}
 
+	// Check for namespace termination
+	terminating, err := namespaceTerminating(ctx, r.Client, artifact.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if terminating {
+		return ctrl.Result{}, nil
+	}
+
 	// Verify validity of artifact metadata with a valid digest, contract name & version, and location
 	if !strings.HasPrefix(artifact.Spec.Digest, "sha256:") || artifact.Spec.Contract.Name == "" || artifact.Spec.Contract.Version == "" || artifact.Spec.Path == "" {
 		phase = v1alpha1.PhaseFailed
