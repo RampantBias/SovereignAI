@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sovereign-controller
+  namespace: sovereign-orchestrator-system
+  labels:
+    app.kubernetes.io/name: sovereign-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sovereign-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sovereign-controller
+    spec:
+      serviceAccountName: sovereign-controller
+      containers:
+        - name: controller
+          image: sovereign-controller:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SOVEREIGN_SYSTEM_NAMESPACE
+              value: sovereign-orchestrator-system
+            - name: SOVEREIGN_STORAGE_CLASS
+              value: local-path
+            - name: SOVEREIGN_COLLECTOR_IMAGE
+              value: sovereign-artifact-collector:dev
+            - name: SOVEREIGN_DEV_LOGGING
+              value: "true"
+          ports:
+            - name: metrics
+              containerPort: 8081
+            - name: health
+              containerPort: 8082
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health

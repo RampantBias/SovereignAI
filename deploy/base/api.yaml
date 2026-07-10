@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sovereign-api
+  namespace: sovereign-orchestrator-system
+  labels:
+    app.kubernetes.io/name: sovereign-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sovereign-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sovereign-api
+    spec:
+      serviceAccountName: sovereign-controller
+      containers:
+        - name: api
+          image: sovereign-api:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 8080

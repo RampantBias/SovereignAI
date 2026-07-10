@@ -1,0 +1,26 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: smoke-invalid-result
+  namespace: sovereign-smoke
+  labels:
+    sovereign-ai.io/project: smoke
+    sovereign-ai.io/workflow-id: smoke-invalid-result
+spec:
+  projectRef: smoke
+  workflowId: smoke-invalid-result
+  definitionRevision: smoke-v1
+  classification: internal
+  requestedVolumeSize: 250Mi
+  steps:
+    - name: contract-writer
+      kind: Agent
+      order: 1
+      responsibility: Produce an intentionally invalid result contract.
+      image: sovereign-smoke-agent:dev
+      executable: ["/smoke-agent", "--mode", "invalid-result", "--sleep", "3s"]
+      maxAttempts: 1
+      capabilities: ["artifact.publish"]
+      outputs:
+        - name: smoke-report
+          version: v1

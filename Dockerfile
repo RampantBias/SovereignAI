@@ -7,6 +7,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/controller ./cmd/controller
 RUN CGO_ENABLED=0 go build -trimpath -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 go build -trimpath -o /out/cli ./cmd/cli
 RUN CGO_ENABLED=0 go build -trimpath -o /out/agent-wrapper ./cmd/agent-wrapper
+RUN CGO_ENABLED=0 go build -trimpath -o /out/smoke-agent ./cmd/smoke-agent
 RUN CGO_ENABLED=0 go build -trimpath -o /out/mcp-server ./cmd/mcp-server
 RUN CGO_ENABLED=0 go build -trimpath -o /out/artifact-collector ./cmd/artifact-collector
 
@@ -24,6 +25,11 @@ ENTRYPOINT ["/cli"]
 
 FROM gcr.io/distroless/static-debian12:nonroot AS agent-wrapper
 COPY --from=builder /out/agent-wrapper /agent-wrapper
+ENTRYPOINT ["/agent-wrapper"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS smoke-agent
+COPY --from=builder /out/agent-wrapper /agent-wrapper
+COPY --from=builder /out/smoke-agent /smoke-agent
 ENTRYPOINT ["/agent-wrapper"]
 
 FROM gcr.io/distroless/static-debian12:nonroot AS mcp-server

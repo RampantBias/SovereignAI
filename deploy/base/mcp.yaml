@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sovereign-mcp
+  namespace: sovereign-orchestrator-system
+  labels:
+    app.kubernetes.io/name: sovereign-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sovereign-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sovereign-mcp
+    spec:
+      serviceAccountName: sovereign-controller
+      containers:
+        - name: mcp
+          image: sovereign-mcp-server:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SOVEREIGN_MCP_REQUIRE_IDENTITY
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http

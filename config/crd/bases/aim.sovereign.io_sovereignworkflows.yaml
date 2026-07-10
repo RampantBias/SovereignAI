@@ -229,24 +229,8 @@ spec:
                       type: string
                     stepName:
                       type: string
-                  required:
-                  - assignedNode
-                  - gpuIndex
-                  - inferenceEndpointUrl
-                  - inferencePodName
-                  - phase
-                  - podName
-                  - stepName
                   type: object
                 type: array
-            required:
-            - activeStep
-            - allocatedNode
-            - conditions
-            - phase
-            - pvcName
-            - requestedVRAMAllocation
-            - stepStatuses
             type: object
         type: object
     served: true

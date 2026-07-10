@@ -1,0 +1,26 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: smoke-contract-demo
+  namespace: sovereign-smoke
+  labels:
+    sovereign-ai.io/project: smoke
+    sovereign-ai.io/workflow-id: smoke-contract-demo
+spec:
+  projectRef: smoke
+  workflowId: smoke-contract-demo
+  definitionRevision: smoke-v1
+  classification: internal
+  requestedVolumeSize: 250Mi
+  steps:
+    - name: contract-writer
+      kind: Agent
+      order: 1
+      responsibility: Produce a simple contract-compliant smoke artifact.
+      image: sovereign-smoke-agent:dev
+      executable: ["/smoke-agent", "--mode", "success", "--sleep", "3s"]
+      maxAttempts: 2
+      capabilities: ["artifact.publish"]
+      outputs:
+        - name: smoke-report
+          version: v1

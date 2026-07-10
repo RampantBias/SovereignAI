@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sovereign-controller
+  namespace: sovereign-orchestrator-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          env:
+            - name: SOVEREIGN_LEADER_ELECTION
+              value: "false"
