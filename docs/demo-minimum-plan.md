@@ -160,12 +160,12 @@ developer-002 is created
 developer-001 remains visible in CRDs and playback
 ```
 
-### 4. Reference agent
+### 4. Contract-compliant demo agent
 
-Add a small first-party reference agent:
+Provide a workflow-specific demo agent image that includes the platform wrapper and a domain executable:
 
 ```text
-cmd/reference-agent
+registry.internal/sovereign/software-dev-agent:dev
 ```
 
 Minimum responsibilities:
@@ -173,10 +173,11 @@ Minimum responsibilities:
 - read `input.json`;
 - call an OpenAI-compatible vLLM endpoint;
 - optionally use MCP context tools;
+- produce artifacts that satisfy declared output obligations;
 - write only to the declared staging path;
 - write valid `result.json`.
 
-Minimum roles:
+Minimum software-development demo roles:
 
 ```text
 architect
@@ -184,13 +185,13 @@ developer
 reviewer
 ```
 
-Suggested behavior:
+Suggested domain behavior:
 
 - architect produces an implementation plan artifact;
 - developer makes a small code, doc, or test change;
 - reviewer produces a review artifact and approves the change.
 
-The reference agent should be intentionally boring. The platform behavior is the demo.
+The demo agent should be intentionally boring. Contract enforcement remains in `agent-wrapper`; the platform behavior is the demo.
 
 ### 5. MCP/context
 
@@ -295,30 +296,40 @@ Suggested sequence:
 
 The final playback should be the proof moment.
 
-## Explicit demo cuts
+## Deferred scope ledger
 
-The following are not required for the minimum working demo:
+The following are not required for the minimum working demo. Keep them visible so they can be revisited once the demo is working and packaged.
 
-- full Keycloak deployment;
-- full Istio strict mTLS and AuthorizationPolicies;
-- service mesh CSR/SPIFFE flow;
-- full code-server human intervention;
-- dynamic workflow mutation;
-- parallel steps;
-- llm-d integration;
-- cloud provider support;
-- advanced GPU scheduling;
-- NVIDIA time-slicing;
-- CUDA driver crash demo;
-- rich web playback UI;
-- comparative workflow analytics;
-- long-term retention and integrity model;
-- external CI provider abstraction;
-- multiple validation providers;
-- production-grade admission webhooks;
-- sophisticated context engine;
-- multi-tenant enterprise RBAC;
-- SBOM/vulnerability pipeline unless already easy.
+Marker meaning:
+
+- `*`: try to include after the demo works if time remains.
+- `**`: higher-value stretch item if the core demo stabilizes early.
+
+| Item | Marker | Notes |
+| --- | --- | --- |
+| Full Keycloak deployment | `*` | Defer production identity; use static demo subject or simple token. |
+| Full Istio strict mTLS and AuthorizationPolicies | `*` | Keep namespace and label hooks, but do not require mesh policy for demo. |
+| Full code-server human intervention | `*` | Product approval gate is enough for the first demo. |
+| Service mesh CSR/SPIFFE flow | `*` | Demo identity can use headers or static subject. |
+| Dynamic workflow mutation |  | Keep workflow sequence static. |
+| Parallel steps |  | Sequential execution is enough to prove the control plane. |
+| llm-d integration |  | Direct vLLM only for demo. |
+| Cloud provider support |  | Local/demo cluster only. |
+| vLLM failure handling | `**` | Prefer if stable; otherwise use agent pod deletion as the recovery showcase. |
+| Advanced GPU scheduling |  | Use simple inference admission behavior. |
+| NVIDIA time-slicing |  | Not needed for control-plane proof. |
+| CUDA driver crash demo |  | Too environment-specific for minimum demo. |
+| Rich web playback UI |  | CLI playback is the proof surface. |
+| Comparative workflow analytics |  | Playback first, analytics later. |
+| Long-term retention and integrity model |  | Durable audit is enough for demo. |
+| External CI provider abstraction | `*` | Deterministic utility runner first. |
+| Multiple validation providers |  | Argo CD/Kustomize only. |
+| Full policy bundle management |  | Embedded MVP policy is enough. |
+| Production-grade admission webhooks |  | Defer hard admission boundaries. |
+| Sophisticated context engine |  | Existing MCP tree/read/search/bundle is enough. |
+| Multi-tenant enterprise RBAC | `*` | Static/simple demo identity first. |
+| Program/data markings integrated into scheduling, MCP/context, and policy abstractions |  | Keep classification fields, but defer full scheduling/context/policy enforcement. |
+| SBOM/vulnerability pipeline unless already easy | `*` | Include only if it naturally falls out of build tooling. |
 
 ## Simple demo implementations
 
@@ -383,9 +394,9 @@ Estimated effort:
 
 Outcomes:
 
-- `cmd/reference-agent` exists with architect/developer/reviewer roles;
-- reference agent can call a fake OpenAI-compatible server in tests;
-- reference agent can call vLLM in the demo environment;
+- a contract-compliant software-development demo agent image exists with architect/developer/reviewer behavior;
+- the demo agent can call a fake OpenAI-compatible server in tests;
+- the demo agent can call vLLM in the demo environment;
 - MCP/context use is minimally wired;
 - `cmd/utility-runner` supports init workspace, branch, tests, commit, build digest, and merge;
 - demo workflow manifest uses the reduced canonical sequence;

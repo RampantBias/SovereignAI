@@ -1,0 +1,80 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sovereign-controller
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - persistentvolumeclaims
+      - pods
+      - pods/log
+      - services
+      - serviceaccounts
+      - configmaps
+      - secrets
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["aim.sovereign.io"]
+    resources:
+      - artifacts
+      - gpunodes
+      - humansessions
+      - inferenceendpoints
+      - inferenceleases
+      - policyprofiles
+      - sovereignprojects
+      - sovereignworkflows
+      - stepattempts
+      - validationruns
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["aim.sovereign.io"]
+    resources:
+      - artifacts/status
+      - gpunodes/status
+      - humansessions/status
+      - inferenceendpoints/status
+      - inferenceleases/status
+      - policyprofiles/status
+      - sovereignprojects/status
+      - sovereignworkflows/status
+      - stepattempts/status
+      - validationruns/status
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["aim.sovereign.io"]
+    resources:
+      - artifacts/finalizers
+      - humansessions/finalizers
+      - inferenceendpoints/finalizers
+      - inferenceleases/finalizers
+      - sovereignworkflows/finalizers
+      - stepattempts/finalizers
+      - validationruns/finalizers
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sovereign-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sovereign-controller
+subjects:
+  - kind: ServiceAccount
+    name: sovereign-controller
+    namespace: sovereign-orchestrator-system

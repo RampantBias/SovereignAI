@@ -11,6 +11,8 @@ import (
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/validation"
+	"github.com/go-logr/logr"
+	"go.uber.org/zap/zapcore"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -38,7 +40,7 @@ func init() {
 func main() {
 	// Controller-runtime signal observer context
 	ctx := ctrl.SetupSignalHandler()
-	ctrl.SetLogger(zap.New(zap.UseDevMode(envBool("SOVEREIGN_DEV_LOGGING", false))))
+	ctrl.SetLogger(newLogger())
 
 	log.Println("Initializing Sovereign Workflow Controller Substrate...")
 
@@ -94,19 +96,24 @@ func main() {
 		&controllers.StepAttemptReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
+			Audit:          recorder,
 			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev")},
 		&controllers.ArtifactReconciler{
-			Client: mgr.GetClient()},
+			Client: mgr.GetClient(),
+			Audit:  recorder},
 		&controllers.HumanSessionReconciler{
 			Client:          mgr.GetClient(),
 			Scheme:          mgr.GetScheme(),
+			Audit:           recorder,
 			CodeServerImage: env("SOVEREIGN_CODE_SERVER_IMAGE", "ghcr.io/coder/code-server:4.99.4")},
 		&controllers.ValidationRunReconciler{
 			Client:   mgr.GetClient(),
-			Provider: validationProvider},
+			Provider: validationProvider,
+			Audit:    recorder},
 		&controllers.InferenceEndpointReconciler{
 			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme()},
+			Scheme: mgr.GetScheme(),
+			Audit:  recorder},
 		&controllers.InferenceLeaseReconciler{
 			Client:               mgr.GetClient(),
 			Scheme:               mgr.GetScheme(),
@@ -115,6 +122,7 @@ func main() {
 			DefaultMaxKVRAMMiB:   int64(envInt("SOVEREIGN_KV_VRAM_MIB", 8192)),
 			SafetyHeadroomMiB:    int64(envInt("SOVEREIGN_VRAM_HEADROOM_MIB", 1024)),
 			Policy:               policyEvaluator,
+			Audit:                recorder,
 		},
 	}
 	for _, reconciler := range reconcilers {
@@ -170,3 +178,14 @@ func envInt(name string, fallback int) int {
 }
 
 func durationPtr(value time.Duration) *time.Duration { return &value }
+
+func newLogger() logr.Logger {
+	opts := []zap.Opts{zap.UseDevMode(envBool("SOVEREIGN_DEV_LOGGING", false))}
+	if value := os.Getenv("SOVEREIGN_LOG_VERBOSITY"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err == nil {
+			opts = append(opts, zap.Level(zapcore.Level(-parsed)))
+		}
+	}
+	return zap.New(opts...)
+}

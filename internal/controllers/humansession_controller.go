@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +19,7 @@ import (
 type HumanSessionReconciler struct {
 	client.Client
 	Scheme          *runtime.Scheme
+	Audit           audit.Recorder
 	CodeServerImage string
 	Now             func() time.Time
 }
@@ -59,8 +61,20 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		_ = client.IgnoreNotFound(r.Delete(ctx, serviceAccount))
 		if session.Status.Phase != v1alpha1.PhaseCancelled {
 			session.Status.Phase = v1alpha1.PhaseCancelled
-			return ctrl.Result{}, r.Status().Update(ctx, &session)
+			if err := r.Status().Update(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, r.appendHumanSessionEvent(ctx, &session, "HumanSessionExpired", "expire", "expired", "TTLExpired")
 		}
+		return ctrl.Result{}, nil
+	}
+
+	// Check for namespace termination
+	terminating, err := namespaceTerminating(ctx, r.Client, session.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if terminating {
 		return ctrl.Result{}, nil
 	}
 
@@ -74,7 +88,10 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		session.Status.Phase = v1alpha1.PhasePreparing
 		session.Status.ExpiresAt = &expires
 		session.Status.ObservedGeneration = session.Generation
-		return ctrl.Result{}, r.Status().Update(ctx, &session)
+		if err := r.Status().Update(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.appendHumanSessionEvent(ctx, &session, "HumanSessionCreated", "create", "created", "")
 	}
 
 	// Build & Create human session pod and bind controller reference
@@ -105,11 +122,46 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		session.Status.PodRef = pod.Name
 		session.Status.ServiceRef = service.Name
 		session.Status.AccessURL = "/sessions/" + session.Namespace + "/" + session.Name
-		return ctrl.Result{}, r.Status().Update(ctx, &session)
+		if err := r.Status().Update(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		eventType := "HumanSessionWorkloadsCreated"
+		outcome := "created"
+		if phase == v1alpha1.PhaseRunning {
+			eventType = "HumanSessionReady"
+			outcome = "ready"
+		}
+		return ctrl.Result{}, r.appendHumanSessionEvent(ctx, &session, eventType, "reconcile", outcome, string(phase))
 	}
 
 	// Requeue request to expiration
 	return ctrl.Result{RequeueAfter: time.Until(session.Status.ExpiresAt.Time)}, nil
+}
+
+func (r *HumanSessionReconciler) appendHumanSessionEvent(ctx context.Context, session *v1alpha1.HumanSession, eventType, action, outcome, reason string) error {
+	return appendControllerEvent(ctx, r.Audit, "humansession-controller", r.Now, audit.EventOptions{
+		Type: eventType,
+		Subject: audit.Subject{
+			Namespace: session.Namespace,
+			Workflow:  session.Spec.WorkflowRef,
+		},
+		Action:  action,
+		Target:  session.Name,
+		Outcome: outcome,
+		Reason:  reason,
+		References: map[string]string{
+			"humanSession": session.Name,
+			"pod":          session.Status.PodRef,
+			"service":      session.Status.ServiceRef,
+			"accessURL":    session.Status.AccessURL,
+		},
+		Data: map[string]any{
+			"requesterSubject": session.Spec.RequesterSubject,
+			"toolProfile":      session.Spec.ToolProfile,
+			"capabilities":     session.Spec.Capabilities,
+			"expiresAt":        session.Status.ExpiresAt,
+		},
+	})
 }
 
 // For MVP we'll use a pre-defined image

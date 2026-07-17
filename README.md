@@ -77,6 +77,7 @@ See [MVP scope](docs/mvp.md) for commitments and non-goals.
 ## Documentation
 
 - [Documentation map](docs/README.md)
+- [Deployment packaging](deploy/README.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Execution model](docs/architecture/execution-model.md)
 - [Security model](docs/architecture/security-model.md)

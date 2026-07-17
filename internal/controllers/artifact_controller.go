@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -12,7 +13,10 @@ import (
 )
 
 // / Artifact Controller is responsible for validating artifact metadata/digest
-type ArtifactReconciler struct{ client.Client }
+type ArtifactReconciler struct {
+	client.Client
+	Audit audit.Recorder
+}
 
 func (r *ArtifactReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&v1alpha1.Artifact{}).Complete(r)
@@ -26,6 +30,15 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	phase := v1alpha1.PhaseSucceeded
 	condition := metav1.Condition{Type: "Valid", Status: metav1.ConditionTrue, Reason: "ContractAccepted", Message: "artifact metadata is valid", ObservedGeneration: artifact.Generation}
 
+	// Check for namespace termination
+	terminating, err := namespaceTerminating(ctx, r.Client, artifact.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if terminating {
+		return ctrl.Result{}, nil
+	}
+
 	// Verify validity of artifact metadata with a valid digest, contract name & version, and location
 	if !strings.HasPrefix(artifact.Spec.Digest, "sha256:") || artifact.Spec.Contract.Name == "" || artifact.Spec.Contract.Version == "" || artifact.Spec.Path == "" {
 		phase = v1alpha1.PhaseFailed
@@ -34,7 +47,6 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		condition.Message = "artifact requires a sha256 digest, versioned contract, and content path"
 	}
 
-	// TODO: I'm not sure what this phase check is doing.
 	if artifact.Status.Phase == phase && artifact.Status.ObservedGeneration == artifact.Generation {
 		return ctrl.Result{}, nil
 	}
@@ -43,5 +55,39 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	artifact.Status.Phase = phase
 	artifact.Status.ObservedGeneration = artifact.Generation
 	apiMeta.SetStatusCondition(&artifact.Status.Conditions, condition)
-	return ctrl.Result{}, r.Status().Update(ctx, &artifact)
+	if err := r.Status().Update(ctx, &artifact); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, r.appendArtifactEvent(ctx, &artifact, phase, condition.Reason)
+}
+
+func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *v1alpha1.Artifact, phase v1alpha1.ResourcePhase, reason string) error {
+	eventType := "ArtifactAccepted"
+	outcome := "accepted"
+	if phase == v1alpha1.PhaseFailed {
+		eventType = "ArtifactRejected"
+		outcome = "rejected"
+	}
+	return appendControllerEvent(ctx, r.Audit, "artifact-controller", nil, audit.EventOptions{
+		Type: eventType,
+		Subject: audit.Subject{
+			Namespace: artifact.Namespace,
+			Workflow:  artifact.Spec.WorkflowRef,
+		},
+		Action:  "validate",
+		Target:  artifact.Name,
+		Outcome: outcome,
+		Reason:  reason,
+		References: map[string]string{
+			"artifact": artifact.Name,
+			"digest":   artifact.Spec.Digest,
+			"path":     artifact.Spec.Path,
+			"producer": artifact.Spec.ProducerRef,
+		},
+		Data: map[string]any{
+			"contract":       artifact.Spec.Contract,
+			"classification": artifact.Spec.Classification,
+			"sourceRevision": artifact.Spec.SourceRevision,
+		},
+	})
 }

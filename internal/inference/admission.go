@@ -27,6 +27,7 @@ type EndpointSnapshot struct {
 	Leases   []v1alpha1.InferenceLease
 }
 
+// Select policy evaluates admission capability for a new inference lease request
 func Select(request v1alpha1.InferenceLease, snapshots []EndpointSnapshot, allowCreate bool) Decision {
 	for _, snapshot := range snapshots {
 		if !compatible(request, snapshot.Endpoint) {

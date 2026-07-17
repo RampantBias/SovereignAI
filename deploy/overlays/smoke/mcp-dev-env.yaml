@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sovereign-mcp
+  namespace: sovereign-orchestrator-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: mcp
+          env:
+            - name: SOVEREIGN_MCP_REQUIRE_IDENTITY
+              value: "false"

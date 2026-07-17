@@ -68,7 +68,7 @@ spec:
   steps:
   - name: architect
     kind: Agent
-    goal: plan
+    responsibility: plan
     order: 1
 `
 	response, err := server.CreateWorkflow(context.Background(), &pb.CreateWorkflowRequest{ProjectName: "platform", ManifestContent: manifest})

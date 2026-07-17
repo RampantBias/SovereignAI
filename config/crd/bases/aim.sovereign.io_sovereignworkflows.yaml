@@ -64,7 +64,7 @@ spec:
                       items:
                         type: string
                       type: array
-                    goal:
+                    responsibility:
                       type: string
                     image:
                       type: string
@@ -115,7 +115,7 @@ spec:
                     timeout:
                       type: string
                   required:
-                  - goal
+                  - responsibility
                   - kind
                   - name
                   - order
@@ -229,24 +229,8 @@ spec:
                       type: string
                     stepName:
                       type: string
-                  required:
-                  - assignedNode
-                  - gpuIndex
-                  - inferenceEndpointUrl
-                  - inferencePodName
-                  - phase
-                  - podName
-                  - stepName
                   type: object
                 type: array
-            required:
-            - activeStep
-            - allocatedNode
-            - conditions
-            - phase
-            - pvcName
-            - requestedVRAMAllocation
-            - stepStatuses
             type: object
         type: object
     served: true

@@ -25,7 +25,7 @@ type StepConfig struct {
 	Name                    string              `json:"name"`
 	Kind                    ExecutionKind       `json:"kind"`
 	Image                   string              `json:"image,omitempty"`
-	Goal                    string              `json:"goal"`
+	Responsibility          string              `json:"responsibility"`
 	Executable              []string            `json:"executable,omitempty"`
 	Capabilities            []string            `json:"capabilities,omitempty"`
 	Inputs                  []ArtifactReference `json:"inputs,omitempty"`
@@ -45,11 +45,11 @@ type StepConfig struct {
 type StepRuntimeStatus struct {
 	StepName             string    `json:"stepName"`
 	Phase                StepPhase `json:"phase"`
-	AssignedNode         string    `json:"assignedNode"` //
-	GPUIndex             string    `json:"gpuIndex"`     // e.g., 0, 1, 2...
-	PodName              string    `json:"podName"`
-	InferencePodName     string    `json:"inferencePodName"`
-	InferenceEndpointURL string    `json:"inferenceEndpointUrl"`
+	AssignedNode         string    `json:"assignedNode,omitempty"`
+	GPUIndex             string    `json:"gpuIndex,omitempty"`
+	PodName              string    `json:"podName,omitempty"`
+	InferencePodName     string    `json:"inferencePodName,omitempty"`
+	InferenceEndpointURL string    `json:"inferenceEndpointUrl,omitempty"`
 }
 
 // SovereignWorkflowSpec defines the desired state (The user's intent)
@@ -65,14 +65,14 @@ type SovereignWorkflowSpec struct {
 // SovereignWorkflowStatus defines the observed state
 type SovereignWorkflowStatus struct {
 	Phase                   string              `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
-	ActiveStepName          string              `json:"activeStep"`                 // Currently executing step
+	ActiveStepName          string              `json:"activeStep,omitempty"`       // Currently executing step
 	ActiveAttemptRef        string              `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
 	ObservedGeneration      int64               `json:"observedGeneration,omitempty"`
-	PvcName                 string              `json:"pvcName"`                 // Bound storage resource
-	AllocatedNodeName       string              `json:"allocatedNode"`           // Where the GpuService placed it
-	RequestedVRAMAllocation int64               `json:"requestedVRAMAllocation"` // total requested allocation in mb
-	StepStatuses            []StepRuntimeStatus `json:"stepStatuses"`            // Status for each step
-	Conditions              []metav1.Condition  `json:"conditions"`              // Standard K8s status conditions
+	PvcName                 string              `json:"pvcName,omitempty"`       // Bound storage resource
+	AllocatedNodeName       string              `json:"allocatedNode,omitempty"` // Where the GpuService placed it
+	RequestedVRAMAllocation int64               `json:"requestedVRAMAllocation,omitempty"`
+	StepStatuses            []StepRuntimeStatus `json:"stepStatuses,omitempty"` // Status for each step
+	Conditions              []metav1.Condition  `json:"conditions,omitempty"`   // Standard K8s status conditions
 }
 
 // +kubebuilder:object:root=true

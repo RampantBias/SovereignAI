@@ -3,19 +3,50 @@
   "$id": "https://sovereign.ai/schemas/agent/v1/input.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "workflowId", "stepName", "attempt", "role", "goal", "workspacePath", "stagingPath"],
+  "required": ["schemaVersion", "workflowId", "stepName", "attempt", "role", "responsibility", "workspacePath", "stagingPath"],
   "properties": {
     "schemaVersion": { "const": "sovereign.ai/agent-contract/v1" },
     "workflowId": { "type": "string", "minLength": 1 },
     "stepName": { "type": "string", "minLength": 1 },
     "attempt": { "type": "integer", "minimum": 1 },
     "role": { "type": "string", "minLength": 1 },
-    "goal": { "type": "string", "minLength": 1 },
-    "inputs": { "type": "array" },
+    "responsibility": { "type": "string", "minLength": 1 },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "contract", "digest", "path"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "contract": { "type": "string", "minLength": 1 },
+          "digest": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "mediaType": { "type": "string", "minLength": 1 }
+        }
+      },
+      "uniqueItems": true
+    },
     "inferenceEndpoint": { "type": "string" },
     "mcpServer": { "type": "string" },
     "workspacePath": { "type": "string", "minLength": 1 },
-    "stagingPath": { "type": "string", "minLength": 1 }
+    "stagingPath": { "type": "string", "minLength": 1 },
+    "controlPath": { "type": "string", "minLength": 1 },
+    "resultPath": { "type": "string", "minLength": 1 },
+    "auditEventsPath": { "type": "string", "minLength": 1 }
   }
 }

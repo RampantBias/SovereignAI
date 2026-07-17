@@ -128,7 +128,7 @@ type StepAttemptSpec struct {
 	StepName          string                `json:"stepName"`
 	Attempt           int32                 `json:"attempt"`
 	Kind              ExecutionKind         `json:"kind"`
-	Goal              string                `json:"goal"`
+	Responsibility    string                `json:"responsibility"`
 	Image             string                `json:"image,omitempty"`
 	Executable        []string              `json:"executable,omitempty"`
 	Inputs            []ArtifactReference   `json:"inputs,omitempty"`
