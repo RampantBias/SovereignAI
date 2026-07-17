@@ -26,7 +26,7 @@ The platform therefore needs a first-party execution boundary for deterministic 
 
 Build a deterministic utility runner as a platform-owned runtime boundary.
 
-The runner will be invoked by Utility `StepAttempt` workloads. It will:
+The runner will be invoked by `UtilityOperation` workloads. A `StepAttempt` owns workflow retry history and references the operation, but it does not own policy admission, credentials, Jobs, or utility result state. It will:
 
 - Read a `UtilityContract` input document
 - Select the named operation from an allow-listed registry
@@ -43,7 +43,6 @@ The utility contract intentionally resembles the agent contract in its shared wo
 - Workflow ID
 - Step name
 - Attempt number
-- Responsibility
 - Input artifacts
 - Output obligations
 - Workspace, staging, control, result, and audit paths
@@ -51,12 +50,12 @@ The utility contract intentionally resembles the agent contract in its shared wo
 
 The utility contract will differ where the authority boundary differs:
 
-- Utility inputs include `operation`, controller-derived `idempotencyKey`, operation parameters, and any Project-owned command template
+- Utility inputs include an immutable `UtilityOperation` authority reference, the admitting policy decision, `operation`, controller-derived `idempotencyKey`, operation parameters, and any Project-owned command template
 - Agent inputs include role/capability context, inference endpoint, and MCP context
 - Utility execution is selected from platform-owned operations;
 - Agent execution is delegated to an agent runtime behind the agent wrapper.
 
-Utility workflow steps use a first-class `UtilityOperationSpec`. The spec names one allow-listed operation and supplies operation parameters plus an optional credential class. It cannot supply an arbitrary command. The controller resolves Project-owned repository, test, build, and credential configuration before scheduling the Job. 
+Utility workflow steps create a first-class `UtilityOperation` CRD. Its immutable spec names one allow-listed operation and supplies only operation parameters. It cannot supply an arbitrary command or choose its credential class. The `UtilityOperation` controller derives the credential class and resolves Project-owned repository, test, build, and credential configuration before scheduling the Job.
 
 Initial operations are:
 

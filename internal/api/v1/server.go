@@ -11,7 +11,6 @@ import (
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
-	"github.com/SovereignAI/internal/orchestration"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -26,17 +25,13 @@ import (
 type Server struct {
 	pb.UnimplementedOrchestratorServiceServer // Guarantees forward compatibility
 	Client                                    client.Client
-	GpuService                                orchestration.GpuService
-	CDClient                                  orchestration.CDClient
 	Auditor                                   audit.Recorder
 }
 
-func NewServer(client client.Client, gpuService orchestration.GpuService, cdClient orchestration.CDClient, auditor audit.Recorder) *Server {
+func NewServer(client client.Client, auditor audit.Recorder) *Server {
 	return &Server{
-		Client:     client,
-		GpuService: gpuService,
-		CDClient:   cdClient,
-		Auditor:    auditor,
+		Client:  client,
+		Auditor: auditor,
 	}
 }
 
