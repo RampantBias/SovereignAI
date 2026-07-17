@@ -36,6 +36,22 @@ type AgentStepSpec struct {
 	Deterministic  bool                  `json:"deterministic,omitempty"`
 }
 
+// UtilityOperationRequest declares one platform-owned deterministic operation.
+// Parameters are interpreted by the named allow-listed operation; they are not
+// an arbitrary process command. The controller derives the idempotency key and
+// resolves Project-owned commands and credentials before scheduling a Job.
+type UtilityOperationRequest struct {
+	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;git.commit;git.push;git.merge;test.run;build.image
+	Name       string            `json:"name"`
+	Parameters map[string]string `json:"parameters,omitempty"`
+}
+
+type ApprovalSpec struct {
+	Mode           ApprovalMode `json:"mode"`
+	RequiredGroups []string     `json:"requiredGroups"`
+	DenyBehavior   string       `json:"denyBehavior"`
+}
+
 // ValidationStepSpec declares the subject and provider contract for a
 // validation authority. Empty provider-specific values are resolved from the
 // owning Project by the ValidationRun controller.
