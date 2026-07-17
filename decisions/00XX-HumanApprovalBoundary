@@ -1,0 +1,100 @@
+# Human Approval Boundary
+
+Status: DRAFT
+
+## Context
+
+SovereignAI must incorporate human collaboration as a first-class primitive. Human approval is a critical aspect of autonomous workflows, and it must be owned by the control plane.
+Human approval has direct consequences for decision and audit lineage, workflow progression, identity attribution, and behaviors like retry and resume.
+Therefore, human approval must be represented as a first-class workflow boundary rather than an out-of-band note, manual status patch, or agent-produced artifact.
+
+## Decision
+
+Build a Human Approval API and CLI that allow an authorized human to approve or deny a workflow gate that is in an `AwaitingApproval` state.
+
+### Core Process
+
+- Workflow reaches a Human Gate and enters an `AwaitingApproval` state.
+- Approval or denial is submitted through the API, for example: `sovctl <approve|deny> <workflow-id> --step performance-review-approval --reason "..."`.
+- The approval command is validated against workflow state and subject identity.
+- A decision is persisted and audited.
+- An `ApprovalRequest` controller observes the decision and owns approval status. The StepAttempt controller only mirrors the terminal domain outcome into workflow-attempt lifecycle.
+- Approved decisions mark the StepAttempt as succeeded, allowing the workflow to continue.
+- Denied decisions mark the StepAttempt as failed, allowing the workflow controller to determine retry behavior.
+
+### API Validation
+
+The approve or deny command should only succeed under the following policies:
+
+- The workflow exists and is not scheduled for deletion.
+- The specified step is the active step for the workflow.
+- The active step is `Kind: HumanGate`.
+- The active step phase is `AwaitingApproval`.
+- The subject identity is present and normalized.
+- The subject is allowed to approve or deny this step.
+- The command is unique and is not a duplicate decision.
+
+Upon approval or denial, the API will generate an immutable `ApprovalDecision` CRD and tie its identity to the exact identity of the step validated against.
+
+The ApprovalRequest controller will respond to this and perform a similar set of validations but applied to reconciliation correctness:
+
+- The decision references the exact ApprovalRequest.
+- The decision belongs to the same workflow.
+- The decision was generated against the same step version or attempt.
+- The subject(s) satisfies the approval rule according to the approval mode.
+- All required approvals are complete.
+- Any denial fails the step.
+
+## ApprovalDecision Contract
+
+Initial demo will use a placeholder provider until odic/keycloak is integrated. ApprovalDecision will be 
+
+```yaml
+kind: ApprovalDecision
+spec:
+  workflowRef: demo-workflow
+  approvalRequestRef: product-approval-001
+  approvalRequestUID: "..."
+  approvalRequestResourceVersion: "123"
+  stepAttemptRef: product-approval-001
+  stepName: product-approval
+  decision: Approved # Approved | Denied
+  subject:
+    subjectId: frank
+    email: frank@example.com
+    displayName: Frank
+    provider: demo-static # later oidc/keycloak/etc
+    groups:
+      - product-owners
+  reason: "Looks good for demo"
+```
+## Workflow Step Contract Changes
+
+Workflow Step Contract 
+## Consequences
+
+Positive consequences:
+
+- The approval boundary remains within the control plane domain.
+- Approval maintains a clear authority boundary between agents and humans.
+- Approval is identity-attributable and auditable.
+- Multiple approval clients can use the same API boundary later.
+
+Tradeoffs and limitations:
+
+- Approval introduces additional workflow latency.
+- Demo identity may be simplified before full OIDC or Keycloak integration exists.
+- Approval policy evaluation must be explicit enough to prevent agents or unauthorized subjects from approving controlled gates.
+
+
+## Rejected Alternatives
+
+Persist approval as only an audit event:
+
+This would preserve lineage but would make reconciliation depend on audit playback rather than a purpose-built state resource.
+
+Patch StepAttempt status directly:
+
+This would be simple for the demo, but it would lose an immutable authored decision record and make multiple approvals harder to support.
+
+## Notes

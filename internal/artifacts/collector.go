@@ -17,7 +17,7 @@ type Collected struct {
 	Spec v1alpha1.ArtifactSpec
 }
 
-func Collect(stagingRoot, artifactRoot, workflow, producer, sourceRevision string, outputs []agentcontract.ArtifactOutput) ([]Collected, error) {
+func Collect(stagingRoot, artifactRoot, workflow string, producer v1alpha1.TypedLocalReference, sourceRevision string, outputs []agentcontract.ArtifactOutput) ([]Collected, error) {
 	collected := make([]Collected, 0, len(outputs))
 	for _, output := range outputs {
 		source, err := containedPath(stagingRoot, output.Path)

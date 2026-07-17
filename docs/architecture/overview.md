@@ -102,9 +102,21 @@ Initial execution kinds are:
 
 ### StepAttempt
 
-One execution attempt of a step. Retries create new attempts rather than overwriting the history of a failed attempt. Agent pods, inference leases, capability grants, and outputs are attributable to an attempt.
+One workflow-lifecycle attempt of a step. Retries create new attempts rather than overwriting the history of a failed attempt. `StepAttempt` is an envelope: it records workflow identity, attempt number, execution kind, a typed reference to the owned domain primitive, and the outcome mirrored from that primitive. It does not contain agent commands, utility operations, approval rules, validation subjects, pods, Jobs, credentials, or provider state.
 
-**AUTHOR NOTE:** Decide whether `StepAttempt` needs its own CRD for the MVP or is initially embedded in workflow status. A separate CRD gives clearer ownership and retry history but increases API surface.
+The execution reference identifies exactly one of `AgentRun`, `UtilityOperation`, `ApprovalRequest`, or `ValidationRun`. Those resources are immutable desired-state primitives with independent status ownership.
+
+### AgentRun
+
+An immutable delegation of bounded autonomous work. It owns agent responsibility, runtime, capabilities, inference requirements, the agent pod, inference lease, result collection, and agent-specific failure state.
+
+### UtilityOperation
+
+An immutable grant to perform one named deterministic platform operation. It owns policy admission, Project-derived execution inputs, scoped credentials, the utility Job, idempotency identity, collection, and operation-specific failure state.
+
+### ApprovalRequest
+
+An immutable request for an attributable human decision. It owns approval requirements and, once B2 is complete, observes immutable `ApprovalDecision` resources. It remains `AwaitingApproval` rather than allowing clients to patch a StepAttempt outcome.
 
 ### Artifact
 
@@ -129,7 +141,10 @@ The workflow controller should remain high-level. It advances the workflow state
 Target boundaries are:
 
 - `WorkflowReconciler`: workflow graph and terminal state;
-- `StepAttemptReconciler`: attempt lifecycle and pod supervision;
+- `StepAttemptReconciler`: workflow-attempt lifecycle and domain-outcome projection only;
+- `AgentRunReconciler`: autonomous runtime, inference lease, agent pod, and agent evidence;
+- `UtilityOperationReconciler`: deterministic policy admission, scoped authority, utility Job, and utility evidence;
+- `ApprovalRequestReconciler`: human decision request and decision aggregation;
 - `HumanSessionReconciler`: interactive workspace sessions;
 - `ValidationReconciler`: provider invocation and result collection;
 - `InferenceProvider`: endpoint acquisition and release;

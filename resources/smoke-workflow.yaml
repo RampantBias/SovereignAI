@@ -16,11 +16,12 @@ spec:
     - name: contract-writer
       kind: Agent
       order: 1
-      responsibility: Produce a simple contract-compliant smoke artifact.
-      image: sovereign-smoke-agent:dev
-      executable: ["/smoke-agent", "--mode", "success", "--sleep", "3s"]
+      agent:
+        responsibility: Produce a simple contract-compliant smoke artifact.
+        image: sovereign-smoke-agent:dev
+        executable: ["/smoke-agent", "--mode", "success", "--sleep", "3s"]
+        capabilities: ["artifact.publish"]
       maxAttempts: 2
-      capabilities: ["artifact.publish"]
       outputs:
         - name: smoke-report
           version: v1

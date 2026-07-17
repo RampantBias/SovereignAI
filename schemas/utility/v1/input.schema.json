@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/utility/v1/input.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workflowId",
+    "stepName",
+    "attempt",
+    "authority",
+    "policyDecisionId",
+    "operation",
+    "idempotencyKey",
+    "workspacePath",
+    "stagingPath"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "sovereign.ai/utility-contract/v1" },
+    "workflowId": { "type": "string", "minLength": 1 },
+    "stepName": { "type": "string", "minLength": 1 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "namespace", "name", "uid"],
+      "properties": {
+        "apiVersion": { "type": "string", "minLength": 1 },
+        "kind": { "const": "UtilityOperation" },
+        "namespace": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "uid": { "type": "string", "minLength": 1 }
+      }
+    },
+    "policyDecisionId": { "type": "string", "minLength": 1 },
+    "operation": {
+      "enum": [
+        "repository.initialize",
+        "git.createBranch",
+        "git.commit",
+        "git.push",
+        "git.merge",
+        "test.run",
+        "build.image"
+      ]
+    },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "credentialClass": { "enum": ["repository", "registry"] },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "propertyNames": { "minLength": 1 }
+    },
+    "command": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "contract"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "contract": { "type": "string", "minLength": 1 },
+          "digest": { "type": "string" },
+          "path": { "type": "string" }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "mediaType": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "workspacePath": { "type": "string", "minLength": 1 },
+    "stagingPath": { "type": "string", "minLength": 1 },
+    "controlPath": { "type": "string", "minLength": 1 },
+    "resultPath": { "type": "string", "minLength": 1 },
+    "auditEventsPath": { "type": "string", "minLength": 1 }
+  }
+}

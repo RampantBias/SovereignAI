@@ -94,10 +94,24 @@ func main() {
 			Scheme: mgr.GetScheme(),
 			Audit:  recorder, StorageClass: storageClass},
 		&controllers.StepAttemptReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+			Audit:  recorder},
+		&controllers.AgentRunReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,
 			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev")},
+		&controllers.UtilityOperationReconciler{
+			Client:         mgr.GetClient(),
+			Scheme:         mgr.GetScheme(),
+			Audit:          recorder,
+			Policy:         policyEvaluator,
+			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
+			UtilityImage:   env("SOVEREIGN_UTILITY_IMAGE", "sovereign-utility-runner:dev")},
+		&controllers.ApprovalRequestReconciler{
+			Client: mgr.GetClient(),
+			Audit:  recorder},
 		&controllers.ArtifactReconciler{
 			Client: mgr.GetClient(),
 			Audit:  recorder},

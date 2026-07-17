@@ -13,33 +13,42 @@ spec:
     - name: architect
       kind: Agent
       order: 1
-      responsibility: Produce an implementation plan for the supplied change request.
-      image: registry.internal/sovereign/software-dev-agent:dev
-      executable: ["/domain-agent", "--role", "architect"]
-      modelName: code-small
-      requestedVRAMAllocation: 2048
+      agent:
+        responsibility: Produce an implementation plan for the supplied change request.
+        image: registry.internal/sovereign/software-dev-agent:dev
+        executable: ["/domain-agent", "--role", "architect"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: latest
+          estimatedKVRAMMiB: 2048
+          sharingScope: Dedicated
       maxAttempts: 2
-      capabilities: ["context.read", "artifact.publish"]
       outputs:
         - name: implementation-plan
           version: v1
     - name: test-writer
       kind: Agent
       order: 2
-      responsibility: Use the implementation plan to build a test suite
-      image: registry.internal/sovereign/software-dev-agent:dev
-      executable: ["/domain-agent", "--role", "architect"]
-      modelName: code-small
-      requestedVRAMAllocation: 2048
+      agent:
+        responsibility: Use the implementation plan to build a test suite
+        image: registry.internal/sovereign/software-dev-agent:dev
+        executable: ["/domain-agent", "--role", "architect"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: latest
+          estimatedKVRAMMiB: 2048
+          sharingScope: Dedicated
       maxAttempts: 2
-      capabilities: ["context.read", "artifact.publish"]
       inputs:
         - name: implementation-plan
           version: v1
     - name: tester
       kind: Utility
       order: 3
-      responsibility: Execute the project test contract.
+      utility:
+        name: test.run
       maxAttempts: 1
       inputs:
         - name: implementation-plan

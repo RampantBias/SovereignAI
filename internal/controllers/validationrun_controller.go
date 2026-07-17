@@ -48,7 +48,7 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 
 	// Check for namespace termination
-	terminating, err := namespaceTerminating(ctx, r.Client, workflow.Namespace)
+	terminating, err := namespaceTerminating(ctx, r.Client, run.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -59,6 +59,17 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if !controllerutil.ContainsFinalizer(&run, ValidationFinalizer) {
 		controllerutil.AddFinalizer(&run, ValidationFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &run)
+	}
+	authorized, err := validateDomainAuthority(ctx, r.Client, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt)
+	if err != nil {
+		run.Status.Phase = v1alpha1.PhaseFailed
+		run.Status.FailureReason = "InvalidStepAttemptAuthority"
+		run.Status.Retryable = false
+		run.Status.ObservedGeneration = run.Generation
+		return ctrl.Result{}, r.Status().Update(ctx, &run)
+	}
+	if !authorized {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
 	if run.Status.ProviderRef == "" {
 		request, err := r.providerRequest(ctx, &run)

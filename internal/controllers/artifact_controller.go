@@ -82,7 +82,7 @@ func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *
 			"artifact": artifact.Name,
 			"digest":   artifact.Spec.Digest,
 			"path":     artifact.Spec.Path,
-			"producer": artifact.Spec.ProducerRef,
+			"producer": artifact.Spec.ProducerRef.Kind + "/" + artifact.Spec.ProducerRef.Name,
 		},
 		Data: map[string]any{
 			"contract":       artifact.Spec.Contract,

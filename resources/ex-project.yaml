@@ -21,3 +21,6 @@ spec:
   buildJob:
     image: registry.internal/sovereign/utility:dev
     command: ["/utility", "build"]
+    credentialRef:
+      namespace: sovereign-orchestrator-system
+      name: sovereign-ai-registry

@@ -31,6 +31,8 @@ rules:
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
   - apiGroups: ["aim.sovereign.io"]
     resources:
+      - agentruns
+      - approvalrequests
       - artifacts
       - gpunodes
       - humansessions
@@ -40,10 +42,13 @@ rules:
       - sovereignprojects
       - sovereignworkflows
       - stepattempts
+      - utilityoperations
       - validationruns
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
   - apiGroups: ["aim.sovereign.io"]
     resources:
+      - agentruns/status
+      - approvalrequests/status
       - artifacts/status
       - gpunodes/status
       - humansessions/status
@@ -53,16 +58,20 @@ rules:
       - sovereignprojects/status
       - sovereignworkflows/status
       - stepattempts/status
+      - utilityoperations/status
       - validationruns/status
     verbs: ["get", "patch", "update"]
   - apiGroups: ["aim.sovereign.io"]
     resources:
+      - agentruns/finalizers
+      - approvalrequests/finalizers
       - artifacts/finalizers
       - humansessions/finalizers
       - inferenceendpoints/finalizers
       - inferenceleases/finalizers
       - sovereignworkflows/finalizers
       - stepattempts/finalizers
+      - utilityoperations/finalizers
       - validationruns/finalizers
     verbs: ["update"]
 ---

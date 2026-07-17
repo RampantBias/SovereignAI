@@ -33,19 +33,33 @@ spec:
   steps:
     - name: architect
       kind: Agent
-      agentRuntime: default
-      modelPolicy: reasoning-small
+      agent:
+        responsibility: Produce an implementation plan
+        image: software-agent:dev
+        executable: ["/domain-agent", "--role", "architect"]
+        inference:
+          model: reasoning-small
+          modelRevision: stable
+          estimatedKVRAMMiB: 2048
+          sharingScope: Dedicated
+        capabilities:
+          - context.read
       inputs:
         - contract: change-request/v1
       outputs:
         - contract: implementation-plan/v1
-      capabilities:
-        - context.read
     - name: create-branch
       kind: Utility
-      utility: git.create-branch
+      utility:
+        name: git.createBranch
+        parameters:
+          branch: feature/control-plane-boundary
     - name: test-writer
       kind: Agent
+      agent:
+        responsibility: Produce tests from the admitted plan
+        image: software-agent:dev
+        executable: ["/domain-agent", "--role", "test-writer"]
       inputs:
         - contract: implementation-plan/v1
       outputs:
@@ -53,6 +67,10 @@ spec:
         - contract: test-plan/v1
     - name: developer
       kind: Agent
+      agent:
+        responsibility: Implement the admitted plan and tests
+        image: software-agent:dev
+        executable: ["/domain-agent", "--role", "developer"]
       inputs:
         - contract: implementation-plan/v1
         - contract: test-plan/v1
@@ -60,15 +78,24 @@ spec:
         - contract: patch/v1
     - name: tests
       kind: Utility
-      utility: test.execute
+      utility:
+        name: test.run
     - name: approval
       kind: HumanGate
+      approval:
+        mode: AnyOf
+        requiredGroups: ["maintainers"]
+        denyBehavior: Fail
     - name: commit
       kind: Utility
-      utility: git.commit
+      utility:
+        name: git.commit
+        parameters:
+          message: Implement the admitted change
     - name: preview
       kind: Validation
-      provider: argocd
+      validation:
+        provider: argocd-kustomize
 ```
 
 The exact ordering for the MVP remains open; see [MVP scope](../mvp.md).
@@ -100,6 +127,15 @@ Pending -> Ready -> Running -> Succeeded
 ```
 
 A retry creates a new `StepAttempt`. It does not reset or erase the prior attempt.
+
+`StepAttempt` is deliberately not an execution union. The workflow controller snapshots the selected step into one owned domain primitive:
+
+```text
+StepAttempt
+  -> AgentRun | UtilityOperation | ApprovalRequest | ValidationRun
+```
+
+The domain controller owns execution and status. The StepAttempt controller observes the typed execution reference and projects its phase, failure reason, and retryability into workflow lifecycle. This prevents agent delegation fields, utility authority, approval policy, and validation provider state from sharing one mutable specification.
 
 ### Attempt phases
 
@@ -174,6 +210,8 @@ Agents may inspect repository material through read-only context capabilities an
 
 Every utility step receives a typed request, a least-privilege credential, a restricted network policy, and a terminal output contract.
 
+The workflow declares a named utility request, not a shell command. The workflow controller creates an immutable `UtilityOperation` CRD. Its controller derives one stable idempotency key per workflow step, evaluates policy, resolves the Project repository and test/build templates, and mounts an operation-scoped credential only when the admitted operation requires it. `repository.initialize`, `git.createBranch`, `git.commit`, `git.push`, `git.merge`, `test.run`, and `build.image` are the MVP operation vocabulary.
+
 ## Human gates and intervention
 
 A human gate asks an authorized person to approve, reject, or request intervention.
@@ -221,4 +259,3 @@ No agent may silently rewrite its active graph.
 - **AUTHOR NOTE:** Decide whether reviewer is an autonomous agent, a human gate, or both in sequence.
 - **AUTHOR NOTE:** Define when patches are applied to the shared workspace and how conflicting patches are rejected.
 - **AUTHOR NOTE:** Define the contract for resuming after human changes.
-

@@ -27,6 +27,8 @@ spec:
               value: local-path
             - name: SOVEREIGN_COLLECTOR_IMAGE
               value: sovereign-artifact-collector:dev
+            - name: SOVEREIGN_UTILITY_IMAGE
+              value: sovereign-utility-runner:dev
             - name: SOVEREIGN_DEV_LOGGING
               value: "true"
           ports:

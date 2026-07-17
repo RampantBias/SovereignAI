@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/SovereignAI/internal/agentcontract"
+	"github.com/SovereignAI/internal/api/v1alpha1"
 )
 
 func TestCollectCreatesContentAddressedArtifactIdempotently(t *testing.T) {
@@ -20,11 +21,12 @@ func TestCollectCreatesContentAddressedArtifactIdempotently(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := []agentcontract.ArtifactOutput{{Contract: "implementation-plan/v1", Path: file}}
-	first, err := Collect(staging, store, "wf", "architect-001", "abc", output)
+	producer := v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "AgentRun", Name: "architect-001"}
+	first, err := Collect(staging, store, "wf", producer, "abc", output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Collect(staging, store, "wf", "architect-001", "abc", output)
+	second, err := Collect(staging, store, "wf", producer, "abc", output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,5 +38,8 @@ func TestCollectCreatesContentAddressedArtifactIdempotently(t *testing.T) {
 	}
 	if first[0].Spec.Contract.Name != "implementation-plan" || first[0].Spec.Contract.Version != "v1" {
 		t.Fatalf("unexpected contract reference: %#v", first[0].Spec.Contract)
+	}
+	if first[0].Spec.ProducerRef.Kind != "AgentRun" || first[0].Spec.ProducerRef.Name != "architect-001" {
+		t.Fatalf("artifact lost its authoritative producer: %#v", first[0].Spec.ProducerRef)
 	}
 }

@@ -218,31 +218,26 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 			Labels:    map[string]string{LabelWorkflow: workflow.Spec.WorkflowID, LabelStep: step.Name},
 		},
 		Spec: v1alpha1.StepAttemptSpec{
-			WorkflowRef:     workflow.Name,
-			StepName:        step.Name,
-			Attempt:         number,
-			Kind:            step.Kind,
-			Responsibility:  step.Responsibility,
-			Image:           step.Image,
-			Executable:      append([]string(nil), step.Executable...),
-			Inputs:          append([]v1alpha1.ArtifactReference(nil), step.Inputs...),
-			OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...),
-			Capabilities:    append([]string(nil), step.Capabilities...),
-			Timeout:         step.Timeout,
+			WorkflowRef: workflow.Name,
+			StepName:    step.Name,
+			Attempt:     number,
+			Kind:        step.Kind,
 		},
-	}
-	if step.ModelName != "" {
-		attempt.Spec.InferenceLeaseRef = name + "-inference"
-		attempt.Spec.Inference = &v1alpha1.InferenceRequestSpec{
-			Model: step.ModelName, ModelRevision: step.ModelRevision,
-			EstimatedKVRAMMiB: step.RequestedVRAMAllocation,
-			SharingScope:      step.SharingScope, Priority: step.Priority, Evictable: step.Evictable,
-		}
 	}
 	if err := controllerutil.SetControllerReference(workflow, attempt, r.Scheme); err != nil {
 		return err
 	}
 	if err := r.Create(ctx, attempt); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Name}, attempt); err != nil {
+		return err
+	}
+	executionRef, err := r.ensureDomainExecution(ctx, attempt, step)
+	if err != nil {
+		return err
+	}
+	if err := r.recordAttemptExecutionRef(ctx, attempt, executionRef); err != nil {
 		return err
 	}
 	updated, err := r.updateWorkflowStatus(ctx, client.ObjectKeyFromObject(workflow), func(latest *v1alpha1.SovereignWorkflow) {
@@ -255,6 +250,107 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 		return err
 	}
 	return r.appendWorkflowEvent(ctx, updated, "StepAttemptCreated", step.Name, number, "create", name, "created", "", map[string]string{"attempt": name}, nil)
+}
+
+func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig) (*v1alpha1.TypedLocalReference, error) {
+	metadata := metav1.ObjectMeta{
+		Name: attempt.Name, Namespace: attempt.Namespace,
+		Labels: map[string]string{LabelWorkflow: attempt.Labels[LabelWorkflow], LabelStep: step.Name},
+	}
+	var object client.Object
+	var reference v1alpha1.TypedLocalReference
+	switch step.Kind {
+	case v1alpha1.ExecutionKindAgent:
+		if step.Agent == nil {
+			return nil, fmt.Errorf("agent step %s has no agent specification", step.Name)
+		}
+		object = &v1alpha1.AgentRun{ObjectMeta: metadata, Spec: v1alpha1.AgentRunSpec{
+			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.Attempt,
+			Responsibility: step.Agent.Responsibility, Image: step.Agent.Image,
+			Executable: append([]string(nil), step.Agent.Executable...), Capabilities: append([]string(nil), step.Agent.Capabilities...),
+			Inputs: append([]v1alpha1.ArtifactReference(nil), step.Inputs...), OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...),
+			Inference: copyInferenceRequest(step.Agent.Inference), Timeout: step.Timeout,
+		}}
+		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "AgentRun", Name: attempt.Name}
+	case v1alpha1.ExecutionKindUtility:
+		if step.Utility == nil {
+			return nil, fmt.Errorf("utility step %s has no utility operation", step.Name)
+		}
+		object = &v1alpha1.UtilityOperation{ObjectMeta: metadata, Spec: v1alpha1.UtilityOperationSpec{
+			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.Attempt,
+			Operation: copyUtilityOperation(*step.Utility), Inputs: append([]v1alpha1.ArtifactReference(nil), step.Inputs...),
+			OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...), Timeout: step.Timeout,
+		}}
+		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "UtilityOperation", Name: attempt.Name}
+	case v1alpha1.ExecutionKindHumanGate:
+		if step.Approval == nil {
+			return nil, fmt.Errorf("human gate %s has no approval specification", step.Name)
+		}
+		object = &v1alpha1.ApprovalRequest{ObjectMeta: metadata, Spec: v1alpha1.ApprovalRequestSpec{
+			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name,
+			Attempt: attempt.Spec.Attempt, Approval: copyApprovalSpec(*step.Approval),
+		}}
+		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ApprovalRequest", Name: attempt.Name}
+	case v1alpha1.ExecutionKindValidation:
+		if step.Validation == nil {
+			return nil, fmt.Errorf("validation step %s has no validation specification", step.Name)
+		}
+		object = &v1alpha1.ValidationRun{ObjectMeta: metadata, Spec: v1alpha1.ValidationRunSpec{
+			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.Attempt,
+			Provider: step.Validation.Provider, Commit: step.Validation.Commit, ImageDigest: step.Validation.ImageDigest,
+			OverlayPath: step.Validation.OverlayPath, Destination: step.Validation.Destination,
+		}}
+		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ValidationRun", Name: attempt.Name}
+	default:
+		return nil, fmt.Errorf("unsupported execution kind %q", step.Kind)
+	}
+	if err := controllerutil.SetControllerReference(attempt, object, r.Scheme); err != nil {
+		return nil, err
+	}
+	if err := r.Create(ctx, object); err != nil && !apierrors.IsAlreadyExists(err) {
+		return nil, err
+	}
+	return &reference, nil
+}
+
+func copyUtilityOperation(source v1alpha1.UtilityOperationRequest) v1alpha1.UtilityOperationRequest {
+	result := v1alpha1.UtilityOperationRequest{Name: source.Name}
+	if source.Parameters != nil {
+		result.Parameters = make(map[string]string, len(source.Parameters))
+		for name, value := range source.Parameters {
+			result.Parameters[name] = value
+		}
+	}
+	return result
+}
+
+func copyInferenceRequest(source *v1alpha1.InferenceRequestSpec) *v1alpha1.InferenceRequestSpec {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	return &result
+}
+
+func copyApprovalSpec(source v1alpha1.ApprovalSpec) v1alpha1.ApprovalSpec {
+	result := source
+	result.RequiredGroups = append([]string(nil), source.RequiredGroups...)
+	return result
+}
+
+func (r *WorkflowReconciler) recordAttemptExecutionRef(ctx context.Context, attempt *v1alpha1.StepAttempt, reference *v1alpha1.TypedLocalReference) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.StepAttempt
+		if err := r.Get(ctx, client.ObjectKeyFromObject(attempt), &latest); err != nil {
+			return err
+		}
+		if latest.Status.ExecutionRef != nil && *latest.Status.ExecutionRef == *reference {
+			return nil
+		}
+		latest.Status.ExecutionRef = reference
+		latest.Status.ObservedGeneration = latest.Generation
+		return r.Status().Update(ctx, &latest)
+	})
 }
 
 // Update Workflow status to failed

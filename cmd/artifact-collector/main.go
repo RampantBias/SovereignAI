@@ -11,6 +11,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/utilitycontract"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,23 +23,26 @@ func main() {
 	namespace := flag.String("namespace", "", "workflow namespace")
 	workflow := flag.String("workflow", "", "workflow name")
 	attempt := flag.String("attempt", "", "step attempt name")
+	producerKind := flag.String("producer-kind", "", "authoritative producer resource kind")
+	producerAPIVersion := flag.String("producer-api-version", v1alpha1.GroupVersion.String(), "authoritative producer API version")
 	resultPath := flag.String("result", "", "agent result contract")
 	stagingPath := flag.String("staging", "", "attempt staging directory")
 	artifactPath := flag.String("artifact-store", "", "content-addressed artifact directory")
 	auditEventsPath := flag.String("audit-events", "", "agent wrapper audit event JSONL path")
 	sourceRevision := flag.String("source-revision", "", "source revision")
 	flag.Parse()
-	if *namespace == "" || *workflow == "" || *attempt == "" || *resultPath == "" || *stagingPath == "" || *artifactPath == "" {
-		log.Fatal("namespace, workflow, attempt, result, staging, and artifact-store are required")
+	if *namespace == "" || *workflow == "" || *attempt == "" || *producerKind == "" || *resultPath == "" || *stagingPath == "" || *artifactPath == "" {
+		log.Fatal("namespace, workflow, attempt, producer-kind, result, staging, and artifact-store are required")
 	}
 	if err := ingestRuntimeAudit(context.Background(), *auditEventsPath); err != nil {
 		log.Fatalf("ingest runtime audit: %v", err)
 	}
-	result, err := agentcontract.ReadResult(*resultPath, *stagingPath)
+	result, err := readResult(*resultPath, *stagingPath)
 	if err != nil {
 		log.Fatalf("validate result contract: %v", err)
 	}
-	collected, err := artifacts.Collect(*stagingPath, *artifactPath, *workflow, *attempt, *sourceRevision, result.Artifacts)
+	producer := v1alpha1.TypedLocalReference{APIVersion: *producerAPIVersion, Kind: *producerKind, Name: *attempt}
+	collected, err := artifacts.Collect(*stagingPath, *artifactPath, *workflow, producer, *sourceRevision, result.Artifacts)
 	if err != nil {
 		log.Fatalf("collect artifacts: %v", err)
 	}
@@ -63,6 +67,37 @@ func main() {
 			log.Fatalf("create Artifact %s: %v", name, err)
 		}
 	}
+}
+
+func readResult(path, stagingPath string) (agentcontract.Result, error) {
+	result, err := agentcontract.ReadResult(path, stagingPath)
+	if err == nil {
+		return result, nil
+	}
+	utilityResult, utilityErr := utilitycontract.ReadResult(path, stagingPath)
+	if utilityErr != nil {
+		return agentcontract.Result{}, err
+	}
+	converted := agentcontract.Result{
+		SchemaVersion: agentcontract.Version,
+		Outcome:       utilityResult.Outcome,
+		Message:       utilityResult.Message,
+		Artifacts:     make([]agentcontract.ArtifactOutput, 0, len(utilityResult.Artifacts)),
+	}
+	if utilityResult.Error != nil {
+		converted.Error = &agentcontract.ResultError{Code: utilityResult.Error.Code, Message: utilityResult.Error.Message}
+	}
+	for _, artifact := range utilityResult.Artifacts {
+		converted.Artifacts = append(converted.Artifacts, agentcontract.ArtifactOutput{
+			Contract:  artifact.Contract,
+			Path:      artifact.Path,
+			MediaType: artifact.MediaType,
+		})
+	}
+	if validateErr := converted.Validate(stagingPath); validateErr != nil {
+		return agentcontract.Result{}, validateErr
+	}
+	return converted, nil
 }
 
 func ingestRuntimeAudit(ctx context.Context, path string) error {
