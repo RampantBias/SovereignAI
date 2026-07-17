@@ -39,6 +39,14 @@ const (
 	SharingWithinClassification SharingScope = "SharedWithinClassification"
 )
 
+type ApprovalMode string
+
+const (
+	AnyOf  ApprovalMode = `AnyOf`
+	AllOf  ApprovalMode = `AllOf`
+	Quorum ApprovalMode = `Quorum`
+)
+
 type NamespacedReference struct {
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name"`
@@ -97,9 +105,20 @@ type SovereignProjectList struct {
 }
 
 type JobTemplateSpec struct {
-	Image   string   `json:"image"`
-	Command []string `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
+	Image         string              `json:"image"`
+	Command       []string            `json:"command,omitempty"`
+	Args          []string            `json:"args,omitempty"`
+	CredentialRef NamespacedReference `json:"credentialRef,omitempty"`
+}
+
+// UtilityOperationRequest declares one platform-owned deterministic operation.
+// Parameters are interpreted by the named allow-listed operation; they are not
+// an arbitrary process command. The controller derives the idempotency key and
+// resolves Project-owned commands and credentials before scheduling a Job.
+type UtilityOperationRequest struct {
+	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;git.commit;git.push;git.merge;test.run;build.image
+	Name       string            `json:"name"`
+	Parameters map[string]string `json:"parameters,omitempty"`
 }
 
 type ContractReference struct {
@@ -112,9 +131,16 @@ type ArtifactReference struct {
 	Digest string `json:"digest,omitempty"`
 }
 
+type ApprovalSpec struct {
+	Mode           ApprovalMode `json:"mode"`
+	RequiredGroups []string     `json:"requiredGroups"`
+	DenyBehavior   string       `json:"denyBehavior"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=attempt
+// +kubebuilder:validation:XValidation:rule="self.spec == oldSelf.spec",message="step attempt spec is immutable"
 type StepAttempt struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -123,20 +149,13 @@ type StepAttempt struct {
 	Status StepAttemptStatus `json:"status,omitempty"`
 }
 
+// StepAttemptSpec is a workflow lifecycle envelope. Domain execution intent is
+// held by the owned AgentRun, UtilityOperation, ApprovalRequest, or ValidationRun.
 type StepAttemptSpec struct {
-	WorkflowRef       string                `json:"workflowRef"`
-	StepName          string                `json:"stepName"`
-	Attempt           int32                 `json:"attempt"`
-	Kind              ExecutionKind         `json:"kind"`
-	Responsibility    string                `json:"responsibility"`
-	Image             string                `json:"image,omitempty"`
-	Executable        []string              `json:"executable,omitempty"`
-	Inputs            []ArtifactReference   `json:"inputs,omitempty"`
-	OutputContracts   []ContractReference   `json:"outputContracts,omitempty"`
-	Capabilities      []string              `json:"capabilities,omitempty"`
-	InferenceLeaseRef string                `json:"inferenceLeaseRef,omitempty"`
-	Inference         *InferenceRequestSpec `json:"inference,omitempty"`
-	Timeout           *metav1.Duration      `json:"timeout,omitempty"`
+	WorkflowRef string        `json:"workflowRef"`
+	StepName    string        `json:"stepName"`
+	Attempt     int32         `json:"attempt"`
+	Kind        ExecutionKind `json:"kind"`
 }
 
 type InferenceRequestSpec struct {
@@ -149,11 +168,63 @@ type InferenceRequestSpec struct {
 }
 
 type StepAttemptStatus struct {
+	ObservedGeneration int64                `json:"observedGeneration,omitempty"`
+	Phase              ResourcePhase        `json:"phase,omitempty"`
+	ExecutionRef       *TypedLocalReference `json:"executionRef,omitempty"`
+	FailureReason      string               `json:"failureReason,omitempty"`
+	Retryable          bool                 `json:"retryable,omitempty"`
+	StartedAt          *metav1.Time         `json:"startedAt,omitempty"`
+	CompletedAt        *metav1.Time         `json:"completedAt,omitempty"`
+	Conditions         []metav1.Condition   `json:"conditions,omitempty"`
+}
+
+// TypedLocalReference identifies the domain primitive owned by a StepAttempt.
+type TypedLocalReference struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+}
+
+// +kubebuilder:object:root=true
+type StepAttemptList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []StepAttempt `json:"items"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=arun
+// +kubebuilder:validation:XValidation:rule="self.spec == oldSelf.spec",message="agent run spec is immutable"
+type AgentRun struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   AgentRunSpec   `json:"spec"`
+	Status AgentRunStatus `json:"status,omitempty"`
+}
+
+type AgentRunSpec struct {
+	AttemptRef      string                `json:"attemptRef"`
+	WorkflowRef     string                `json:"workflowRef"`
+	StepName        string                `json:"stepName"`
+	Attempt         int32                 `json:"attempt"`
+	Responsibility  string                `json:"responsibility"`
+	Image           string                `json:"image"`
+	Executable      []string              `json:"executable"`
+	Capabilities    []string              `json:"capabilities,omitempty"`
+	Inputs          []ArtifactReference   `json:"inputs,omitempty"`
+	OutputContracts []ContractReference   `json:"outputContracts,omitempty"`
+	Inference       *InferenceRequestSpec `json:"inference,omitempty"`
+	Timeout         *metav1.Duration      `json:"timeout,omitempty"`
+}
+
+type AgentRunStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Phase              ResourcePhase      `json:"phase,omitempty"`
 	PodRef             string             `json:"podRef,omitempty"`
-	JobRef             string             `json:"jobRef,omitempty"`
-	ResultRef          string             `json:"resultRef,omitempty"`
+	CollectorJobRef    string             `json:"collectorJobRef,omitempty"`
+	InferenceLeaseRef  string             `json:"inferenceLeaseRef,omitempty"`
 	FailureReason      string             `json:"failureReason,omitempty"`
 	Retryable          bool               `json:"retryable,omitempty"`
 	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
@@ -162,10 +233,91 @@ type StepAttemptStatus struct {
 }
 
 // +kubebuilder:object:root=true
-type StepAttemptList struct {
+type AgentRunList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []StepAttempt `json:"items"`
+	Items           []AgentRun `json:"items"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=uop
+// +kubebuilder:validation:XValidation:rule="self.spec == oldSelf.spec",message="utility operation spec is immutable"
+type UtilityOperation struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   UtilityOperationSpec   `json:"spec"`
+	Status UtilityOperationStatus `json:"status,omitempty"`
+}
+
+type UtilityOperationSpec struct {
+	AttemptRef      string                  `json:"attemptRef"`
+	WorkflowRef     string                  `json:"workflowRef"`
+	StepName        string                  `json:"stepName"`
+	Attempt         int32                   `json:"attempt"`
+	Operation       UtilityOperationRequest `json:"operation"`
+	Inputs          []ArtifactReference     `json:"inputs,omitempty"`
+	OutputContracts []ContractReference     `json:"outputContracts,omitempty"`
+	Timeout         *metav1.Duration        `json:"timeout,omitempty"`
+}
+
+type UtilityOperationStatus struct {
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	Phase              ResourcePhase      `json:"phase,omitempty"`
+	JobRef             string             `json:"jobRef,omitempty"`
+	CollectorJobRef    string             `json:"collectorJobRef,omitempty"`
+	PolicyDecisionID   string             `json:"policyDecisionID,omitempty"`
+	FailureReason      string             `json:"failureReason,omitempty"`
+	Retryable          bool               `json:"retryable,omitempty"`
+	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
+	CompletedAt        *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+type UtilityOperationList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []UtilityOperation `json:"items"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=areq
+// +kubebuilder:validation:XValidation:rule="self.spec == oldSelf.spec",message="approval request spec is immutable"
+type ApprovalRequest struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   ApprovalRequestSpec   `json:"spec"`
+	Status ApprovalRequestStatus `json:"status,omitempty"`
+}
+
+type ApprovalRequestSpec struct {
+	AttemptRef  string       `json:"attemptRef"`
+	WorkflowRef string       `json:"workflowRef"`
+	StepName    string       `json:"stepName"`
+	Attempt     int32        `json:"attempt"`
+	Approval    ApprovalSpec `json:"approval"`
+}
+
+type ApprovalRequestStatus struct {
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	Phase              ResourcePhase      `json:"phase,omitempty"`
+	DecisionRef        string             `json:"decisionRef,omitempty"`
+	FailureReason      string             `json:"failureReason,omitempty"`
+	Retryable          bool               `json:"retryable,omitempty"`
+	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
+	CompletedAt        *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+type ApprovalRequestList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ApprovalRequest `json:"items"`
 }
 
 // +kubebuilder:object:root=true
@@ -181,13 +333,13 @@ type Artifact struct {
 }
 
 type ArtifactSpec struct {
-	WorkflowRef    string            `json:"workflowRef"`
-	ProducerRef    string            `json:"producerRef"`
-	Contract       ContractReference `json:"contract"`
-	Digest         string            `json:"digest"`
-	Path           string            `json:"path"`
-	Classification string            `json:"classification,omitempty"`
-	SourceRevision string            `json:"sourceRevision,omitempty"`
+	WorkflowRef    string              `json:"workflowRef"`
+	ProducerRef    TypedLocalReference `json:"producerRef"`
+	Contract       ContractReference   `json:"contract"`
+	Digest         string              `json:"digest"`
+	Path           string              `json:"path"`
+	Classification string              `json:"classification,omitempty"`
+	SourceRevision string              `json:"sourceRevision,omitempty"`
 }
 
 type ArtifactStatus struct {
@@ -244,6 +396,7 @@ type HumanSessionList struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=vrun
+// +kubebuilder:validation:XValidation:rule="self.spec == oldSelf.spec",message="validation run spec is immutable"
 type ValidationRun struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -253,12 +406,15 @@ type ValidationRun struct {
 }
 
 type ValidationRunSpec struct {
+	AttemptRef  string `json:"attemptRef"`
 	WorkflowRef string `json:"workflowRef"`
+	StepName    string `json:"stepName"`
+	Attempt     int32  `json:"attempt"`
 	Provider    string `json:"provider"`
-	Commit      string `json:"commit"`
-	ImageDigest string `json:"imageDigest"`
-	OverlayPath string `json:"overlayPath"`
-	Destination string `json:"destination"`
+	Commit      string `json:"commit,omitempty"`
+	ImageDigest string `json:"imageDigest,omitempty"`
+	OverlayPath string `json:"overlayPath,omitempty"`
+	Destination string `json:"destination,omitempty"`
 }
 
 type ValidationRunStatus struct {
@@ -267,6 +423,8 @@ type ValidationRunStatus struct {
 	ProviderRef        string             `json:"providerRef,omitempty"`
 	AccessURL          string             `json:"accessURL,omitempty"`
 	ResultArtifactRef  string             `json:"resultArtifactRef,omitempty"`
+	FailureReason      string             `json:"failureReason,omitempty"`
+	Retryable          bool               `json:"retryable,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 

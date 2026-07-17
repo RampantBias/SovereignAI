@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: validationruns.aim.sovereign.io
+  name: approvalrequests.aim.sovereign.io
 spec:
   group: aim.sovereign.io
   names:
-    kind: ValidationRun
-    listKind: ValidationRunList
-    plural: validationruns
+    kind: ApprovalRequest
+    listKind: ApprovalRequestList
+    plural: approvalrequests
     shortNames:
-    - vrun
-    singular: validationrun
+    - areq
+    singular: approvalrequest
   scope: Namespaced
   versions:
   - name: v1alpha1
@@ -39,35 +39,41 @@ spec:
             type: object
           spec:
             properties:
+              approval:
+                properties:
+                  denyBehavior:
+                    type: string
+                  mode:
+                    type: string
+                  requiredGroups:
+                    items:
+                      type: string
+                    type: array
+                required:
+                - denyBehavior
+                - mode
+                - requiredGroups
+                type: object
               attempt:
                 format: int32
                 type: integer
               attemptRef:
-                type: string
-              commit:
-                type: string
-              destination:
-                type: string
-              imageDigest:
-                type: string
-              overlayPath:
-                type: string
-              provider:
                 type: string
               stepName:
                 type: string
               workflowRef:
                 type: string
             required:
+            - approval
             - attempt
             - attemptRef
-            - provider
             - stepName
             - workflowRef
             type: object
           status:
             properties:
-              accessURL:
+              completedAt:
+                format: date-time
                 type: string
               conditions:
                 items:
@@ -125,6 +131,8 @@ spec:
                   - type
                   type: object
                 type: array
+              decisionRef:
+                type: string
               failureReason:
                 type: string
               observedGeneration:
@@ -132,18 +140,17 @@ spec:
                 type: integer
               phase:
                 type: string
-              providerRef:
-                type: string
-              resultArtifactRef:
-                type: string
               retryable:
                 type: boolean
+              startedAt:
+                format: date-time
+                type: string
             type: object
         required:
         - spec
         type: object
         x-kubernetes-validations:
-        - message: validation run spec is immutable
+        - message: approval request spec is immutable
           rule: self.spec == oldSelf.spec
     served: true
     storage: true

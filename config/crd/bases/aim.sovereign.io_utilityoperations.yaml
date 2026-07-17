@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: validationruns.aim.sovereign.io
+  name: utilityoperations.aim.sovereign.io
 spec:
   group: aim.sovereign.io
   names:
-    kind: ValidationRun
-    listKind: ValidationRunList
-    plural: validationruns
+    kind: UtilityOperation
+    listKind: UtilityOperationList
+    plural: utilityoperations
     shortNames:
-    - vrun
-    singular: validationrun
+    - uop
+    singular: utilityoperation
   scope: Namespaced
   versions:
   - name: v1alpha1
@@ -44,30 +44,72 @@ spec:
                 type: integer
               attemptRef:
                 type: string
-              commit:
-                type: string
-              destination:
-                type: string
-              imageDigest:
-                type: string
-              overlayPath:
-                type: string
-              provider:
-                type: string
+              inputs:
+                items:
+                  properties:
+                    digest:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              operation:
+                description: |-
+                  UtilityOperationRequest declares one platform-owned deterministic operation.
+                  Parameters are interpreted by the named allow-listed operation; they are not
+                  an arbitrary process command. The controller derives the idempotency key and
+                  resolves Project-owned commands and credentials before scheduling a Job.
+                properties:
+                  name:
+                    enum:
+                    - repository.initialize
+                    - git.createBranch
+                    - git.commit
+                    - git.push
+                    - git.merge
+                    - test.run
+                    - build.image
+                    type: string
+                  parameters:
+                    additionalProperties:
+                      type: string
+                    type: object
+                required:
+                - name
+                type: object
+              outputContracts:
+                items:
+                  properties:
+                    name:
+                      type: string
+                    version:
+                      type: string
+                  required:
+                  - name
+                  - version
+                  type: object
+                type: array
               stepName:
+                type: string
+              timeout:
                 type: string
               workflowRef:
                 type: string
             required:
             - attempt
             - attemptRef
-            - provider
+            - operation
             - stepName
             - workflowRef
             type: object
           status:
             properties:
-              accessURL:
+              collectorJobRef:
+                type: string
+              completedAt:
+                format: date-time
                 type: string
               conditions:
                 items:
@@ -127,23 +169,26 @@ spec:
                 type: array
               failureReason:
                 type: string
+              jobRef:
+                type: string
               observedGeneration:
                 format: int64
                 type: integer
               phase:
                 type: string
-              providerRef:
-                type: string
-              resultArtifactRef:
+              policyDecisionID:
                 type: string
               retryable:
                 type: boolean
+              startedAt:
+                format: date-time
+                type: string
             type: object
         required:
         - spec
         type: object
         x-kubernetes-validations:
-        - message: validation run spec is immutable
+        - message: utility operation spec is immutable
           rule: self.spec == oldSelf.spec
     served: true
     storage: true

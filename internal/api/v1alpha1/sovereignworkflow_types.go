@@ -2,54 +2,49 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-/*
-SovereignWorkflow (The CRD Object)
-
-	├── Spec (The Intent)
-	│    └── Steps []StepConfig (Array of nested structs)
-	└── Status (The Reality)
-	     └── StepRuntime []StepRuntimeStatus (Where we track active execution data)
-*/
-type StepPhase string
-
-const (
-	StepPhasePending      StepPhase = "Pending"
-	StepPhaseRunning      StepPhase = "Running"
-	StepPhaseIntervention StepPhase = "Intervention"
-	StepPhaseCompleted    StepPhase = "Completed"
-	StepPhaseFailed       StepPhase = "Failed"
-)
-
-// StepConfig defines what a specific agent needs
+// StepConfig declares one workflow stage and exactly one domain execution primitive.
+// +kubebuilder:validation:XValidation:rule="self.kind != 'Agent' || has(self.agent)",message="agent is required for Agent steps"
+// +kubebuilder:validation:XValidation:rule="self.kind == 'Agent' || !has(self.agent)",message="agent is only allowed for Agent steps"
+// +kubebuilder:validation:XValidation:rule="self.kind != 'HumanGate' || has(self.approval)",message="approval is required for HumanGate steps"
+// +kubebuilder:validation:XValidation:rule="self.kind == 'HumanGate' || !has(self.approval)",message="approval is only allowed for HumanGate steps"
+// +kubebuilder:validation:XValidation:rule="self.kind != 'Utility' || has(self.utility)",message="utility is required for Utility steps"
+// +kubebuilder:validation:XValidation:rule="self.kind == 'Utility' || !has(self.utility)",message="utility is only allowed for Utility steps"
+// +kubebuilder:validation:XValidation:rule="self.kind != 'Validation' || has(self.validation)",message="validation is required for Validation steps"
+// +kubebuilder:validation:XValidation:rule="self.kind == 'Validation' || !has(self.validation)",message="validation is only allowed for Validation steps"
 type StepConfig struct {
-	Name                    string              `json:"name"`
-	Kind                    ExecutionKind       `json:"kind"`
-	Image                   string              `json:"image,omitempty"`
-	Responsibility          string              `json:"responsibility"`
-	Executable              []string            `json:"executable,omitempty"`
-	Capabilities            []string            `json:"capabilities,omitempty"`
-	Inputs                  []ArtifactReference `json:"inputs,omitempty"`
-	Outputs                 []ContractReference `json:"outputs,omitempty"`
-	Timeout                 *metav1.Duration    `json:"timeout,omitempty"`
-	MaxAttempts             int32               `json:"maxAttempts,omitempty"`
-	RequestedVRAMAllocation int64               `json:"requestedVRAMAllocation,omitempty"`
-	Order                   int                 `json:"order"`
-	ModelName               string              `json:"modelName,omitempty"`
-	ModelRevision           string              `json:"modelRevision,omitempty"`
-	SharingScope            SharingScope        `json:"sharingScope,omitempty"`
-	Priority                int32               `json:"priority,omitempty"`
-	Evictable               bool                `json:"evictable,omitempty"`
-	Deterministic           bool                `json:"deterministic,omitempty"`
+	Name        string                   `json:"name"`
+	Kind        ExecutionKind            `json:"kind"`
+	Agent       *AgentStepSpec           `json:"agent,omitempty"`
+	Utility     *UtilityOperationRequest `json:"utility,omitempty"`
+	Approval    *ApprovalSpec            `json:"approval,omitempty"`
+	Validation  *ValidationStepSpec      `json:"validation,omitempty"`
+	Inputs      []ArtifactReference      `json:"inputs,omitempty"`
+	Outputs     []ContractReference      `json:"outputs,omitempty"`
+	Timeout     *metav1.Duration         `json:"timeout,omitempty"`
+	MaxAttempts int32                    `json:"maxAttempts,omitempty"`
+	Order       int                      `json:"order"`
 }
 
-type StepRuntimeStatus struct {
-	StepName             string    `json:"stepName"`
-	Phase                StepPhase `json:"phase"`
-	AssignedNode         string    `json:"assignedNode,omitempty"`
-	GPUIndex             string    `json:"gpuIndex,omitempty"`
-	PodName              string    `json:"podName,omitempty"`
-	InferencePodName     string    `json:"inferencePodName,omitempty"`
-	InferenceEndpointURL string    `json:"inferenceEndpointUrl,omitempty"`
+// AgentStepSpec declares delegated autonomous work. These fields are never
+// copied into deterministic utility, approval, or validation primitives.
+type AgentStepSpec struct {
+	Responsibility string                `json:"responsibility"`
+	Image          string                `json:"image"`
+	Executable     []string              `json:"executable"`
+	Capabilities   []string              `json:"capabilities,omitempty"`
+	Inference      *InferenceRequestSpec `json:"inference,omitempty"`
+	Deterministic  bool                  `json:"deterministic,omitempty"`
+}
+
+// ValidationStepSpec declares the subject and provider contract for a
+// validation authority. Empty provider-specific values are resolved from the
+// owning Project by the ValidationRun controller.
+type ValidationStepSpec struct {
+	Provider    string `json:"provider"`
+	Commit      string `json:"commit,omitempty"`
+	ImageDigest string `json:"imageDigest,omitempty"`
+	OverlayPath string `json:"overlayPath,omitempty"`
+	Destination string `json:"destination,omitempty"`
 }
 
 // SovereignWorkflowSpec defines the desired state (The user's intent)
@@ -64,15 +59,12 @@ type SovereignWorkflowSpec struct {
 
 // SovereignWorkflowStatus defines the observed state
 type SovereignWorkflowStatus struct {
-	Phase                   string              `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
-	ActiveStepName          string              `json:"activeStep,omitempty"`       // Currently executing step
-	ActiveAttemptRef        string              `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
-	ObservedGeneration      int64               `json:"observedGeneration,omitempty"`
-	PvcName                 string              `json:"pvcName,omitempty"`       // Bound storage resource
-	AllocatedNodeName       string              `json:"allocatedNode,omitempty"` // Where the GpuService placed it
-	RequestedVRAMAllocation int64               `json:"requestedVRAMAllocation,omitempty"`
-	StepStatuses            []StepRuntimeStatus `json:"stepStatuses,omitempty"` // Status for each step
-	Conditions              []metav1.Condition  `json:"conditions,omitempty"`   // Standard K8s status conditions
+	Phase              string             `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
+	ActiveStepName     string             `json:"activeStep,omitempty"`       // Currently executing step
+	ActiveAttemptRef   string             `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	PvcName            string             `json:"pvcName,omitempty"`    // Bound storage resource
+	Conditions         []metav1.Condition `json:"conditions,omitempty"` // Standard K8s status conditions
 }
 
 // +kubebuilder:object:root=true

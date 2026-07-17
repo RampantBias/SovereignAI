@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: validationruns.aim.sovereign.io
+  name: agentruns.aim.sovereign.io
 spec:
   group: aim.sovereign.io
   names:
-    kind: ValidationRun
-    listKind: ValidationRunList
-    plural: validationruns
+    kind: AgentRun
+    listKind: AgentRunList
+    plural: agentruns
     shortNames:
-    - vrun
-    singular: validationrun
+    - arun
+    singular: agentrun
   scope: Namespaced
   versions:
   - name: v1alpha1
@@ -44,30 +44,84 @@ spec:
                 type: integer
               attemptRef:
                 type: string
-              commit:
+              capabilities:
+                items:
+                  type: string
+                type: array
+              executable:
+                items:
+                  type: string
+                type: array
+              image:
                 type: string
-              destination:
-                type: string
-              imageDigest:
-                type: string
-              overlayPath:
-                type: string
-              provider:
+              inference:
+                properties:
+                  estimatedKVRAMMiB:
+                    format: int64
+                    type: integer
+                  evictable:
+                    type: boolean
+                  model:
+                    type: string
+                  modelRevision:
+                    type: string
+                  priority:
+                    format: int32
+                    type: integer
+                  sharingScope:
+                    type: string
+                required:
+                - estimatedKVRAMMiB
+                - model
+                - modelRevision
+                - sharingScope
+                type: object
+              inputs:
+                items:
+                  properties:
+                    digest:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              outputContracts:
+                items:
+                  properties:
+                    name:
+                      type: string
+                    version:
+                      type: string
+                  required:
+                  - name
+                  - version
+                  type: object
+                type: array
+              responsibility:
                 type: string
               stepName:
+                type: string
+              timeout:
                 type: string
               workflowRef:
                 type: string
             required:
             - attempt
             - attemptRef
-            - provider
+            - executable
+            - image
+            - responsibility
             - stepName
             - workflowRef
             type: object
           status:
             properties:
-              accessURL:
+              collectorJobRef:
+                type: string
+              completedAt:
+                format: date-time
                 type: string
               conditions:
                 items:
@@ -127,23 +181,26 @@ spec:
                 type: array
               failureReason:
                 type: string
+              inferenceLeaseRef:
+                type: string
               observedGeneration:
                 format: int64
                 type: integer
               phase:
                 type: string
-              providerRef:
-                type: string
-              resultArtifactRef:
+              podRef:
                 type: string
               retryable:
                 type: boolean
+              startedAt:
+                format: date-time
+                type: string
             type: object
         required:
         - spec
         type: object
         x-kubernetes-validations:
-        - message: validation run spec is immutable
+        - message: agent run spec is immutable
           rule: self.spec == oldSelf.spec
     served: true
     storage: true

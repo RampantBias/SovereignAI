@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: sovereignworkflows.aim.sovereign.io
 spec:
   group: aim.sovereign.io
@@ -38,7 +38,7 @@ spec:
             type: object
           spec:
             description: SovereignWorkflowSpec defines the desired state (The user's
-              intent or ArgoCD's deployment)
+              intent)
             properties:
               classification:
                 type: string
@@ -50,24 +50,70 @@ spec:
                 type: string
               steps:
                 items:
-                  description: StepConfig defines what a specific agent needs
+                  description: StepConfig declares one workflow stage and exactly
+                    one domain execution primitive.
                   properties:
-                    capabilities:
-                      items:
-                        type: string
-                      type: array
-                    deterministic:
-                      type: boolean
-                    evictable:
-                      type: boolean
-                    executable:
-                      items:
-                        type: string
-                      type: array
-                    responsibility:
-                      type: string
-                    image:
-                      type: string
+                    agent:
+                      description: |-
+                        AgentStepSpec declares delegated autonomous work. These fields are never
+                        copied into deterministic utility, approval, or validation primitives.
+                      properties:
+                        capabilities:
+                          items:
+                            type: string
+                          type: array
+                        deterministic:
+                          type: boolean
+                        executable:
+                          items:
+                            type: string
+                          type: array
+                        image:
+                          type: string
+                        inference:
+                          properties:
+                            estimatedKVRAMMiB:
+                              format: int64
+                              type: integer
+                            evictable:
+                              type: boolean
+                            model:
+                              type: string
+                            modelRevision:
+                              type: string
+                            priority:
+                              format: int32
+                              type: integer
+                            sharingScope:
+                              type: string
+                          required:
+                          - estimatedKVRAMMiB
+                          - model
+                          - modelRevision
+                          - sharingScope
+                          type: object
+                        responsibility:
+                          type: string
+                      required:
+                      - executable
+                      - image
+                      - responsibility
+                      type: object
+                    approval:
+                      properties:
+                        denyBehavior:
+                          type: string
+                        mode:
+                          type: string
+                        requiredGroups:
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - denyBehavior
+                      - mode
+                      - requiredGroups
+                      type: object
                     inputs:
                       items:
                         properties:
@@ -84,10 +130,6 @@ spec:
                     maxAttempts:
                       format: int32
                       type: integer
-                    modelName:
-                      type: string
-                    modelRevision:
-                      type: string
                     name:
                       type: string
                     order:
@@ -104,22 +146,73 @@ spec:
                         - version
                         type: object
                       type: array
-                    priority:
-                      format: int32
-                      type: integer
-                    requestedVRAMAllocation:
-                      format: int64
-                      type: integer
-                    sharingScope:
-                      type: string
                     timeout:
                       type: string
+                    utility:
+                      description: |-
+                        UtilityOperationRequest declares one platform-owned deterministic operation.
+                        Parameters are interpreted by the named allow-listed operation; they are not
+                        an arbitrary process command. The controller derives the idempotency key and
+                        resolves Project-owned commands and credentials before scheduling a Job.
+                      properties:
+                        name:
+                          enum:
+                          - repository.initialize
+                          - git.createBranch
+                          - git.commit
+                          - git.push
+                          - git.merge
+                          - test.run
+                          - build.image
+                          type: string
+                        parameters:
+                          additionalProperties:
+                            type: string
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    validation:
+                      description: |-
+                        ValidationStepSpec declares the subject and provider contract for a
+                        validation authority. Empty provider-specific values are resolved from the
+                        owning Project by the ValidationRun controller.
+                      properties:
+                        commit:
+                          type: string
+                        destination:
+                          type: string
+                        imageDigest:
+                          type: string
+                        overlayPath:
+                          type: string
+                        provider:
+                          type: string
+                      required:
+                      - provider
+                      type: object
                   required:
-                  - responsibility
                   - kind
                   - name
                   - order
                   type: object
+                  x-kubernetes-validations:
+                  - message: agent is required for Agent steps
+                    rule: self.kind != 'Agent' || has(self.agent)
+                  - message: agent is only allowed for Agent steps
+                    rule: self.kind == 'Agent' || !has(self.agent)
+                  - message: approval is required for HumanGate steps
+                    rule: self.kind != 'HumanGate' || has(self.approval)
+                  - message: approval is only allowed for HumanGate steps
+                    rule: self.kind == 'HumanGate' || !has(self.approval)
+                  - message: utility is required for Utility steps
+                    rule: self.kind != 'Utility' || has(self.utility)
+                  - message: utility is only allowed for Utility steps
+                    rule: self.kind == 'Utility' || !has(self.utility)
+                  - message: validation is required for Validation steps
+                    rule: self.kind != 'Validation' || has(self.validation)
+                  - message: validation is only allowed for Validation steps
+                    rule: self.kind == 'Validation' || !has(self.validation)
                 type: array
               workflowId:
                 type: string
@@ -130,14 +223,11 @@ spec:
             - workflowId
             type: object
           status:
-            description: SovereignWorkflowStatus defines the observed state (Written
-              ONLY by your Orchestrator)
+            description: SovereignWorkflowStatus defines the observed state
             properties:
               activeAttemptRef:
                 type: string
               activeStep:
-                type: string
-              allocatedNode:
                 type: string
               conditions:
                 items:
@@ -202,35 +292,8 @@ spec:
                 type: string
               pvcName:
                 type: string
-              requestedVRAMAllocation:
-                format: int64
-                type: integer
-              stepStatuses:
-                items:
-                  properties:
-                    assignedNode:
-                      type: string
-                    gpuIndex:
-                      type: string
-                    inferenceEndpointUrl:
-                      type: string
-                    inferencePodName:
-                      type: string
-                    phase:
-                      description: |-
-                        SovereignWorkflow (The CRD Object)
-
-                        ├── Spec (The Intent)
-                        │    └── Steps []StepConfig (Array of nested structs)
-                        └── Status (The Reality)
-                        └── StepRuntime []StepRuntimeStatus (Where you track active execution data)
-                      type: string
-                    podName:
-                      type: string
-                    stepName:
-                      type: string
-                  type: object
-                type: array
+            required:
+            - phase
             type: object
         type: object
     served: true

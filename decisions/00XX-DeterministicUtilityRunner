@@ -55,7 +55,7 @@ The utility contract will differ where the authority boundary differs:
 - Utility execution is selected from platform-owned operations;
 - Agent execution is delegated to an agent runtime behind the agent wrapper.
 
-Utility workflow steps create a first-class `UtilityOperation` CRD. Its immutable spec names one allow-listed operation and supplies only operation parameters. It cannot supply an arbitrary command or choose its credential class. The `UtilityOperation` controller derives the credential class and resolves Project-owned repository, test, build, and credential configuration before scheduling the Job.
+Utility workflow steps create a first-class `UtilityOperation` CRD. Its immutable spec names one allow-listed operation and supplies only operation parameters. It cannot supply an arbitrary command or choose its credential class. The `UtilityOperation` controller derives the credential class and resolves Project-owned repository, test, build, and credential configuration before scheduling the Job. For now these will remain simpler in-memory implementations while I continue iterating further.
 
 Initial operations are:
 
@@ -72,6 +72,8 @@ Git operations must be idempotent enough for Kubernetes reconciliation retries. 
 ## Contract Abstraction
 
 The agent contract and utility contract share enough structure that some duplication is expected. That duplication represents a common execution envelope, not necessarily a single domain model.
+
+Utility's execution envelope does create issues for the currently established StepAttempt CRD. I'll need to modify this CRD to separate the boundaries. This will separate agent and utility, but I'll scope Validation in as well since it's similarly applicable.
 
 I won't introduce a broad Go interface for both contracts at this stage. A shared interface would mainly help internal code reuse, but these contracts have different authority semantics and I think a shared contract would misrepresent that. Hiding those differences at this stage could make the boundary less clear. However, there are a few things I can do now to avoid this misrepresentation while still abstracting shared structure.
 

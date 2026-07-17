@@ -26,6 +26,12 @@ func AddKnownTypes(scheme *runtime.Scheme) error {
 		&SovereignProjectList{},
 		&StepAttempt{},
 		&StepAttemptList{},
+		&AgentRun{},
+		&AgentRunList{},
+		&UtilityOperation{},
+		&UtilityOperationList{},
+		&ApprovalRequest{},
+		&ApprovalRequestList{},
 		&Artifact{},
 		&ArtifactList{},
 		&HumanSession{},
@@ -38,8 +44,6 @@ func AddKnownTypes(scheme *runtime.Scheme) error {
 		&InferenceLeaseList{},
 		&PolicyProfile{},
 		&PolicyProfileList{},
-		&GPUNode{},
-		&GPUNodeList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
