@@ -1,5 +1,10 @@
 # September MVP
 
+## Updates
+#### v2 (7/17): 
+- Modified hardware listing due to GPU availability.
+
+
 ## Demonstration objective
 
 Demonstrate that SovereignAI can execute a useful autonomous software-development workflow on its own code with credible reliability, security, human control, and auditability.
@@ -11,11 +16,11 @@ The MVP is a vertical slice and public architectural demonstration. It is not a 
 - User: application developer/reviewer.
 - Workload: a bounded change to the SovereignAI controller or API server.
 - Environment: self-managed, air-gapped-capable Kubernetes cluster.
-- Hardware: multiple NVIDIA GPUs on at least one node; current development cluster may include multiple nodes.
-- Inference: local vLLM provider with policy-controlled endpoint reuse.
+- Hardware: two nodes, both with Nvidia GPUs (1070 8GB + 5060Ti 16GB)
+- Inference: local vLLM provider on each node with policy-controlled endpoint reuse. One model per GPU
 - Validation: Argo CD-backed Validation Provider that uses Kustomize to provision an ephemeral deployment for this specific application workflow.
 
-**AUTHOR NOTE:** Record the exact cluster topology, Kubernetes version, GPU models, driver/GPU Operator versions, storage class, service mesh, and local registries used for the demonstration.
+**AUTHOR NOTE:** Record the exact cluster topology, Kubernetes version, GPU models, driver/GPU Operator versions, storage class, service mesh, and local registries used for the demonstration. To be recorded in the demo playbook.
 
 ## Proposed workflow
 
