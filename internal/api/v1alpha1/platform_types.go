@@ -111,16 +111,6 @@ type JobTemplateSpec struct {
 	CredentialRef NamespacedReference `json:"credentialRef,omitempty"`
 }
 
-// UtilityOperationRequest declares one platform-owned deterministic operation.
-// Parameters are interpreted by the named allow-listed operation; they are not
-// an arbitrary process command. The controller derives the idempotency key and
-// resolves Project-owned commands and credentials before scheduling a Job.
-type UtilityOperationRequest struct {
-	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;git.commit;git.push;git.merge;test.run;build.image
-	Name       string            `json:"name"`
-	Parameters map[string]string `json:"parameters,omitempty"`
-}
-
 type ContractReference struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -129,12 +119,6 @@ type ContractReference struct {
 type ArtifactReference struct {
 	Name   string `json:"name"`
 	Digest string `json:"digest,omitempty"`
-}
-
-type ApprovalSpec struct {
-	Mode           ApprovalMode `json:"mode"`
-	RequiredGroups []string     `json:"requiredGroups"`
-	DenyBehavior   string       `json:"denyBehavior"`
 }
 
 // +kubebuilder:object:root=true
@@ -220,16 +204,19 @@ type AgentRunSpec struct {
 }
 
 type AgentRunStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase      `json:"phase,omitempty"`
-	PodRef             string             `json:"podRef,omitempty"`
-	CollectorJobRef    string             `json:"collectorJobRef,omitempty"`
-	InferenceLeaseRef  string             `json:"inferenceLeaseRef,omitempty"`
-	FailureReason      string             `json:"failureReason,omitempty"`
-	Retryable          bool               `json:"retryable,omitempty"`
-	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt        *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
+	Phase                   ResourcePhase      `json:"phase,omitempty"`
+	PodRef                  string             `json:"podRef,omitempty"`
+	CollectorJobRef         string             `json:"collectorJobRef,omitempty"`
+	InferenceLeaseRef       string             `json:"inferenceLeaseRef,omitempty"`
+	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"`
+	WorkspaceWriterEpoch    int32              `json:"workspaceWriterEpoch,omitempty"`
+	WorkspaceWriterReleased bool               `json:"workspaceWriterReleased,omitempty"`
+	FailureReason           string             `json:"failureReason,omitempty"`
+	Retryable               bool               `json:"retryable,omitempty"`
+	StartedAt               *metav1.Time       `json:"startedAt,omitempty"`
+	CompletedAt             *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions              []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -263,16 +250,19 @@ type UtilityOperationSpec struct {
 }
 
 type UtilityOperationStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase      `json:"phase,omitempty"`
-	JobRef             string             `json:"jobRef,omitempty"`
-	CollectorJobRef    string             `json:"collectorJobRef,omitempty"`
-	PolicyDecisionID   string             `json:"policyDecisionID,omitempty"`
-	FailureReason      string             `json:"failureReason,omitempty"`
-	Retryable          bool               `json:"retryable,omitempty"`
-	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt        *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
+	Phase                   ResourcePhase      `json:"phase,omitempty"`
+	JobRef                  string             `json:"jobRef,omitempty"`
+	CollectorJobRef         string             `json:"collectorJobRef,omitempty"`
+	PolicyDecisionID        string             `json:"policyDecisionID,omitempty"`
+	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"`
+	WorkspaceWriterEpoch    int32              `json:"workspaceWriterEpoch,omitempty"`
+	WorkspaceWriterReleased bool               `json:"workspaceWriterReleased,omitempty"`
+	FailureReason           string             `json:"failureReason,omitempty"`
+	Retryable               bool               `json:"retryable,omitempty"`
+	StartedAt               *metav1.Time       `json:"startedAt,omitempty"`
+	CompletedAt             *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions              []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -375,15 +365,18 @@ type HumanSessionSpec struct {
 }
 
 type HumanSessionStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase      `json:"phase,omitempty"`
-	PodRef             string             `json:"podRef,omitempty"`
-	ServiceRef         string             `json:"serviceRef,omitempty"`
-	AccessURL          string             `json:"accessURL,omitempty"`
-	BeforeRevision     string             `json:"beforeRevision,omitempty"`
-	AfterRevision      string             `json:"afterRevision,omitempty"`
-	ExpiresAt          *metav1.Time       `json:"expiresAt,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
+	Phase                   ResourcePhase      `json:"phase,omitempty"`
+	PodRef                  string             `json:"podRef,omitempty"`
+	ServiceRef              string             `json:"serviceRef,omitempty"`
+	AccessURL               string             `json:"accessURL,omitempty"`
+	BeforeRevision          string             `json:"beforeRevision,omitempty"`
+	AfterRevision           string             `json:"afterRevision,omitempty"`
+	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"`
+	WorkspaceWriterEpoch    int32              `json:"workspaceWriterEpoch,omitempty"`
+	WorkspaceWriterReleased bool               `json:"workspaceWriterReleased,omitempty"`
+	ExpiresAt               *metav1.Time       `json:"expiresAt,omitempty"`
+	Conditions              []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

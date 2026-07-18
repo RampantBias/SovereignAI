@@ -75,12 +75,13 @@ type SovereignWorkflowSpec struct {
 
 // SovereignWorkflowStatus defines the observed state
 type SovereignWorkflowStatus struct {
-	Phase              string             `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
-	ActiveStepName     string             `json:"activeStep,omitempty"`       // Currently executing step
-	ActiveAttemptRef   string             `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	PvcName            string             `json:"pvcName,omitempty"`    // Bound storage resource
-	Conditions         []metav1.Condition `json:"conditions,omitempty"` // Standard K8s status conditions
+	Phase                   string             `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
+	ActiveStepName          string             `json:"activeStep,omitempty"`       // Currently executing step
+	ActiveAttemptRef        string             `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
+	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
+	PvcName                 string             `json:"pvcName,omitempty"`                 // Bound storage resource
+	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"` // Lease serializing writable workspace mounts
+	Conditions              []metav1.Condition `json:"conditions,omitempty"`              // Standard K8s status conditions
 }
 
 // +kubebuilder:object:root=true

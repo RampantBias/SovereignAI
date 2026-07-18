@@ -82,6 +82,7 @@ func TestResultMustSatisfyRequiredOutputObligations(t *testing.T) {
 		Responsibility: "plan",
 		WorkspacePath:  root,
 		StagingPath:    root,
+		WorkspaceWrite: WorkspaceWriteAuthority{LeaseName: "wf-workspace-writer", HolderIdentity: "AgentRun/ns/architect/uid", WriterEpoch: 1},
 		Outputs: []OutputObligation{{
 			Name:     "implementation-plan",
 			Version:  "v1",

@@ -149,6 +149,16 @@ Created -> Admitted -> Preparing -> Executing -> Collecting -> Succeeded
 
 `Interrupted` identifies deliberate platform or human interruption. It is distinct from an infrastructure failure.
 
+## Exclusive workspace writer authority
+
+Each workflow owns one `coordination.k8s.io/v1` Lease for its mutable workspace. `AgentRun`, `UtilityOperation`, and `HumanSession` controllers must acquire that Lease before creating any workload with a writable workspace mount. A collector runs under the same grant as its producing execution unit and the grant is retained through artifact collection.
+
+The Lease `holderIdentity` contains the execution kind, namespace, resource name, and immutable UID. `leaseTransitions` is the writer epoch: the first grant receives epoch 1, release clears the holder without resetting the counter, and every subsequent grant increments it. The lease name, holder identity, and epoch are copied into runtime contracts, workload annotations, environment, status, and audit references.
+
+The Lease is an authority and coordination primitive, not a filesystem lock. The controllers therefore never reassign an expired term while its previous workload is still active. Before release or finalizer completion, the controller proves that the execution pod/job and its collector are terminal or absent. An execution resource that observes a different holder or epoch interrupts its workload rather than reacquiring silently. A new execution unit is admitted only after the previous writer releases its exact term.
+
+This guarantees exclusivity for workloads created through the SovereignAI control plane. Cluster administrators or other principals able to mount the PVC or modify the Lease remain outside this boundary and must be constrained by Kubernetes RBAC and admission policy.
+
 ## Agent runtime contract
 
 The Go wrapper supervises an arbitrary agent executable supplied by a custom image. It enforces a platform contract without dictating the agent framework.

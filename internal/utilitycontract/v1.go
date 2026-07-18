@@ -35,25 +35,35 @@ type AuthorityReference struct {
 	UID        string `json:"uid"`
 }
 
+// WorkspaceWriteAuthority is the exclusive writer term admitted for this
+// invocation. WriterEpoch is copied from the Kubernetes Lease transitions
+// counter and fences the invocation from later writers.
+type WorkspaceWriteAuthority struct {
+	LeaseName      string `json:"leaseName"`
+	HolderIdentity string `json:"holderIdentity"`
+	WriterEpoch    int32  `json:"writerEpoch"`
+}
+
 type Input struct {
-	SchemaVersion    string             `json:"schemaVersion"`
-	WorkflowID       string             `json:"workflowId"`
-	StepName         string             `json:"stepName"`
-	Attempt          int32              `json:"attempt"`
-	Authority        AuthorityReference `json:"authority"`
-	PolicyDecisionID string             `json:"policyDecisionId"`
-	Operation        string             `json:"operation"`
-	IdempotencyKey   string             `json:"idempotencyKey"`
-	CredentialClass  string             `json:"credentialClass,omitempty"`
-	Parameters       map[string]string  `json:"parameters,omitempty"`
-	Command          []string           `json:"command,omitempty"`
-	Inputs           []ArtifactInput    `json:"inputs,omitempty"`
-	Outputs          []OutputObligation `json:"outputs,omitempty"`
-	WorkspacePath    string             `json:"workspacePath"`
-	StagingPath      string             `json:"stagingPath"`
-	ControlPath      string             `json:"controlPath,omitempty"`
-	ResultPath       string             `json:"resultPath,omitempty"`
-	AuditEventsPath  string             `json:"auditEventsPath,omitempty"`
+	SchemaVersion    string                  `json:"schemaVersion"`
+	WorkflowID       string                  `json:"workflowId"`
+	StepName         string                  `json:"stepName"`
+	Attempt          int32                   `json:"attempt"`
+	Authority        AuthorityReference      `json:"authority"`
+	PolicyDecisionID string                  `json:"policyDecisionId"`
+	Operation        string                  `json:"operation"`
+	IdempotencyKey   string                  `json:"idempotencyKey"`
+	CredentialClass  string                  `json:"credentialClass,omitempty"`
+	Parameters       map[string]string       `json:"parameters,omitempty"`
+	Command          []string                `json:"command,omitempty"`
+	Inputs           []ArtifactInput         `json:"inputs,omitempty"`
+	Outputs          []OutputObligation      `json:"outputs,omitempty"`
+	WorkspacePath    string                  `json:"workspacePath"`
+	StagingPath      string                  `json:"stagingPath"`
+	ControlPath      string                  `json:"controlPath,omitempty"`
+	ResultPath       string                  `json:"resultPath,omitempty"`
+	AuditEventsPath  string                  `json:"auditEventsPath,omitempty"`
+	WorkspaceWrite   WorkspaceWriteAuthority `json:"workspaceWrite"`
 }
 
 type ArtifactOutput struct {
@@ -139,6 +149,9 @@ func (i Input) Validate() error {
 	}
 	if i.PolicyDecisionID == "" {
 		return fmt.Errorf("policyDecisionId is required")
+	}
+	if i.WorkspaceWrite.LeaseName == "" || i.WorkspaceWrite.HolderIdentity == "" || i.WorkspaceWrite.WriterEpoch < 1 {
+		return fmt.Errorf("workspaceWrite must identify a lease holder and positive writer epoch")
 	}
 	if i.CredentialClass != "" && i.CredentialClass != "repository" && i.CredentialClass != "registry" {
 		return fmt.Errorf("unsupported credentialClass %q", i.CredentialClass)

@@ -24,6 +24,7 @@ func TestResultValidatesRequiredOutputObligations(t *testing.T) {
 		IdempotencyKey:   "ns/tests-001",
 		WorkspacePath:    t.TempDir(),
 		StagingPath:      staging,
+		WorkspaceWrite:   WorkspaceWriteAuthority{LeaseName: "wf-workspace-writer", HolderIdentity: "UtilityOperation/wf/tests-001/uid-tests-001", WriterEpoch: 1},
 		Outputs:          []OutputObligation{{Name: "test-report", Version: "v1", Required: true}},
 	}
 	result := Result{

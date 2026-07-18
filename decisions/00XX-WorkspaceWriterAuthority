@@ -1,0 +1,61 @@
+# Workspace Writer Authority
+
+Status: Accepted
+
+## Context
+
+SovereignAI workflows share a single PVC between agent, utility, and human-session pods. We treat the PVC as mutable shared storage whose contents do not imply authority. Concurrent writers could interleave changes, invalidate another execution unit's assumptions, or make the resulting workspace state difficult to attribute.
+
+1. A specific execution unit (AgentRun, UtilityOperation, or HumanSession) requests exclusive authority to write to a workflow's mutable workspace for the duration of its execution and artifact collection.
+2. The execution unit becomes the workspace's exclusive writer. While that relationship exists, no other execution unit may receive write authority. The relationship must end before authority can pass to the next execution unit.
+3. The SovereignAI control plane may grant write authority after validating the execution unit's delegation and lifecycle state and establishing that no current writer holds authority. Execution units must request authority and may not grant it to themselves or delegate it.
+4. The system requires a workflow-scoped exclusive ownership grant. Controllers should enforce this grant by admitting a writable workspace mount only for the exclusive owner and its current authority term.
+5. The system must establish which execution unit received the authority, the unique authority term under which it operated, that no competing authority term was active concurrently, that the writer and its collector became quiescent before the ownership ended, and that any successor received a strictly later authority term.
+
+## Decision
+I will use one workflow-owned Kubernetes Lease (`coordination.k8s.io/v1`) for the mutable workspace. The Lease's `holderIdentity` identifies the authorized execution unit, and `leaseTransitions` is a monotonically increasing writer epoch that distinguishes each successive authority term. The SovereignAI control plane is the authorizer.
+
+The AgentRun, UtilityOperation, and HumanSession controllers must acquire the Lease on behalf of an execution unit before creating a workload with a writable workspace mount. Acquisition uses the Lease resource version as an atomic compare-and-swap boundary. A controller may recover only the exact holder and epoch already recorded by its execution unit; it must not silently reacquire a different term. Release clears only that exact holder and epoch and does not reset the epoch counter.
+
+The Lease is an authority and coordination record, not a filesystem lock. A controller must not release or reassign authority until the writer workload and its collector are terminal or absent. An execution unit that observes a different holder or epoch has lost authority and must interrupt its workload. Lease expiry alone is not sufficient evidence that reassignment is safe. If the epoch counter is exhausted, acquisition must fail rather than wrap or reset the counter.
+
+Kubernetes RBAC and admission policy must reserve Lease mutation for the SovereignAI control plane and prevent other principals from directly creating writable mounts of the workflow PVC. The exclusivity guarantee applies only to workloads admitted through this boundary.
+
+The persisted Lease is the authoritative record of the current grant. The Lease name, holder identity, and writer epoch must also be copied into the execution-unit status, runtime contract, workload annotations and environment, and related audit records so that observations can be correlated to the exact authority term.
+
+Acquisition and release must each produce an audit event containing 
+- Execution-unit identity 
+- Lease name 
+- Holder identity 
+- Writer epoch 
+ 
+Before a release event is recorded the observed pod and collector state must establish that the writer is terminal or absent. Together, these records provide evidence of who held authority, the term under which it operated, safe release, and strictly ordered succession.
+
+## Consequences
+
+Positive consequences:
+
+- No additional CRD/reconciler
+- Authority between execution units admitted by the SovereignAI control plane and the writable workspace is now enforced.
+- Writable workspace access is serialized across agent, utility, and human-session execution units.
+
+Tradeoffs and limitations:
+
+- Filesystem writes are not universally blocked, this system could be superseded by execution units that can bypass the SovereignAI control plane and mount the PVC.
+- Workloads cannot start with writable workspace access until the Lease is held, which leads to increasing transition latency. 
+- A workflow can remain blocked when the control plane cannot prove that the previous writer and collector are quiescent. This requires operational diagnosis rather than unsafe Lease reassignment.
+- Epoch exhaustion prevents further acquisition and requires explicit operational remediation; the counter cannot safely wrap or reset while older terms may still be observable.
+- Additional RBAC and admission controls are required to protect Lease mutation and writable PVC mounts.
+
+## Rejected Alternatives
+
+Using a WorkflowLease or similar CRD to control write access.
+
+This could represent the same ownership relationship, but it would add an API type and associated maintenance without providing stronger filesystem enforcement. The built-in Kubernetes Lease already supplies a native, concurrency-aware ownership record with optimistic update semantics. A custom resource would still require the same controller protocol, RBAC, admission controls, and quiescence checks.
+
+Isolating volumes for each individual step/attempt
+
+This avoids mutable write sharing between execution units and may be preferable in a future architecture iteration. I'm rejecting this for the current design because it requires lifecycle management for additional volumes, explicit workspace-state transfer between execution units, and new rules for preserving identity, provenance, and cleanup across those transfers.
+
+## Notes
+I think this is an acceptable solution for now. Likely I'd need to push the architecture more towards isolated volumes, but that has its own challenges I'm not ready to address at this stage.

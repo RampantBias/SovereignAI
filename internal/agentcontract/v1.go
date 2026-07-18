@@ -24,23 +24,33 @@ type OutputObligation struct {
 	MediaType string `json:"mediaType,omitempty"`
 }
 
+// WorkspaceWriteAuthority is the fencing identity granted by the workflow's
+// Kubernetes Lease. The epoch changes every time write authority changes
+// hands, so runtime output can be attributed to one exclusive writer term.
+type WorkspaceWriteAuthority struct {
+	LeaseName      string `json:"leaseName"`
+	HolderIdentity string `json:"holderIdentity"`
+	WriterEpoch    int32  `json:"writerEpoch"`
+}
+
 type Input struct {
-	SchemaVersion     string             `json:"schemaVersion"`
-	WorkflowID        string             `json:"workflowId"`
-	StepName          string             `json:"stepName"`
-	Attempt           int32              `json:"attempt"`
-	Role              string             `json:"role"`
-	Responsibility    string             `json:"responsibility"`
-	Inputs            []ArtifactInput    `json:"inputs,omitempty"`
-	Outputs           []OutputObligation `json:"outputs,omitempty"`
-	Capabilities      []string           `json:"capabilities,omitempty"`
-	InferenceEndpoint string             `json:"inferenceEndpoint,omitempty"`
-	MCPServer         string             `json:"mcpServer,omitempty"`
-	WorkspacePath     string             `json:"workspacePath"`
-	StagingPath       string             `json:"stagingPath"`
-	ControlPath       string             `json:"controlPath,omitempty"`
-	ResultPath        string             `json:"resultPath,omitempty"`
-	AuditEventsPath   string             `json:"auditEventsPath,omitempty"`
+	SchemaVersion     string                  `json:"schemaVersion"`
+	WorkflowID        string                  `json:"workflowId"`
+	StepName          string                  `json:"stepName"`
+	Attempt           int32                   `json:"attempt"`
+	Role              string                  `json:"role"`
+	Responsibility    string                  `json:"responsibility"`
+	Inputs            []ArtifactInput         `json:"inputs,omitempty"`
+	Outputs           []OutputObligation      `json:"outputs,omitempty"`
+	Capabilities      []string                `json:"capabilities,omitempty"`
+	InferenceEndpoint string                  `json:"inferenceEndpoint,omitempty"`
+	MCPServer         string                  `json:"mcpServer,omitempty"`
+	WorkspacePath     string                  `json:"workspacePath"`
+	StagingPath       string                  `json:"stagingPath"`
+	ControlPath       string                  `json:"controlPath,omitempty"`
+	ResultPath        string                  `json:"resultPath,omitempty"`
+	AuditEventsPath   string                  `json:"auditEventsPath,omitempty"`
+	WorkspaceWrite    WorkspaceWriteAuthority `json:"workspaceWrite"`
 }
 
 type ArtifactOutput struct {
@@ -133,6 +143,9 @@ func (i Input) Validate() error {
 	}
 	if !filepath.IsAbs(i.WorkspacePath) || !filepath.IsAbs(i.StagingPath) {
 		return fmt.Errorf("workspacePath and stagingPath must be absolute")
+	}
+	if i.WorkspaceWrite.LeaseName == "" || i.WorkspaceWrite.HolderIdentity == "" || i.WorkspaceWrite.WriterEpoch < 1 {
+		return fmt.Errorf("workspaceWrite must identify a lease holder and positive writer epoch")
 	}
 	for name, path := range map[string]string{
 		"controlPath":     i.ControlPath,

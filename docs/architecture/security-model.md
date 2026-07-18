@@ -49,7 +49,7 @@ An agent starts with no ambient capabilities beyond its declared runtime needs. 
 | Capability | Possible enforcement |
 | --- | --- |
 | `context.read` | authenticated call to scoped Context API |
-| `workspace.write` | mounted workflow PVC path |
+| `workspace.write` | writable PVC mount created only for the current workflow Lease holder and writer epoch |
 | `inference.invoke` | identity-aware access to approved endpoint |
 | `mcp.tool:<name>` | allowlisted MCP method and request schema |
 | `artifact.publish` | wrapper-mediated output registration |
@@ -153,4 +153,3 @@ Recommended target controls include:
 - **AUTHOR NOTE:** Choose a service mesh only after the required identity and policy behaviors are specified.
 - **AUTHOR NOTE:** Define emergency administrator access and how break-glass actions are audited.
 - **AUTHOR NOTE:** Define artifact encryption, deletion, and classification behavior.
-

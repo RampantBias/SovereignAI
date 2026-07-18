@@ -292,6 +292,8 @@ spec:
                 type: string
               pvcName:
                 type: string
+              workspaceWriterLeaseRef:
+                type: string
             required:
             - phase
             type: object

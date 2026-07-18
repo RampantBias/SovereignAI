@@ -183,6 +183,13 @@ spec:
               startedAt:
                 format: date-time
                 type: string
+              workspaceWriterEpoch:
+                format: int32
+                type: integer
+              workspaceWriterLeaseRef:
+                type: string
+              workspaceWriterReleased:
+                type: boolean
             type: object
         required:
         - spec

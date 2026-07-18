@@ -182,14 +182,13 @@ These signatures are illustrative, not committed Go APIs.
 - Artifacts are immutable once accepted; new work produces new revisions.
 - Audit events are append-only and external to ordinary controller logs.
 
-SovereignAI keeps four information sources distinct: Kubernetes current state, append-only audit events, operational telemetry, and versioned artifacts. Decision lineage, execution playback, and comparative workflow evaluation are derived by correlating those sources; they are not additional control-plane state stores. See [Audit model](audit-model.md).
+SovereignAI keeps four information sources distinct: Kubernetes current state, append-only audit events, operational telemetry, and versioned artifacts. Decision lineage, forensic reconstruction, and comparative workflow evaluation are derived by correlating those sources; they are not additional control-plane state stores. See [Audit model](audit-model.md).
 
 ## Current implementation mapping
 
 | Current area | Target direction |
 | --- | --- |
 | `SovereignWorkflowController` | High-level workflow reconciliation |
-| `GPUNode` and embedded placement | Move physical allocation toward Kubernetes scheduling/DRA |
 | direct vLLM builders | First `InferenceProvider` implementation |
 | `internal/argo` | Argo-backed `ValidationProvider` that uses Kustomize to reconcile revisions |
 | `agent-wrapper` | Supervisor for arbitrary contract-compliant agent executables |
