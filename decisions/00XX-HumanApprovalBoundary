@@ -47,18 +47,25 @@ The ApprovalRequest controller will respond to this and perform a similar set of
 
 ## ApprovalDecision Contract
 
-Initial demo will use a placeholder provider until odic/keycloak is integrated. ApprovalDecision will be 
+Initial demo will use a placeholder provider until odic/keycloak is integrated. ApprovalDecision will represent the immmutable record tying subject authority to the binding decision.
 
 ```yaml
 kind: ApprovalDecision
 spec:
-  workflowRef: demo-workflow
-  approvalRequestRef: product-approval-001
-  approvalRequestUID: "..."
-  approvalRequestResourceVersion: "123"
-  stepAttemptRef: product-approval-001
-  stepName: product-approval
+  workflowRef: 
+    name: demo-workflow
+    uid: "..."
+  stepAttemptRef:
+    name: product-approval
+    uid: "..."
+  approvalRequestRef:
+    name: product-approval
+    uid: "..."
+
   decision: Approved # Approved | Denied
+  reason: "Looks good for demo"
+  authoredAt: "..."
+
   subject:
     subjectId: frank
     email: frank@example.com
@@ -66,7 +73,6 @@ spec:
     provider: demo-static # later oidc/keycloak/etc
     groups:
       - product-owners
-  reason: "Looks good for demo"
 ```
 ## Workflow Step Contract Changes
 
