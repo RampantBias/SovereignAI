@@ -144,7 +144,7 @@ func (r *ValidationRunReconciler) providerRequest(ctx context.Context, run *v1al
 		return validation.Request{}, err
 	}
 	var project v1alpha1.SovereignProject
-	if err := r.Get(ctx, types.NamespacedName{Name: workflow.Spec.ProjectName}, &project); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: workflow.Spec.Project.Name}, &project); err != nil {
 		return validation.Request{}, err
 	}
 	return validation.Request{

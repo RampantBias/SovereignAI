@@ -112,7 +112,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 		if err := r.Get(ctx, key, &approval); err != nil {
 			return "", "", false, err
 		}
-		if err := validateDomainBinding(attempt, &approval, approval.Spec.AttemptRef, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
+		if err := validateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef.Name, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
 			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
 		}
 		return approval.Status.Phase, approval.Status.FailureReason, approval.Status.Retryable, nil

@@ -14,7 +14,7 @@ Build a Human Approval API and CLI that allow an authorized human to approve or 
 
 ### Core Process
 
-- Workflow reaches a Human Gate and enters an `AwaitingApproval` state.
+- Workflow reaches a Human Gate and the step attempt enters an `AwaitingApproval` state.
 - Approval or denial is submitted through the API, for example: `sovctl <approve|deny> <workflow-id> --step performance-review-approval --reason "..."`.
 - The approval command is validated against workflow state and subject identity.
 - A decision is persisted and audited.
@@ -34,7 +34,7 @@ The approve or deny command should only succeed under the following policies:
 - The subject is allowed to approve or deny this step.
 - The command is unique and is not a duplicate decision.
 
-Upon approval or denial, the API will generate an immutable `ApprovalDecision` CRD and tie its identity to the exact identity of the step validated against.
+Upon approval or denial, the API will generate an immutable `ApprovalDecision` CRD and tie its identity to the exact identity of the step validated against. Denial will cause the stepattempt to be left in a terminal state until looping/retry behavior is implemented.
 
 The ApprovalRequest controller will respond to this and perform a similar set of validations but applied to reconciliation correctness:
 
@@ -44,6 +44,29 @@ The ApprovalRequest controller will respond to this and perform a similar set of
 - The subject(s) satisfies the approval rule according to the approval mode.
 - All required approvals are complete.
 - Any denial fails the step.
+
+## ApprovalRequest Contract
+
+
+
+```yaml
+kind: ApprovalRequest
+spec:
+  attemptRef:
+    name: "..."
+    uid: "..."
+  workflowRef:
+    name: "..."
+    uid: "..."
+  stepName: "..."
+  attempt: 0
+  approval:
+    mode: "AnyOf|AllOf|Quorum"
+    requiredGroups:
+      - "..."
+    denyBehavior: "Fail"
+```
+
 
 ## ApprovalDecision Contract
 
@@ -74,9 +97,13 @@ spec:
     groups:
       - product-owners
 ```
-## Workflow Step Contract Changes
+## Approval Behaviors
+AnyOf/AllOf/Quorum behavior
 
-Workflow Step Contract 
+For the MVP, I will limit to just AnyOf to avoid additional overhead adding everything in.
+
+
+
 ## Consequences
 
 Positive consequences:

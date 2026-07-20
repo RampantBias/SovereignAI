@@ -1,6 +1,9 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+)
 
 type ResourcePhase string
 
@@ -42,14 +45,34 @@ const (
 type ApprovalMode string
 
 const (
-	AnyOf  ApprovalMode = `AnyOf`
-	AllOf  ApprovalMode = `AllOf`
-	Quorum ApprovalMode = `Quorum`
+	AnyOf ApprovalMode = `AnyOf`
+	//AllOf  ApprovalMode = `AllOf`
+	//Quorum ApprovalMode = `Quorum`
 )
+
+type ApprovalChoice string
+
+const (
+	Approved ApprovalChoice = `Approved`
+	Denied   ApprovalChoice = `Denied`
+)
+
+type UIDReference struct {
+	Name string    `json:"name"`
+	UID  types.UID `json:"uid"`
+}
 
 type NamespacedReference struct {
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name"`
+}
+
+type Subject struct {
+	SubjectId   string   `json:"subjectId"`
+	Email       string   `json:"email"`
+	DisplayName string   `json:"displayName"`
+	Provider    string   `json:"provider"`
+	Groups      []string `json:"groups"`
 }
 
 type RepositorySpec struct {
@@ -285,8 +308,8 @@ type ApprovalRequest struct {
 }
 
 type ApprovalRequestSpec struct {
-	AttemptRef  string       `json:"attemptRef"`
-	WorkflowRef string       `json:"workflowRef"`
+	AttemptRef  UIDReference `json:"attemptRef"`
+	WorkflowRef UIDReference `json:"workflowRef"`
 	StepName    string       `json:"stepName"`
 	Attempt     int32        `json:"attempt"`
 	Approval    ApprovalSpec `json:"approval"`
@@ -300,6 +323,29 @@ type ApprovalRequestStatus struct {
 	Retryable          bool               `json:"retryable,omitempty"`
 	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
 	CompletedAt        *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type ApprovalDecision struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   ApprovalDecisionSpec   `json:"spec"`
+	Status ApprovalDecisionStatus `json:"status,omitempty"`
+}
+
+type ApprovalDecisionSpec struct {
+	WorkflowRef        UIDReference   `json:"workflowRef"`
+	StepAttemptRef     UIDReference   `json:"stepAttemptRef"`
+	ApprovalRequestRef UIDReference   `json:"approvalRequestRef"`
+	Decision           ApprovalChoice `json:"decision"`
+	Reason             string         `json:"reason"`
+	AuthoredAt         *metav1.Time   `json:"authoredAt"`
+	Subject            Subject        `json:"subject"`
+}
+
+type ApprovalDecisionStatus struct {
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 

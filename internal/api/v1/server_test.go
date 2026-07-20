@@ -80,7 +80,7 @@ spec:
 	if err := client.Get(context.Background(), objectKey(namespace, response.WorkflowId), &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if workflow.Spec.ProjectName != "platform" || workflow.Spec.WorkflowID != response.WorkflowId {
+	if workflow.Spec.Project.Name != "platform" || workflow.Spec.WorkflowID != response.WorkflowId {
 		t.Fatalf("unexpected workflow identity: %#v", workflow.Spec)
 	}
 	var ns corev1.Namespace

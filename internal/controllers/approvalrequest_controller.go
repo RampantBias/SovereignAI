@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ApprovalRequestReconciler owns the request side of human authority. B2 will
+// ApprovalRequestReconciler owns the request side of human authority.
 // add immutable ApprovalDecision observation; until then requests remain
 // explicitly AwaitingApproval rather than mutating StepAttempt status directly.
 type ApprovalRequestReconciler struct {
@@ -42,7 +42,7 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if approval.Status.Phase == v1alpha1.PhaseAwaitingApproval {
 		return ctrl.Result{}, nil
 	}
-	authorized, err := validateDomainAuthority(ctx, r.Client, &approval, approval.Spec.AttemptRef, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt)
+	authorized, err := validateDomainAuthority(ctx, r.Client, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef.Name, approval.Spec.StepName, approval.Spec.Attempt)
 	if err != nil {
 		return ctrl.Result{}, r.setFailed(ctx, &approval, "InvalidStepAttemptAuthority")
 	}
@@ -53,8 +53,8 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, appendControllerEvent(ctx, r.Audit, "approvalrequest-controller", r.Now, audit.EventOptions{
-		Type: "ApprovalRequested", Subject: audit.Subject{Namespace: approval.Namespace, Workflow: approval.Spec.WorkflowRef, Step: approval.Spec.StepName, Attempt: approval.Spec.Attempt},
-		Action: "request", Target: approval.Name, Outcome: "awaiting", References: map[string]string{"approvalRequest": approval.Name, "stepAttempt": approval.Spec.AttemptRef},
+		Type: "ApprovalRequested", Subject: audit.Subject{Namespace: approval.Namespace, Workflow: approval.Spec.WorkflowRef.Name, Step: approval.Spec.StepName, Attempt: approval.Spec.Attempt},
+		Action: "request", Target: approval.Name, Outcome: "awaiting", References: map[string]string{"approvalRequest": approval.Name, "stepAttempt": approval.Spec.AttemptRef.Name},
 		Data: map[string]any{"mode": approval.Spec.Approval.Mode, "requiredGroups": approval.Spec.Approval.RequiredGroups},
 	})
 }

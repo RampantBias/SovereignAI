@@ -28,7 +28,7 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 	}
 	workflow := &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
-		Spec: v1alpha1.SovereignWorkflowSpec{ProjectName: "project", WorkflowID: "wf-1", Steps: []v1alpha1.StepConfig{{
+		Spec: v1alpha1.SovereignWorkflowSpec{Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-1", Steps: []v1alpha1.StepConfig{{
 			Name: "architect", Kind: v1alpha1.ExecutionKindAgent,
 			Agent: &v1alpha1.AgentStepSpec{Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
 		}}},
@@ -88,7 +88,7 @@ func TestWorkflowSkipsNormalReconcileWhenNamespaceTerminating(t *testing.T) {
 	}
 	workflow := &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf-terminating", Namespace: "wf-terminating", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
-		Spec: v1alpha1.SovereignWorkflowSpec{ProjectName: "project", WorkflowID: "wf-terminating", Steps: []v1alpha1.StepConfig{{
+		Spec: v1alpha1.SovereignWorkflowSpec{Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-terminating", Steps: []v1alpha1.StepConfig{{
 			Name: "architect", Kind: v1alpha1.ExecutionKindAgent,
 			Agent: &v1alpha1.AgentStepSpec{Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
 		}}},
@@ -139,7 +139,7 @@ func TestWorkflowCreatesOneTypedDomainPrimitivePerAttemptKind(t *testing.T) {
 			}
 			workflow := &v1alpha1.SovereignWorkflow{
 				ObjectMeta: metav1.ObjectMeta{Name: "wf", Namespace: test.name, UID: types.UID("workflow-" + test.name)},
-				Spec:       v1alpha1.SovereignWorkflowSpec{ProjectName: "project", WorkflowID: "wf-" + test.name, Steps: []v1alpha1.StepConfig{test.step}},
+				Spec:       v1alpha1.SovereignWorkflowSpec{Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-" + test.name, Steps: []v1alpha1.StepConfig{test.step}},
 			}
 			client := fake.NewClientBuilder().WithScheme(scheme).
 				WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.StepAttempt{}, &v1alpha1.AgentRun{}, &v1alpha1.UtilityOperation{}, &v1alpha1.ApprovalRequest{}, &v1alpha1.ValidationRun{}).

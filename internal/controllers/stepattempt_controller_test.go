@@ -242,7 +242,7 @@ func TestApprovalRequestOwnsAwaitingApprovalState(t *testing.T) {
 	attempt := authorizedAttempt("approval-001", "wf", "approval", v1alpha1.ExecutionKindHumanGate)
 	approval := &v1alpha1.ApprovalRequest{
 		ObjectMeta: metav1.ObjectMeta{Name: "approval-001", Namespace: "wf"},
-		Spec: v1alpha1.ApprovalRequestSpec{AttemptRef: "approval-001", WorkflowRef: "wf", StepName: "approval", Attempt: 1,
+		Spec: v1alpha1.ApprovalRequestSpec{AttemptRef: v1alpha1.UIDReference{Name: "approval-001"}, WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, StepName: "approval", Attempt: 1,
 			Approval: v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, RequiredGroups: []string{"maintainers"}, DenyBehavior: "Fail"}},
 	}
 	ownByAttempt(approval, attempt)
@@ -311,7 +311,7 @@ func attemptScheme(t *testing.T) *runtime.Scheme {
 func workflowFixture() *v1alpha1.SovereignWorkflow {
 	return &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf", Namespace: "wf", UID: "workflow-uid"},
-		Spec:       v1alpha1.SovereignWorkflowSpec{WorkflowID: "wf", ProjectName: "project"},
+		Spec:       v1alpha1.SovereignWorkflowSpec{WorkflowID: "wf", Project: v1alpha1.UIDReference{Name: "project"}},
 		Status:     v1alpha1.SovereignWorkflowStatus{PvcName: "wf-workspace", WorkspaceWriterLeaseRef: "wf-workspace-writer"},
 	}
 }

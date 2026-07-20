@@ -327,11 +327,11 @@ func (r *UtilityOperationReconciler) resolveContext(ctx context.Context, operati
 	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.WorkflowRef}, &workflow); err != nil {
 		return nil, nil, err
 	}
-	if workflow.Spec.ProjectName == "" {
+	if workflow.Spec.Project.Name == "" {
 		return nil, nil, fmt.Errorf("utility operation requires a workflow projectRef")
 	}
 	var project v1alpha1.SovereignProject
-	if err := r.Get(ctx, types.NamespacedName{Name: workflow.Spec.ProjectName}, &project); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: workflow.Spec.Project.Name}, &project); err != nil {
 		return nil, nil, err
 	}
 	return &workflow, &project, nil

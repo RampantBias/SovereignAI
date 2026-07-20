@@ -331,7 +331,7 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 			return nil, fmt.Errorf("human gate %s has no approval specification", step.Name)
 		}
 		object = &v1alpha1.ApprovalRequest{ObjectMeta: metadata, Spec: v1alpha1.ApprovalRequestSpec{
-			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name,
+			AttemptRef: v1alpha1.UIDReference{Name: attempt.Name}, WorkflowRef: v1alpha1.UIDReference{Name: attempt.Spec.WorkflowRef}, StepName: step.Name,
 			Attempt: attempt.Spec.Attempt, Approval: copyApprovalSpec(*step.Approval),
 		}}
 		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ApprovalRequest", Name: attempt.Name}
@@ -477,7 +477,7 @@ func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *
 	return appendControllerEvent(ctx, r.Audit, "workflow-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
-			Project:   workflow.Spec.ProjectName,
+			Project:   workflow.Spec.Project.Name,
 			Namespace: workflow.Namespace,
 			Workflow:  workflow.Name,
 			Step:      step,

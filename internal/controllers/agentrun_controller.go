@@ -290,8 +290,8 @@ func (r *AgentRunReconciler) ensureLease(ctx context.Context, run *v1alpha1.Agen
 		return nil, err
 	}
 	lease = v1alpha1.InferenceLease{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: run.Namespace}, Spec: v1alpha1.InferenceLeaseSpec{
-		WorkflowRef: workflow.Name, AttemptRef: run.Spec.AttemptRef, ProjectRef: workflow.Spec.ProjectName,
-		Tenant: workflow.Spec.ProjectName, Classification: workflow.Spec.Classification,
+		WorkflowRef: workflow.Name, AttemptRef: run.Spec.AttemptRef, ProjectRef: workflow.Spec.Project.Name,
+		Tenant: workflow.Spec.Project.Name, Classification: workflow.Spec.Classification,
 		SharingScope: run.Spec.Inference.SharingScope, Model: run.Spec.Inference.Model,
 		ModelRevision: run.Spec.Inference.ModelRevision, EstimatedKVRAMMiB: run.Spec.Inference.EstimatedKVRAMMiB,
 		Priority: run.Spec.Inference.Priority, Evictable: run.Spec.Inference.Evictable,
