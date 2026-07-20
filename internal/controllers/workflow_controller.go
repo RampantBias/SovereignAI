@@ -9,6 +9,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/domain/state"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -40,6 +41,7 @@ func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.SovereignWorkflow{}).
 		Owns(&v1alpha1.StepAttempt{}).
+		Owns(&coordinationv1.Lease{}).
 		Complete(r)
 }
 
@@ -91,6 +93,9 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	// Verify there is a pvc registered (skipping actual validation)
 	if workflow.Status.PvcName == "" {
 		return ctrl.Result{}, r.ensureWorkspace(ctx, &workflow)
+	}
+	if workflow.Status.WorkspaceWriterLeaseRef == "" {
+		return ctrl.Result{}, r.ensureWorkspaceWriterLease(ctx, &workflow)
 	}
 
 	// Check if workflow is being retried
@@ -155,6 +160,45 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepFailed", attempt.Status.FailureReason)
 	}
 	return ctrl.Result{}, nil
+}
+
+// ensureWorkspaceWriterLease creates the workflow-owned coordination
+// primitive that serializes every writable workspace mount. LeaseTransitions
+// is retained across releases and serves as the monotonically increasing
+// writer epoch.
+func (r *WorkflowReconciler) ensureWorkspaceWriterLease(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) error {
+	name := workspaceWriterLeaseName(workflow.Name)
+	var lease coordinationv1.Lease
+	err := r.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: name}, &lease)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	if apierrors.IsNotFound(err) {
+		zero := int32(0)
+		lease = coordinationv1.Lease{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: workflow.Namespace,
+				Labels: map[string]string{LabelWorkflow: workflow.Spec.WorkflowID},
+			},
+			Spec: coordinationv1.LeaseSpec{LeaseTransitions: &zero},
+		}
+		if err := controllerutil.SetControllerReference(workflow, &lease, r.Scheme); err != nil {
+			return err
+		}
+		if err := r.Create(ctx, &lease); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+	} else if !metav1.IsControlledBy(&lease, workflow) {
+		return r.failWorkflow(ctx, workflow, "InvalidWorkspaceWriterLease", fmt.Sprintf("lease %s is not controlled by workflow %s", name, workflow.Name))
+	}
+
+	updated, err := r.updateWorkflowStatus(ctx, client.ObjectKeyFromObject(workflow), func(latest *v1alpha1.SovereignWorkflow) {
+		latest.Status.WorkspaceWriterLeaseRef = name
+	})
+	if err != nil {
+		return err
+	}
+	return r.appendWorkflowEvent(ctx, updated, "WorkspaceWriterLeaseCreated", "", 0, "create", name, "created", "", map[string]string{"lease": name}, map[string]any{"writerEpoch": 0})
 }
 
 // Verifies valid PVC is referenced by a workflow

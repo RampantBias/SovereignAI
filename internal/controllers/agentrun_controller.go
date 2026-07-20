@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"time"
 
@@ -48,7 +49,13 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !run.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		return r.finalizeWorkspaceWriter(ctx, &run)
+	}
+	if !controllerutil.ContainsFinalizer(&run, WorkspaceWriterFinalizer) {
+		controllerutil.AddFinalizer(&run, WorkspaceWriterFinalizer)
+		if err := r.Update(ctx, &run); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	terminating, err := namespaceTerminating(ctx, r.Client, run.Namespace)
 	if err != nil || terminating {
@@ -58,7 +65,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, r.setPhase(ctx, &run, v1alpha1.PhasePending, "Initialized", "agent run initialized")
 	}
 	if terminalAttempt(run.Status.Phase) {
-		return ctrl.Result{}, nil
+		return r.reconcileWorkspaceWriterRelease(ctx, &run)
 	}
 	authorized, err := validateDomainAuthority(ctx, r.Client, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindAgent, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt)
 	if err != nil {
@@ -89,8 +96,28 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		}
 	}
 
+	grant, writerState, err := r.ensureWorkspaceWriter(ctx, &run)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	switch writerState {
+	case workspaceWriterBlocked:
+		if run.Status.PodRef != "" || run.Status.CollectorJobRef != "" {
+			if err := r.deleteWorkspaceWriterWorkloads(ctx, &run); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, r.interrupt(ctx, &run, "WorkspaceWriterAuthorityNotEstablished", true)
+		}
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, r.setPhase(ctx, &run, v1alpha1.PhasePending, "WorkspaceWriterBlocked", "another execution unit holds workspace write authority")
+	case workspaceWriterLost:
+		if err := r.deleteWorkspaceWriterWorkloads(ctx, &run); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.interrupt(ctx, &run, "WorkspaceWriterAuthorityLost", true)
+	}
+
 	if run.Status.PodRef == "" {
-		if err := r.ensureWorkload(ctx, &run, endpoint); err != nil {
+		if err := r.ensureWorkload(ctx, &run, endpoint, grant); err != nil {
 			return ctrl.Result{}, err
 		}
 		run.Status.PodRef = run.Name
@@ -118,6 +145,128 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	default:
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
+}
+
+func (r *AgentRunReconciler) ensureWorkspaceWriter(ctx context.Context, run *v1alpha1.AgentRun) (workspaceWriterGrant, workspaceWriterState, error) {
+	var workflow v1alpha1.SovereignWorkflow
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
+		return workspaceWriterGrant{}, workspaceWriterBlocked, err
+	}
+	if workflow.Status.WorkspaceWriterLeaseRef == "" {
+		return workspaceWriterGrant{}, workspaceWriterBlocked, nil
+	}
+	now := time.Now()
+	if r.Now != nil {
+		now = r.Now()
+	}
+	grant, state, err := acquireWorkspaceWriter(ctx, r.Client, &workflow, workflow.Status.WorkspaceWriterLeaseRef, "AgentRun", run, run.Status.WorkspaceWriterEpoch, now)
+	if err != nil || state != workspaceWriterGranted {
+		return grant, state, err
+	}
+	newGrant := run.Status.WorkspaceWriterEpoch == 0
+	run.Status.WorkspaceWriterLeaseRef = grant.LeaseName
+	run.Status.WorkspaceWriterEpoch = grant.Epoch
+	run.Status.WorkspaceWriterReleased = false
+	if err := r.updateStatusFields(ctx, run); err != nil {
+		return workspaceWriterGrant{}, workspaceWriterBlocked, err
+	}
+	if newGrant {
+		if err := r.appendEvent(ctx, run, "WorkspaceWriterAcquired", "acquire", grant.LeaseName, "granted", fmt.Sprintf("WriterEpoch%d", grant.Epoch)); err != nil {
+			return workspaceWriterGrant{}, workspaceWriterBlocked, err
+		}
+	}
+	return grant, state, nil
+}
+
+func (r *AgentRunReconciler) workspaceWriterGrant(run *v1alpha1.AgentRun) (workspaceWriterGrant, error) {
+	holder, err := workspaceWriterIdentity("AgentRun", run)
+	if err != nil {
+		return workspaceWriterGrant{}, err
+	}
+	if run.Status.WorkspaceWriterLeaseRef == "" || run.Status.WorkspaceWriterEpoch < 1 {
+		return workspaceWriterGrant{}, fmt.Errorf("AgentRun %s has no workspace writer grant", run.Name)
+	}
+	return workspaceWriterGrant{LeaseName: run.Status.WorkspaceWriterLeaseRef, HolderIdentity: holder, Epoch: run.Status.WorkspaceWriterEpoch}, nil
+}
+
+func (r *AgentRunReconciler) reconcileWorkspaceWriterRelease(ctx context.Context, run *v1alpha1.AgentRun) (ctrl.Result, error) {
+	if run.Status.WorkspaceWriterEpoch < 1 || run.Status.WorkspaceWriterReleased {
+		return ctrl.Result{}, nil
+	}
+	podQuiet, err := podWriterQuiescent(ctx, r.Client, run.Namespace, run.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	collectorQuiet, err := jobWriterQuiescent(ctx, r.Client, run.Namespace, run.Name+"-collect")
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !podQuiet || !collectorQuiet {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+	grant, err := r.workspaceWriterGrant(run)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	now := time.Now()
+	if r.Now != nil {
+		now = r.Now()
+	}
+	if err := releaseWorkspaceWriter(ctx, r.Client, run.Namespace, grant, now); err != nil {
+		return ctrl.Result{}, err
+	}
+	run.Status.WorkspaceWriterReleased = true
+	if err := r.updateStatusFields(ctx, run); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, r.appendEvent(ctx, run, "WorkspaceWriterReleased", "release", grant.LeaseName, "released", fmt.Sprintf("WriterEpoch%d", grant.Epoch))
+}
+
+func (r *AgentRunReconciler) deleteWorkspaceWriterWorkloads(ctx context.Context, run *v1alpha1.AgentRun) error {
+	for _, object := range []client.Object{
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: run.Name, Namespace: run.Namespace}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-collect", Namespace: run.Namespace}},
+	} {
+		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *AgentRunReconciler) finalizeWorkspaceWriter(ctx context.Context, run *v1alpha1.AgentRun) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(run, WorkspaceWriterFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.deleteWorkspaceWriterWorkloads(ctx, run); err != nil {
+		return ctrl.Result{}, err
+	}
+	podQuiet, err := podWriterQuiescent(ctx, r.Client, run.Namespace, run.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	collectorQuiet, err := jobWriterQuiescent(ctx, r.Client, run.Namespace, run.Name+"-collect")
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !podQuiet || !collectorQuiet {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+	if run.Status.WorkspaceWriterEpoch > 0 && !run.Status.WorkspaceWriterReleased {
+		grant, err := r.workspaceWriterGrant(run)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		now := time.Now()
+		if r.Now != nil {
+			now = r.Now()
+		}
+		if err := releaseWorkspaceWriter(ctx, r.Client, run.Namespace, grant, now); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	controllerutil.RemoveFinalizer(run, WorkspaceWriterFinalizer)
+	return ctrl.Result{}, r.Update(ctx, run)
 }
 
 func (r *AgentRunReconciler) ensureLease(ctx context.Context, run *v1alpha1.AgentRun) (*v1alpha1.InferenceLease, error) {
@@ -171,7 +320,7 @@ func (r *AgentRunReconciler) deletePod(ctx context.Context, run *v1alpha1.AgentR
 	return client.IgnoreNotFound(r.Delete(ctx, pod))
 }
 
-func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.AgentRun, endpoint string) error {
+func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.AgentRun, endpoint string, grant workspaceWriterGrant) error {
 	var workflow v1alpha1.SovereignWorkflow
 	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
 		return err
@@ -187,6 +336,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		MCPServer: "https://sovereign-mcp.sovereign-orchestrator-system.svc", WorkspacePath: "/workspace",
 		StagingPath: executionStagingPath(run.Name), ControlPath: executionControlPath(run.Name),
 		ResultPath: executionResultPath(run.Name), AuditEventsPath: executionAuditEventsPath(run.Name),
+		WorkspaceWrite: agentcontract.WorkspaceWriteAuthority{LeaseName: grant.LeaseName, HolderIdentity: grant.HolderIdentity, WriterEpoch: grant.Epoch},
 	}
 	data, err := json.Marshal(input)
 	if err != nil {
@@ -200,14 +350,14 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 	if err := r.Create(ctx, config); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
-	pod := buildAgentRunPod(run, workflow.Status.PvcName, configName)
+	pod := buildAgentRunPod(run, workflow.Status.PvcName, configName, grant)
 	if err := controllerutil.SetControllerReference(run, pod, r.Scheme); err != nil {
 		return err
 	}
 	return client.IgnoreAlreadyExists(r.Create(ctx, pod))
 }
 
-func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string) *corev1.Pod {
+func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant workspaceWriterGrant) *corev1.Pod {
 	if pvcName == "" {
 		pvcName = run.Spec.WorkflowRef + "-workspace"
 	}
@@ -216,12 +366,12 @@ func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string) *corev
 	executable, _ := json.Marshal(run.Spec.Executable)
 	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: run.Name, Namespace: run.Namespace, Labels: map[string]string{
 		LabelWorkflow: run.Labels[LabelWorkflow], LabelStep: run.Spec.StepName, "sovereign-ai.io/agent-run": run.Name,
-	}}, Spec: corev1.PodSpec{
+	}, Annotations: workspaceWriterAnnotations(grant)}, Spec: corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
 		SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAsUser, FSGroup: &runAsUser},
 		Containers: []corev1.Container{{Name: "agent", Image: run.Spec.Image, Command: []string{"/agent-wrapper"},
 			Args:            []string{"--input", "/control/input.json", "--result", executionResultPath(run.Name)},
-			Env:             []corev1.EnvVar{{Name: "SOVEREIGN_AGENT_EXECUTABLE", Value: string(executable)}},
+			Env:             append([]corev1.EnvVar{{Name: "SOVEREIGN_AGENT_EXECUTABLE", Value: string(executable)}}, workspaceWriterEnv(grant)...),
 			SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 			VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
 		}}, Volumes: []corev1.Volume{
@@ -236,7 +386,11 @@ func (r *AgentRunReconciler) startCollection(ctx context.Context, run *v1alpha1.
 	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
 		return ctrl.Result{}, err
 	}
-	objects := buildCollectorResources(run, &workflow, run.Spec.StepName, r.collectorImage())
+	grant, err := r.workspaceWriterGrant(run)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	objects := buildCollectorResources(run, &workflow, run.Spec.StepName, r.collectorImage(), grant)
 	for _, object := range objects {
 		if err := controllerutil.SetControllerReference(run, object, r.Scheme); err != nil {
 			return ctrl.Result{}, err
@@ -290,6 +444,9 @@ func (r *AgentRunReconciler) setPhase(ctx context.Context, run *v1alpha1.AgentRu
 		latest.Status.PodRef = run.Status.PodRef
 		latest.Status.CollectorJobRef = run.Status.CollectorJobRef
 		latest.Status.InferenceLeaseRef = run.Status.InferenceLeaseRef
+		latest.Status.WorkspaceWriterLeaseRef = run.Status.WorkspaceWriterLeaseRef
+		latest.Status.WorkspaceWriterEpoch = run.Status.WorkspaceWriterEpoch
+		latest.Status.WorkspaceWriterReleased = run.Status.WorkspaceWriterReleased
 		latest.Status.FailureReason = run.Status.FailureReason
 		latest.Status.Retryable = run.Status.Retryable
 		latest.Status.ObservedGeneration = latest.Generation
@@ -320,10 +477,16 @@ func (r *AgentRunReconciler) interrupt(ctx context.Context, run *v1alpha1.AgentR
 
 func (r *AgentRunReconciler) updateStatusFields(ctx context.Context, run *v1alpha1.AgentRun) error {
 	_, _, err := r.updateStatus(ctx, client.ObjectKeyFromObject(run), func(latest *v1alpha1.AgentRun) bool {
-		if latest.Status.InferenceLeaseRef == run.Status.InferenceLeaseRef {
+		if latest.Status.InferenceLeaseRef == run.Status.InferenceLeaseRef &&
+			latest.Status.WorkspaceWriterLeaseRef == run.Status.WorkspaceWriterLeaseRef &&
+			latest.Status.WorkspaceWriterEpoch == run.Status.WorkspaceWriterEpoch &&
+			latest.Status.WorkspaceWriterReleased == run.Status.WorkspaceWriterReleased {
 			return false
 		}
 		latest.Status.InferenceLeaseRef = run.Status.InferenceLeaseRef
+		latest.Status.WorkspaceWriterLeaseRef = run.Status.WorkspaceWriterLeaseRef
+		latest.Status.WorkspaceWriterEpoch = run.Status.WorkspaceWriterEpoch
+		latest.Status.WorkspaceWriterReleased = run.Status.WorkspaceWriterReleased
 		latest.Status.ObservedGeneration = latest.Generation
 		return true
 	})
@@ -355,7 +518,7 @@ func (r *AgentRunReconciler) appendEvent(ctx context.Context, run *v1alpha1.Agen
 	return appendControllerEvent(ctx, r.Audit, "agentrun-controller", r.Now, audit.EventOptions{
 		Type: eventType, Subject: audit.Subject{Namespace: run.Namespace, Workflow: run.Spec.WorkflowRef, Step: run.Spec.StepName, Attempt: run.Spec.Attempt},
 		Action: action, Target: target, Outcome: outcome, Reason: reason,
-		References: map[string]string{"agentRun": run.Name, "stepAttempt": run.Spec.AttemptRef, "pod": run.Status.PodRef, "collector": run.Status.CollectorJobRef, "lease": run.Status.InferenceLeaseRef},
+		References: map[string]string{"agentRun": run.Name, "stepAttempt": run.Spec.AttemptRef, "pod": run.Status.PodRef, "collector": run.Status.CollectorJobRef, "lease": run.Status.InferenceLeaseRef, "workspaceWriterLease": run.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(run.Status.WorkspaceWriterEpoch)},
 	})
 }
 
@@ -366,14 +529,14 @@ func executionAuditEventsPath(name string) string {
 	return executionControlPath(name) + "/events.jsonl"
 }
 
-func buildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWorkflow, stepName, image string) []client.Object {
+func buildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWorkflow, stepName, image string, grant workspaceWriterGrant) []client.Object {
 	name := owner.GetName() + "-collector"
 	jobName := owner.GetName() + "-collect"
 	automount, backoff := true, int32(0)
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()}, AutomountServiceAccountToken: &automount}
 	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"artifacts"}, Verbs: []string{"create", "get"}}}}
 	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: owner.GetNamespace()}}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}}
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: owner.GetNamespace()}, Spec: batchv1.JobSpec{BackoffLimit: &backoff, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: owner.GetNamespace(), Annotations: workspaceWriterAnnotations(grant)}, Spec: batchv1.JobSpec{BackoffLimit: &backoff, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: workspaceWriterAnnotations(grant)}, Spec: corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: name,
 		Containers: []corev1.Container{{Name: "collector", Image: image, Args: []string{
 			"--namespace", owner.GetNamespace(), "--workflow", workflow.Name, "--attempt", owner.GetName(),
@@ -381,7 +544,7 @@ func buildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWo
 			"--result", executionResultPath(owner.GetName()), "--staging", executionStagingPath(owner.GetName()),
 			"--artifact-store", "/workspace/.sovereign/artifacts", "--audit-events", executionAuditEventsPath(owner.GetName()),
 			"--source-revision", workflow.Spec.DefinitionRevision,
-		}, Env: collectorAuditEnv(), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
+		}, Env: append(collectorAuditEnv(), workspaceWriterEnv(grant)...), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
 		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workflow.Status.PvcName}}}},
 	}}}}
 	_ = stepName

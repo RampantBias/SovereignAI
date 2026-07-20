@@ -10,24 +10,24 @@ This document describes the target architecture.
 
 SovereignAI owns:
 
-- workflow and step lifecycle;
-- execution isolation and workspace lifecycle;
-- capability admission and workload identity;
-- artifact contracts and handoff metadata;
-- inference requests and sharing policy;
-- human gates and intervention sessions;
-- deterministic utility (i.e. GIT) operations;
-- validation-provider coordination;
-- recovery policy and authoritative audit events.
+- Workflow and Step lifecycle
+- Execution isolation and workspace lifecycle
+- Capability admission and workload identity
+- Artifact contracts and handoff metadata
+- Inference requests and sharing policy
+- Human gates and intervention sessions
+- Deterministic utility (i.e. GIT) operations
+- Validation-provider coordination
+- Recovery policy and authoritative audit events
 
 SovereignAI does not own:
 
-- an agent's internal reasoning implementation;
-- model implementation or training;
-- Kubernetes device-driver implementation;
-- general-purpose source control or CI/CD;
-- every form of application validation; or
-- a universal context-engine solution.
+- Agent's internal reasoning implementation
+- Model implementation or training
+- Kubernetes device-driver implementation
+- General-purpose source control or CI/CD
+- Every form of application validation
+- A universal context-engine solution
 
 ## Conceptual architecture
 
@@ -80,8 +80,6 @@ SovereignAI does not own:
 
 A logical grouping for workflows, repositories, policy defaults, validation configuration, and retention. A project is not the execution-isolation boundary.
 
-**AUTHOR NOTE:** Decide whether `Project` remains a Kubernetes CRD or is represented by configuration and labels managed through the API.
-
 ### Workflow
 
 A declarative execution request. Every workflow receives its own Kubernetes namespace and workspace. For the MVP, its graph is predefined, immutable after admission, sequential, and represented by a `SovereignWorkflow` CRD.
@@ -102,7 +100,7 @@ Initial execution kinds are:
 
 ### StepAttempt
 
-One workflow-lifecycle attempt of a step. Retries create new attempts rather than overwriting the history of a failed attempt. `StepAttempt` is an envelope: it records workflow identity, attempt number, execution kind, a typed reference to the owned domain primitive, and the outcome mirrored from that primitive. It does not contain agent commands, utility operations, approval rules, validation subjects, pods, Jobs, credentials, or provider state.
+One workflow-lifecycle attempt of a step. Retries create new attempts rather than overwriting the history of a failed attempt. `StepAttempt` is an envelope. It records workflow identity, attempt number, execution kind, a typed reference to the owned domain primitive, and the outcome mirrored from that primitive. It does not contain agent commands, utility operations, approval rules, validation subjects, pods, Jobs, credentials, or provider state.
 
 The execution reference identifies exactly one of `AgentRun`, `UtilityOperation`, `ApprovalRequest`, or `ValidationRun`. Those resources are immutable desired-state primitives with independent status ownership.
 
@@ -116,11 +114,11 @@ An immutable grant to perform one named deterministic platform operation. It own
 
 ### ApprovalRequest
 
-An immutable request for an attributable human decision. It owns approval requirements and, once B2 is complete, observes immutable `ApprovalDecision` resources. It remains `AwaitingApproval` rather than allowing clients to patch a StepAttempt outcome.
+An immutable request for an attributable human decision. It owns approval requirements and observes the immutable `ApprovalDecision` resources. It remains `AwaitingApproval` rather than allowing clients to patch a StepAttempt outcome.
 
 ### Artifact
 
-A typed, immutable handoff produced by an attempt. Artifact metadata records schema, path or object reference, digest, producer, creation time, and consumers. The initial physical storage is the workflow PVC; the API contract should not permanently depend on local paths.
+A typed, immutable handoff produced by an attempt. Artifact metadata records schema, path or object reference, digest, producer, creation time, and consumers. The initial physical storage is the workflow PVC; the API contract should not permanently depend on local paths. 
 
 ### HumanSession
 

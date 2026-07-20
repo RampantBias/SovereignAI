@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
@@ -47,6 +48,15 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	if err := r.Get(ctx, request.NamespacedName, &session); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if !session.DeletionTimestamp.IsZero() {
+		return r.finalizeWorkspaceWriter(ctx, &session)
+	}
+	if !controllerutil.ContainsFinalizer(&session, WorkspaceWriterFinalizer) {
+		controllerutil.AddFinalizer(&session, WorkspaceWriterFinalizer)
+		if err := r.Update(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	// Verify TTL by evaluating against the expiration time
 	now := time.Now().UTC()
@@ -55,11 +65,20 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	}
 
 	if session.Status.ExpiresAt != nil && !now.Before(session.Status.ExpiresAt.Time) {
-		pod, service, serviceAccount := buildHumanSessionWorkloads(&session, r.image())
-		_ = client.IgnoreNotFound(r.Delete(ctx, pod))
-		_ = client.IgnoreNotFound(r.Delete(ctx, service))
-		_ = client.IgnoreNotFound(r.Delete(ctx, serviceAccount))
+		if err := r.deleteWorkspaceWriterWorkloads(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		quiet, err := podWriterQuiescent(ctx, r.Client, session.Namespace, session.Name)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !quiet {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		if session.Status.Phase != v1alpha1.PhaseCancelled {
+			if err := r.releaseWorkspaceWriter(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
 			session.Status.Phase = v1alpha1.PhaseCancelled
 			if err := r.Status().Update(ctx, &session); err != nil {
 				return ctrl.Result{}, err
@@ -93,9 +112,40 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		}
 		return ctrl.Result{}, r.appendHumanSessionEvent(ctx, &session, "HumanSessionCreated", "create", "created", "")
 	}
+	if terminalAttempt(session.Status.Phase) {
+		return r.reconcileWorkspaceWriterRelease(ctx, &session)
+	}
+
+	grant, writerState, err := r.ensureWorkspaceWriter(ctx, &session)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	switch writerState {
+	case workspaceWriterBlocked:
+		if session.Status.PodRef != "" {
+			if err := r.deleteWorkspaceWriterWorkloads(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
+			session.Status.Phase = v1alpha1.PhaseInterrupted
+			if err := r.Status().Update(ctx, &session); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, r.appendHumanSessionEvent(ctx, &session, "WorkspaceWriterAuthorityNotEstablished", "interrupt", "interrupted", "WorkspaceWriterAuthorityNotEstablished")
+		}
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	case workspaceWriterLost:
+		if err := r.deleteWorkspaceWriterWorkloads(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		session.Status.Phase = v1alpha1.PhaseInterrupted
+		if err := r.Status().Update(ctx, &session); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.appendHumanSessionEvent(ctx, &session, "WorkspaceWriterAuthorityLost", "interrupt", "interrupted", "WorkspaceWriterAuthorityLost")
+	}
 
 	// Build & Create human session pod and bind controller reference
-	pod, service, serviceAccount := buildHumanSessionWorkloads(&session, r.image())
+	pod, service, serviceAccount := buildHumanSessionWorkloads(&session, r.image(), grant)
 	for _, object := range []client.Object{serviceAccount, pod, service} {
 		if err := controllerutil.SetControllerReference(&session, object, r.Scheme); err != nil {
 			return ctrl.Result{}, err
@@ -138,6 +188,125 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 	return ctrl.Result{RequeueAfter: time.Until(session.Status.ExpiresAt.Time)}, nil
 }
 
+func (r *HumanSessionReconciler) ensureWorkspaceWriter(ctx context.Context, session *v1alpha1.HumanSession) (workspaceWriterGrant, workspaceWriterState, error) {
+	var workflow v1alpha1.SovereignWorkflow
+	if err := r.Get(ctx, client.ObjectKey{Namespace: session.Namespace, Name: session.Spec.WorkflowRef}, &workflow); err != nil {
+		return workspaceWriterGrant{}, workspaceWriterBlocked, err
+	}
+	if workflow.Status.WorkspaceWriterLeaseRef == "" {
+		return workspaceWriterGrant{}, workspaceWriterBlocked, nil
+	}
+	now := time.Now()
+	if r.Now != nil {
+		now = r.Now()
+	}
+	grant, state, err := acquireWorkspaceWriter(ctx, r.Client, &workflow, workflow.Status.WorkspaceWriterLeaseRef, "HumanSession", session, session.Status.WorkspaceWriterEpoch, now)
+	if err != nil || state != workspaceWriterGranted {
+		return grant, state, err
+	}
+	newGrant := session.Status.WorkspaceWriterEpoch == 0
+	session.Status.WorkspaceWriterLeaseRef = grant.LeaseName
+	session.Status.WorkspaceWriterEpoch = grant.Epoch
+	session.Status.WorkspaceWriterReleased = false
+	session.Status.ObservedGeneration = session.Generation
+	if err := r.Status().Update(ctx, session); err != nil {
+		return workspaceWriterGrant{}, workspaceWriterBlocked, err
+	}
+	if newGrant {
+		if err := r.appendHumanSessionEvent(ctx, session, "WorkspaceWriterAcquired", "acquire", "granted", fmt.Sprintf("WriterEpoch%d", grant.Epoch)); err != nil {
+			return workspaceWriterGrant{}, workspaceWriterBlocked, err
+		}
+	}
+	return grant, state, nil
+}
+
+func (r *HumanSessionReconciler) workspaceWriterGrant(session *v1alpha1.HumanSession) (workspaceWriterGrant, error) {
+	holder, err := workspaceWriterIdentity("HumanSession", session)
+	if err != nil {
+		return workspaceWriterGrant{}, err
+	}
+	if session.Status.WorkspaceWriterLeaseRef == "" || session.Status.WorkspaceWriterEpoch < 1 {
+		return workspaceWriterGrant{}, fmt.Errorf("HumanSession %s has no workspace writer grant", session.Name)
+	}
+	return workspaceWriterGrant{LeaseName: session.Status.WorkspaceWriterLeaseRef, HolderIdentity: holder, Epoch: session.Status.WorkspaceWriterEpoch}, nil
+}
+
+func (r *HumanSessionReconciler) releaseWorkspaceWriter(ctx context.Context, session *v1alpha1.HumanSession) error {
+	if session.Status.WorkspaceWriterEpoch < 1 || session.Status.WorkspaceWriterReleased {
+		return nil
+	}
+	grant, err := r.workspaceWriterGrant(session)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if r.Now != nil {
+		now = r.Now()
+	}
+	if err := releaseWorkspaceWriter(ctx, r.Client, session.Namespace, grant, now); err != nil {
+		return err
+	}
+	session.Status.WorkspaceWriterReleased = true
+	session.Status.ObservedGeneration = session.Generation
+	return r.Status().Update(ctx, session)
+}
+
+func (r *HumanSessionReconciler) reconcileWorkspaceWriterRelease(ctx context.Context, session *v1alpha1.HumanSession) (ctrl.Result, error) {
+	if session.Status.WorkspaceWriterEpoch < 1 || session.Status.WorkspaceWriterReleased {
+		return ctrl.Result{}, nil
+	}
+	quiet, err := podWriterQuiescent(ctx, r.Client, session.Namespace, session.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !quiet {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+	grant, err := r.workspaceWriterGrant(session)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.releaseWorkspaceWriter(ctx, session); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, r.appendHumanSessionEvent(ctx, session, "WorkspaceWriterReleased", "release", "released", fmt.Sprintf("WriterEpoch%d", grant.Epoch))
+}
+
+func (r *HumanSessionReconciler) deleteWorkspaceWriterWorkloads(ctx context.Context, session *v1alpha1.HumanSession) error {
+	objects := []client.Object{
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace}},
+		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace}},
+	}
+	for _, object := range objects {
+		if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *HumanSessionReconciler) finalizeWorkspaceWriter(ctx context.Context, session *v1alpha1.HumanSession) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(session, WorkspaceWriterFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.deleteWorkspaceWriterWorkloads(ctx, session); err != nil {
+		return ctrl.Result{}, err
+	}
+	quiet, err := podWriterQuiescent(ctx, r.Client, session.Namespace, session.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !quiet {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+	if err := r.releaseWorkspaceWriter(ctx, session); err != nil {
+		return ctrl.Result{}, err
+	}
+	controllerutil.RemoveFinalizer(session, WorkspaceWriterFinalizer)
+	return ctrl.Result{}, r.Update(ctx, session)
+}
+
 func (r *HumanSessionReconciler) appendHumanSessionEvent(ctx context.Context, session *v1alpha1.HumanSession, eventType, action, outcome, reason string) error {
 	return appendControllerEvent(ctx, r.Audit, "humansession-controller", r.Now, audit.EventOptions{
 		Type: eventType,
@@ -150,10 +319,12 @@ func (r *HumanSessionReconciler) appendHumanSessionEvent(ctx context.Context, se
 		Outcome: outcome,
 		Reason:  reason,
 		References: map[string]string{
-			"humanSession": session.Name,
-			"pod":          session.Status.PodRef,
-			"service":      session.Status.ServiceRef,
-			"accessURL":    session.Status.AccessURL,
+			"humanSession":         session.Name,
+			"pod":                  session.Status.PodRef,
+			"service":              session.Status.ServiceRef,
+			"accessURL":            session.Status.AccessURL,
+			"workspaceWriterLease": session.Status.WorkspaceWriterLeaseRef,
+			"writerEpoch":          fmt.Sprint(session.Status.WorkspaceWriterEpoch),
 		},
 		Data: map[string]any{
 			"requesterSubject": session.Spec.RequesterSubject,
@@ -173,16 +344,16 @@ func (r *HumanSessionReconciler) image() string {
 }
 
 // Builds human session workload (pod, service, serviceAccount) primitives
-func buildHumanSessionWorkloads(session *v1alpha1.HumanSession, image string) (*corev1.Pod, *corev1.Service, *corev1.ServiceAccount) {
+func buildHumanSessionWorkloads(session *v1alpha1.HumanSession, image string, grant workspaceWriterGrant) (*corev1.Pod, *corev1.Service, *corev1.ServiceAccount) {
 	labels := map[string]string{"app.kubernetes.io/name": "sovereign-human-session", "sovereign-ai.io/human-session": session.Name, LabelWorkflow: session.Spec.WorkflowRef}
 	automount := false
 	nonRoot := true
 	allowPrivilegeEscalation := false
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, Labels: labels, Annotations: workspaceWriterAnnotations(grant)},
 		Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: session.Name, AutomountServiceAccountToken: &automount,
 			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot},
-			Containers: []corev1.Container{{Name: "code-server", Image: image, Args: []string{"--auth", "none", "--bind-addr", "0.0.0.0:8080", "/workspace"},
+			Containers: []corev1.Container{{Name: "code-server", Image: image, Args: []string{"--auth", "none", "--bind-addr", "0.0.0.0:8080", "/workspace"}, Env: workspaceWriterEnv(grant),
 				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
 			Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: session.Spec.WorkflowRef + "-workspace"}}}},

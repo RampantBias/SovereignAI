@@ -10,6 +10,7 @@ import (
 	policyengine "github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/utilitycontract"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -51,7 +52,7 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	workflow := workflowFixture()
 	attempt := authorizedAttempt("architect-001", "wf", "architect", v1alpha1.ExecutionKindAgent)
 	run := &v1alpha1.AgentRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", Labels: map[string]string{LabelWorkflow: "wf"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", UID: "architect-run-uid", Labels: map[string]string{LabelWorkflow: "wf"}},
 		Spec: v1alpha1.AgentRunSpec{
 			AttemptRef: "architect-001", WorkflowRef: "wf", StepName: "architect", Attempt: 1,
 			Responsibility: "plan", Image: "agent@sha256:test", Executable: []string{"/domain-agent", "--role", "architect"},
@@ -62,7 +63,7 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	ownByAttempt(run, attempt)
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.AgentRun{}).
-		WithObjects(workflow, attempt, run).Build()
+		WithObjects(workflow, workspaceLeaseFixture(), attempt, run).Build()
 	reconciler := &AgentRunReconciler{Client: client, Scheme: scheme}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(run)); err != nil {
 		t.Fatal(err)
@@ -81,6 +82,9 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	if security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem {
 		t.Fatal("agent root filesystem is writable")
 	}
+	if pod.Annotations[AnnotationWorkspaceWriterEpoch] != "1" {
+		t.Fatalf("agent pod writer epoch = %q, want 1", pod.Annotations[AnnotationWorkspaceWriterEpoch])
+	}
 	var input corev1.ConfigMap
 	if err := client.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name + "-input"}, &input); err != nil {
 		t.Fatal(err)
@@ -91,6 +95,9 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	}
 	if contract.Responsibility != "plan" || len(contract.Outputs) != 1 {
 		t.Fatalf("unexpected agent contract: %#v", contract)
+	}
+	if contract.WorkspaceWrite.WriterEpoch != 1 || contract.WorkspaceWrite.LeaseName != workflow.Status.WorkspaceWriterLeaseRef {
+		t.Fatalf("agent contract lost workspace writer authority: %#v", contract.WorkspaceWrite)
 	}
 }
 
@@ -111,7 +118,7 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	ownByAttempt(operation, attempt)
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.UtilityOperation{}).
-		WithObjects(workflow, project, attempt, operation).Build()
+		WithObjects(workflow, workspaceLeaseFixture(), project, attempt, operation).Build()
 	reconciler := &UtilityOperationReconciler{Client: client, Scheme: scheme, Policy: allowPolicy{}}
 	for range 2 {
 		if _, err := reconciler.Reconcile(context.Background(), requestFor(operation)); err != nil {
@@ -145,6 +152,9 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	}
 	if contract.Authority.Kind != "UtilityOperation" || contract.Authority.Name != operation.Name || contract.PolicyDecisionID != "allow-test" {
 		t.Fatalf("utility contract lost its authority lineage: %#v", contract)
+	}
+	if contract.WorkspaceWrite.WriterEpoch != 1 || contract.WorkspaceWrite.LeaseName != workflow.Status.WorkspaceWriterLeaseRef {
+		t.Fatalf("utility contract lost workspace writer authority: %#v", contract.WorkspaceWrite)
 	}
 }
 
@@ -193,7 +203,7 @@ func TestUtilityOperationScopesRegistryCredentialToUtilityContainer(t *testing.T
 	ownByAttempt(operation, attempt)
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.UtilityOperation{}).
-		WithObjects(workflow, project, source, attempt, operation).Build()
+		WithObjects(workflow, workspaceLeaseFixture(), project, source, attempt, operation).Build()
 	reconciler := &UtilityOperationReconciler{Client: client, Scheme: scheme, Policy: allowPolicy{}}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(operation)); err != nil {
 		t.Fatal(err)
@@ -292,6 +302,9 @@ func attemptScheme(t *testing.T) *runtime.Scheme {
 	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
 	return scheme
 }
 
@@ -299,8 +312,17 @@ func workflowFixture() *v1alpha1.SovereignWorkflow {
 	return &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf", Namespace: "wf", UID: "workflow-uid"},
 		Spec:       v1alpha1.SovereignWorkflowSpec{WorkflowID: "wf", ProjectName: "project"},
-		Status:     v1alpha1.SovereignWorkflowStatus{PvcName: "wf-workspace"},
+		Status:     v1alpha1.SovereignWorkflowStatus{PvcName: "wf-workspace", WorkspaceWriterLeaseRef: "wf-workspace-writer"},
 	}
+}
+
+func workspaceLeaseFixture() *coordinationv1.Lease {
+	zero := int32(0)
+	controller := true
+	return &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{
+		Name: "wf-workspace-writer", Namespace: "wf",
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: "wf", UID: "workflow-uid", Controller: &controller}},
+	}, Spec: coordinationv1.LeaseSpec{LeaseTransitions: &zero}}
 }
 
 func projectFixture() *v1alpha1.SovereignProject {

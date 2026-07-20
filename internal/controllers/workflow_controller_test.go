@@ -6,6 +6,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,6 +21,9 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	workflow := &v1alpha1.SovereignWorkflow{
@@ -69,6 +73,9 @@ func TestWorkflowSkipsNormalReconcileWhenNamespaceTerminating(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	now := metav1.Now()

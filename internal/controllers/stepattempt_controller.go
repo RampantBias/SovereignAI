@@ -41,6 +41,7 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 	if err := r.Get(ctx, request.NamespacedName, &attempt); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	// Check for termination
 	if !attempt.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
@@ -48,6 +49,7 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 	if err != nil || terminating {
 		return ctrl.Result{}, err
 	}
+	// Shift to pending
 	if attempt.Status.Phase == "" {
 		return ctrl.Result{}, r.setPhase(ctx, &attempt, v1alpha1.PhasePending, "Initialized", "attempt initialized")
 	}
