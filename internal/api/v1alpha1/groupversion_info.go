@@ -32,6 +32,8 @@ func AddKnownTypes(scheme *runtime.Scheme) error {
 		&UtilityOperationList{},
 		&ApprovalRequest{},
 		&ApprovalRequestList{},
+		&ApprovalDecision{},
+		&ApprovalDecisionList{},
 		&Artifact{},
 		&ArtifactList{},
 		&HumanSession{},

@@ -34,7 +34,6 @@ rules:
       - agentruns
       - approvalrequests
       - artifacts
-      - gpunodes
       - humansessions
       - inferenceendpoints
       - inferenceleases
@@ -50,7 +49,6 @@ rules:
       - agentruns/status
       - approvalrequests/status
       - artifacts/status
-      - gpunodes/status
       - humansessions/status
       - inferenceendpoints/status
       - inferenceleases/status

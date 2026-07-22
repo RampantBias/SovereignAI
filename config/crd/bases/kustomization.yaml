@@ -3,9 +3,9 @@ kind: Kustomization
 
 resources:
   - aim.sovereign.io_agentruns.yaml
+  - aim.sovereign.io_approvaldecisions.yaml
   - aim.sovereign.io_approvalrequests.yaml
   - aim.sovereign.io_artifacts.yaml
-  - aim.sovereign.io_gpunodes.yaml
   - aim.sovereign.io_humansessions.yaml
   - aim.sovereign.io_inferenceendpoints.yaml
   - aim.sovereign.io_inferenceleases.yaml

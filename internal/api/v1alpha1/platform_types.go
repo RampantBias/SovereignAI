@@ -81,50 +81,9 @@ type RepositorySpec struct {
 	CredentialRef   NamespacedReference `json:"credentialRef,omitempty"`
 }
 
-type ProjectValidationSpec struct {
-	Provider           string `json:"provider"`
-	InfrastructureRepo string `json:"infrastructureRepository"`
-	OverlayPath        string `json:"overlayPath"`
-	ImageName          string `json:"imageName,omitempty"`
-}
-
 type RetentionSpec struct {
 	CompletedWorkflowTTL *metav1.Duration `json:"completedWorkflowTTL,omitempty"`
 	FailedWorkflowTTL    *metav1.Duration `json:"failedWorkflowTTL,omitempty"`
-}
-
-// +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Cluster,shortName=sproject
-// +kubebuilder:subresource:status
-type SovereignProject struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   SovereignProjectSpec   `json:"spec"`
-	Status SovereignProjectStatus `json:"status,omitempty"`
-}
-
-type SovereignProjectSpec struct {
-	Tenant                string                `json:"tenant"`
-	ApplicationRepository RepositorySpec        `json:"applicationRepository"`
-	Validation            ProjectValidationSpec `json:"validation"`
-	PolicyProfileRef      string                `json:"policyProfileRef"`
-	Retention             RetentionSpec         `json:"retention,omitempty"`
-	TestJob               JobTemplateSpec       `json:"testJob"`
-	BuildJob              JobTemplateSpec       `json:"buildJob"`
-}
-
-type SovereignProjectStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase      `json:"phase,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
-}
-
-// +kubebuilder:object:root=true
-type SovereignProjectList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []SovereignProject `json:"items"`
 }
 
 type JobTemplateSpec struct {
@@ -142,6 +101,13 @@ type ContractReference struct {
 type ArtifactReference struct {
 	Name   string `json:"name"`
 	Digest string `json:"digest,omitempty"`
+}
+
+// TypedLocalReference identifies the domain primitive owned by a StepAttempt.
+type TypedLocalReference struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
 }
 
 // +kubebuilder:object:root=true
@@ -183,13 +149,6 @@ type StepAttemptStatus struct {
 	StartedAt          *metav1.Time         `json:"startedAt,omitempty"`
 	CompletedAt        *metav1.Time         `json:"completedAt,omitempty"`
 	Conditions         []metav1.Condition   `json:"conditions,omitempty"`
-}
-
-// TypedLocalReference identifies the domain primitive owned by a StepAttempt.
-type TypedLocalReference struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Name       string `json:"name"`
 }
 
 // +kubebuilder:object:root=true
@@ -326,6 +285,15 @@ type ApprovalRequestStatus struct {
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// +kubebuilder:object:root=true
+type ApprovalRequestList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ApprovalRequest `json:"items"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 type ApprovalDecision struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -350,10 +318,10 @@ type ApprovalDecisionStatus struct {
 }
 
 // +kubebuilder:object:root=true
-type ApprovalRequestList struct {
+type ApprovalDecisionList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ApprovalRequest `json:"items"`
+	Items           []ApprovalDecision `json:"items"`
 }
 
 // +kubebuilder:object:root=true

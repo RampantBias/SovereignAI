@@ -2,6 +2,13 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+type ProjectValidationSpec struct {
+	Provider           string `json:"provider"`
+	InfrastructureRepo string `json:"infrastructureRepository"`
+	OverlayPath        string `json:"overlayPath"`
+	ImageName          string `json:"imageName,omitempty"`
+}
+
 // StepConfig declares one workflow stage and exactly one domain execution primitive.
 // +kubebuilder:validation:XValidation:rule="self.kind != 'Agent' || has(self.agent)",message="agent is required for Agent steps"
 // +kubebuilder:validation:XValidation:rule="self.kind == 'Agent' || !has(self.agent)",message="agent is only allowed for Agent steps"
@@ -101,4 +108,38 @@ type SovereignWorkflowList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []SovereignWorkflow `json:"items"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster,shortName=sproject
+// +kubebuilder:subresource:status
+type SovereignProject struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   SovereignProjectSpec   `json:"spec"`
+	Status SovereignProjectStatus `json:"status,omitempty"`
+}
+
+type SovereignProjectSpec struct {
+	Tenant                string                `json:"tenant"`
+	ApplicationRepository RepositorySpec        `json:"applicationRepository"`
+	Validation            ProjectValidationSpec `json:"validation"`
+	PolicyProfileRef      string                `json:"policyProfileRef"`
+	Retention             RetentionSpec         `json:"retention,omitempty"`
+	TestJob               JobTemplateSpec       `json:"testJob"`
+	BuildJob              JobTemplateSpec       `json:"buildJob"`
+}
+
+type SovereignProjectStatus struct {
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	Phase              ResourcePhase      `json:"phase,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+type SovereignProjectList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SovereignProject `json:"items"`
 }
