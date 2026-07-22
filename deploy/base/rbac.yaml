@@ -33,6 +33,7 @@ rules:
     resources:
       - agentruns
       - approvalrequests
+      - approvaldecisions
       - artifacts
       - humansessions
       - inferenceendpoints
@@ -48,6 +49,7 @@ rules:
     resources:
       - agentruns/status
       - approvalrequests/status
+      - approvaldecisions/status
       - artifacts/status
       - humansessions/status
       - inferenceendpoints/status
@@ -63,6 +65,7 @@ rules:
     resources:
       - agentruns/finalizers
       - approvalrequests/finalizers
+      - approvaldecisions/finalizers
       - artifacts/finalizers
       - humansessions/finalizers
       - inferenceendpoints/finalizers

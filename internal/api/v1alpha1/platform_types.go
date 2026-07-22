@@ -294,6 +294,7 @@ type ApprovalRequestList struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:validation:XValidation:rule="self.spec == oldSelf.spec",message="approval decision spec is immutable"
 type ApprovalDecision struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

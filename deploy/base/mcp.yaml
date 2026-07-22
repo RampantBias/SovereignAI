@@ -15,7 +15,8 @@ spec:
       labels:
         app.kubernetes.io/name: sovereign-mcp
     spec:
-      serviceAccountName: sovereign-controller
+      serviceAccountName: sovereign-mcp
+      automountServiceAccountToken: false
       containers:
         - name: mcp
           image: sovereign-mcp-server:dev

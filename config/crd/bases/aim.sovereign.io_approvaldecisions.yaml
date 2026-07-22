@@ -181,5 +181,10 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: approval decision spec is immutable
+          rule: self.spec == oldSelf.spec
     served: true
     storage: true
+    subresources:
+      status: {}
