@@ -6,15 +6,16 @@ spec:
   tenant: application-platform
   policyProfileRef: mvp-default
   applicationRepository:
-    url: ssh://git.internal/sovereign-ai.git
-    defaultRevision: main
+    url: https://github.com/RampantBias/calculator-demo.git
+    defaultRevision: 478daad19967dd08f13de44b6c7c8becb17d8c1e
     credentialRef:
       namespace: sovereign-orchestrator-system
-      name: sovereign-ai-git
+      name: calculator-git
   validation:
     provider: argocd-kustomize
-    infrastructureRepository: ssh://git.internal/sovereign-ai-infra.git
-    overlayPath: deployments/overlays/testground
+    infrastructureRepository: https://github.com/RampantBias/calculator-demo.git
+    overlayPath: deploy/overlays/validation
+    imageName: calculator
   testJob:
     image: registry.internal/sovereign/utility:dev
     command: ["/utility", "test"]
