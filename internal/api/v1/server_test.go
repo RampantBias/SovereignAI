@@ -17,7 +17,7 @@ func TestCreateProjectPersistsIntent(t *testing.T) {
 	scheme := testScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	recorder := &audit.MemoryRecorder{}
-	server := NewServer(client, nil, nil, recorder)
+	server := NewServer(client, recorder)
 	response, err := server.CreateProject(context.Background(), &pb.CreateProjectRequest{
 		ProjectName: "platform", InfraRepo: "ssh://infra", AppRepo: "ssh://app",
 		ExtendedMetadata: map[string]string{"tenant": "engineering"},
@@ -41,7 +41,7 @@ func TestCreateProjectAuditsRejectedRequest(t *testing.T) {
 	scheme := testScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	recorder := &audit.MemoryRecorder{}
-	server := NewServer(client, nil, nil, recorder)
+	server := NewServer(client, recorder)
 
 	_, err := server.CreateProject(context.Background(), &pb.CreateProjectRequest{ProjectName: "platform"})
 	if err == nil {
@@ -58,7 +58,7 @@ func TestCreateWorkflowCreatesIsolationNamespace(t *testing.T) {
 	project.Name = "platform"
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()
 	recorder := &audit.MemoryRecorder{}
-	server := NewServer(client, nil, nil, recorder)
+	server := NewServer(client, recorder)
 	manifest := `apiVersion: aim.sovereign.io/v1alpha1
 kind: SovereignWorkflow
 metadata:
@@ -80,7 +80,7 @@ spec:
 	if err := client.Get(context.Background(), objectKey(namespace, response.WorkflowId), &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if workflow.Spec.ProjectName != "platform" || workflow.Spec.WorkflowID != response.WorkflowId {
+	if workflow.Spec.Project.Name != "platform" || workflow.Spec.WorkflowID != response.WorkflowId {
 		t.Fatalf("unexpected workflow identity: %#v", workflow.Spec)
 	}
 	var ns corev1.Namespace
@@ -101,7 +101,7 @@ func TestGetWorkflowTimelineReturnsSortedAuditEvents(t *testing.T) {
 	scheme := testScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	recorder := audit.NewMemoryRecorder()
-	server := NewServer(client, nil, nil, recorder)
+	server := NewServer(client, recorder)
 	base := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 
 	events := []audit.Event{

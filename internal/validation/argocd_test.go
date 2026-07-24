@@ -14,9 +14,11 @@ func TestArgoKustomizeCreatesDigestPinnedApplication(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	provider := NewArgoKustomize(client, "argocd")
 	reference, err := provider.Start(context.Background(), Request{
-		Name: "validation-1", WorkflowNamespace: "workflow-1", Project: "project",
-		InfrastructureRepo: "ssh://infra", InfrastructureRevision: "main", OverlayPath: "overlays/test",
-		ImageName: "controller", ImageDigest: "registry/controller@sha256:abc",
+		Name: "validation", WorkflowNamespace: "workflow", Project: "project",
+		InfrastructureRepo:     "https://github.com/RampantBias/calculator-demo.git",
+		InfrastructureRevision: "478daad19967dd08f13de44b6c7c8becb17d8c1e",
+		OverlayPath:            "deploy/overlays/validation",
+		ImageName:              "calculator", ImageDigest: "registry.example.test/calculator@sha256:abc",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -25,8 +27,19 @@ func TestArgoKustomizeCreatesDigestPinnedApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sourceFields := map[string]string{
+		"repoURL":        "https://github.com/RampantBias/calculator-demo.git",
+		"targetRevision": "478daad19967dd08f13de44b6c7c8becb17d8c1e",
+		"path":           "deploy/overlays/validation",
+	}
+	for field, want := range sourceFields {
+		got, found, err := unstructured.NestedString(application.Object, "spec", "source", field)
+		if err != nil || !found || got != want {
+			t.Fatalf("application source %s = %q, found=%t, err=%v; want %q", field, got, found, err, want)
+		}
+	}
 	images, found, err := unstructured.NestedStringSlice(application.Object, "spec", "source", "kustomize", "images")
-	if err != nil || !found || len(images) != 1 || images[0] != "controller=registry/controller@sha256:abc" {
+	if err != nil || !found || len(images) != 1 || images[0] != "calculator=registry.example.test/calculator@sha256:abc" {
 		t.Fatalf("unexpected image override: %#v found=%t err=%v", images, found, err)
 	}
 	if err := unstructured.SetNestedField(application.Object, map[string]any{"status": "Synced"}, "status", "sync"); err != nil {

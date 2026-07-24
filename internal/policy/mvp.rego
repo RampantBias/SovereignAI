@@ -18,3 +18,52 @@ decision := {"allowed": true, "reasons": [], "evict": []} if {
   input.request.tenant != ""
   input.request.classification != ""
 }
+
+utility_non_privileged := {
+  "repository.initialize",
+  "git.createBranch",
+  "test.run",
+}
+
+decision := {"allowed": true, "reasons": [], "evict": []} if {
+  input.operation == "utility.execute"
+  input.request.operation in utility_non_privileged
+  input.request.workflow != ""
+  input.request.step != ""
+  input.request.project != ""
+}
+
+decision := {"allowed": true, "reasons": [], "evict": []} if {
+  input.operation == "utility.execute"
+  input.request.operation == "git.commit"
+  input.request.workflow != ""
+  input.request.project != ""
+  input.request.parameters.message != ""
+}
+
+decision := {"allowed": true, "reasons": [], "evict": []} if {
+  input.operation == "utility.execute"
+  input.request.operation == "git.push"
+  input.request.credentialClass == "repository"
+  input.request.hasCredential
+  input.request.parameters.branch != ""
+}
+
+decision := {"allowed": true, "reasons": [], "evict": []} if {
+  input.operation == "utility.execute"
+  input.request.operation == "build.image"
+  input.request.credentialClass == "registry"
+  input.request.hasCredential
+  input.request.parameters.imageName != ""
+}
+
+decision := {"allowed": true, "reasons": [], "evict": []} if {
+  input.operation == "utility.execute"
+  input.request.operation == "git.merge"
+  input.request.credentialClass == "repository"
+  input.request.hasCredential
+  input.request.parameters.sourceBranch != ""
+  input.request.parameters.candidateRevision != ""
+  input.request.parameters.approvalDecisionRef != ""
+  input.request.parameters.validationRunRef != ""
+}

@@ -16,11 +16,12 @@ spec:
     - name: contract-writer
       kind: Agent
       order: 1
-      responsibility: Produce an intentionally invalid result contract.
-      image: sovereign-smoke-agent:dev
-      executable: ["/smoke-agent", "--mode", "invalid-result", "--sleep", "3s"]
+      agent:
+        responsibility: Produce an intentionally invalid result contract.
+        image: sovereign-smoke-agent:dev
+        executable: ["/smoke-agent", "--mode", "invalid-result", "--sleep", "3s"]
+        capabilities: ["artifact.publish"]
       maxAttempts: 1
-      capabilities: ["artifact.publish"]
       outputs:
         - name: smoke-report
           version: v1

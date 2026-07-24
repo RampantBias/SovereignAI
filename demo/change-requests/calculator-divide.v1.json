@@ -1,0 +1,11 @@
+{
+  "summary": "Add divide support to the calculator",
+  "description": "Extend POST /api/v1/calculate to support the divide operation without regressing existing calculator behavior.",
+  "acceptanceCriteria": [
+    "A request with operation divide, left 84, and right 2 returns HTTP 200 with a result of 42.",
+    "A divide request with a zero right operand returns HTTP 422 with the error code division_by_zero.",
+    "Existing health, add, subtract, multiply, unsupported-operation, and malformed-request behavior remains passing."
+  ],
+  "applicationRepositoryURL": "https://git.example.com/example/calculator.git",
+  "sourceCommit": "478daad19967dd08f13de44b6c7c8becb17d8c1e"
+}

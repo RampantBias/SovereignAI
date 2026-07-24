@@ -14,8 +14,14 @@ separate without duplicating CRD YAML.
 | `crds` | Documents the CRD deployment boundary without duplicating generated manifests. |
 | `base` | Installs the core control plane: controller, API, MCP service, RBAC, and namespace. |
 | `overlays/smoke` | Minimal development profile for local cluster testing. |
+| `demo` | Installs the control plane components needed for the demo. |
 
 ## Install
+
+The controller and API require the generated `sovereign-audit-client` Secret.
+Create PostgreSQL and that Secret in the order documented in
+[`../docs/GettingStarted.md`](../docs/GettingStarted.md) before applying the
+control plane.
 
 ```powershell
 .\deploy\install.ps1 -Overlay smoke

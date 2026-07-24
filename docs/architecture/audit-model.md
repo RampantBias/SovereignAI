@@ -1,5 +1,8 @@
 # Audit model
 
+## Current state: Draft
+- I've been reading and learning more about AI observability, especially with respect to otel. I generated this document and initial audit decisions earlier on, but I'd like to circle back prior to the MVP to re-assess decision lineage. I'd like to address core questions around agentic observability that neither my current tooling nor readily available observability tools can answer.
+
 ## Purpose
 
 SovereignAI must explain what happened, who or what caused it, what authority was used, which inputs informed it, and which artifacts resulted. This is necessary for regulated environments, incident investigation, human review, and evaluation of autonomous behavior.

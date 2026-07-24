@@ -6,6 +6,7 @@ IMAGES=(
   sovereign-api:dev
   sovereign-cli:dev
   sovereign-agent-wrapper:dev
+  sovereign-utility-runner:dev
   sovereign-smoke-agent:dev
   sovereign-mcp-server:dev
   sovereign-artifact-collector:dev

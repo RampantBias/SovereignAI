@@ -33,19 +33,33 @@ spec:
   steps:
     - name: architect
       kind: Agent
-      agentRuntime: default
-      modelPolicy: reasoning-small
+      agent:
+        responsibility: Produce an implementation plan
+        image: software-agent:dev
+        executable: ["/domain-agent", "--role", "architect"]
+        inference:
+          model: reasoning-small
+          modelRevision: stable
+          estimatedKVRAMMiB: 2048
+          sharingScope: Dedicated
+        capabilities:
+          - context.read
       inputs:
         - contract: change-request/v1
       outputs:
         - contract: implementation-plan/v1
-      capabilities:
-        - context.read
     - name: create-branch
       kind: Utility
-      utility: git.create-branch
+      utility:
+        name: git.createBranch
+        parameters:
+          branch: feature/control-plane-boundary
     - name: test-writer
       kind: Agent
+      agent:
+        responsibility: Produce tests from the admitted plan
+        image: software-agent:dev
+        executable: ["/domain-agent", "--role", "test-writer"]
       inputs:
         - contract: implementation-plan/v1
       outputs:
@@ -53,6 +67,10 @@ spec:
         - contract: test-plan/v1
     - name: developer
       kind: Agent
+      agent:
+        responsibility: Implement the admitted plan and tests
+        image: software-agent:dev
+        executable: ["/domain-agent", "--role", "developer"]
       inputs:
         - contract: implementation-plan/v1
         - contract: test-plan/v1
@@ -60,15 +78,24 @@ spec:
         - contract: patch/v1
     - name: tests
       kind: Utility
-      utility: test.execute
+      utility:
+        name: test.run
     - name: approval
       kind: HumanGate
+      approval:
+        mode: AnyOf
+        requiredGroups: ["maintainers"]
+        denyBehavior: Fail
     - name: commit
       kind: Utility
-      utility: git.commit
+      utility:
+        name: git.commit
+        parameters:
+          message: Implement the admitted change
     - name: preview
       kind: Validation
-      provider: argocd
+      validation:
+        provider: argocd-kustomize
 ```
 
 The exact ordering for the MVP remains open; see [MVP scope](../mvp.md).
@@ -101,6 +128,15 @@ Pending -> Ready -> Running -> Succeeded
 
 A retry creates a new `StepAttempt`. It does not reset or erase the prior attempt.
 
+`StepAttempt` is deliberately not an execution union. The workflow controller snapshots the selected step into one owned domain primitive:
+
+```text
+StepAttempt
+  -> AgentRun | UtilityOperation | ApprovalRequest | ValidationRun
+```
+
+The domain controller owns execution and status. The StepAttempt controller observes the typed execution reference and projects its phase, failure reason, and retryability into workflow lifecycle. This prevents agent delegation fields, utility authority, approval policy, and validation provider state from sharing one mutable specification.
+
 ### Attempt phases
 
 ```text
@@ -112,6 +148,75 @@ Created -> Admitted -> Preparing -> Executing -> Collecting -> Succeeded
 ```
 
 `Interrupted` identifies deliberate platform or human interruption. It is distinct from an infrastructure failure.
+
+## Exclusive workspace writer authority
+
+Each workflow owns one `coordination.k8s.io/v1` Lease for its mutable workspace. `AgentRun`, `UtilityOperation`, and `HumanSession` controllers must acquire that Lease before creating any workload with a writable workspace mount. A collector runs under the same grant as its producing execution unit and the grant is retained through artifact collection.
+
+The Lease `holderIdentity` contains the execution kind, namespace, resource name, and immutable UID. `leaseTransitions` is the writer epoch: the first grant receives epoch 1, release clears the holder without resetting the counter, and every subsequent grant increments it. The lease name, holder identity, and epoch are copied into runtime contracts, workload annotations, environment, status, and audit references.
+
+The Lease is an authority and coordination primitive, not a filesystem lock. The controllers therefore never reassign an expired term while its previous workload is still active. Before release or finalizer completion, the controller proves that the execution pod/job and its collector are terminal or absent. An execution resource that observes a different holder or epoch interrupts its workload rather than reacquiring silently. A new execution unit is admitted only after the previous writer releases its exact term.
+
+This guarantees exclusivity for workloads created through the SovereignAI control plane. Cluster administrators or other principals able to mount the PVC or modify the Lease remain outside this boundary and must be constrained by Kubernetes RBAC and admission policy.
+
+The resulting authority lifecycle is defined in the
+[execution model](../docs/architecture/execution-model.md#exclusive-workspace-writer-authority).
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    state "No authorized writer<br/>holderIdentity = empty<br/>epoch = n" as Available
+    state "Writer authorized<br/>holderIdentity = execution unit<br/>epoch = n + 1" as Active
+    state "Waiting for quiescence<br/>same holder and epoch retained" as Quiescing
+    state "Authority lost<br/>stale execution term" as Lost
+    state "Epoch exhausted<br/>acquisition prohibited" as Exhausted
+
+    [*] --> Available: Workflow creates Lease<br/>epoch = 0
+
+    Available --> Available: Request is not authorized<br/>deny request
+
+    Available --> Active: Valid delegation and lifecycle<br/>atomic acquisition succeeds<br/>set holder; increment epoch<br/>audit acquisition
+
+    Available --> Exhausted: Acquisition requested<br/>epoch = maximum value
+
+    Active --> Active: Same execution reconciles<br/>holder and epoch match<br/>recover exact term
+
+    Active --> Active: Competing execution requests authority<br/>block request
+
+    Active --> Quiescing: Execution completes, is interrupted,<br/>or begins deletion
+
+    Quiescing --> Quiescing: Writer or collector remains active<br/>retain authority term
+
+    Quiescing --> Available: Writer and collector are terminal or absent<br/>clear holder; retain epoch<br/>audit release
+
+    Active --> Lost: Observed holder or epoch differs
+    Quiescing --> Lost: Observed holder or epoch differs
+
+    Lost --> [*]: Interrupt stale workload<br/>do not reacquire or release changed term
+
+    Exhausted --> [*]: Require explicit remediation<br/>never wrap or reset epoch
+
+    note right of Active
+        Only the exact holder and epoch
+        receive a writable workspace mount.
+
+        Lease expiry alone never transfers
+        workspace authority.
+    end note
+
+    note right of Quiescing
+        Authority remains held through
+        artifact collection.
+    end note
+
+    note right of Available
+        The Lease is a coordination and authority
+        record, not a filesystem lock.
+
+        RBAC and admission policy protect Lease
+        mutation and direct writable PVC mounts.
+    end note
+```
 
 ## Agent runtime contract
 
@@ -137,8 +242,6 @@ The wrapper is responsible for:
 
 The wrapper must not contain agent reasoning or Git credentials.
 
-**AUTHOR NOTE:** Define the executable discovery mechanism: fixed path, image annotation, workflow field, or OCI image contract.
-
 ## Artifact contracts
 
 Artifacts should be formally typed even when a step may produce a variable number of them. A contract contains:
@@ -156,8 +259,6 @@ Examples include `implementation-plan/v1`, `patch/v1`, `test-report/v1`, `review
 
 Variable output is represented as a collection conforming to a declared contract, not as untyped files discovered after execution.
 
-**AUTHOR NOTE:** Choose the MVP schema system. JSON Schema is a practical first choice because the wrapper already exchanges JSON, but OCI artifacts or protobuf may be useful later.
-
 ## Deterministic utility steps
 
 Utility steps execute narrow, audited operations without model inference. Git is the first important example.
@@ -173,6 +274,8 @@ Agents may inspect repository material through read-only context capabilities an
 - merge only after required policy, approval, CI, and validation.
 
 Every utility step receives a typed request, a least-privilege credential, a restricted network policy, and a terminal output contract.
+
+The workflow declares a named utility request, not a shell command. The workflow controller creates an immutable `UtilityOperation` CRD. Its controller derives one stable idempotency key per workflow step, evaluates policy, resolves the Project repository and test/build templates, and mounts an operation-scoped credential only when the admitted operation requires it. `repository.initialize`, `git.createBranch`, `git.commit`, `git.push`, `git.merge`, `test.run`, and `build.image` are the MVP operation vocabulary.
 
 ## Human gates and intervention
 
@@ -200,8 +303,6 @@ For the MVP, step input combines:
 
 The context engine is intentionally under-specified. The workflow controller requests context but does not construct it itself. Context access is capability-checked and audited, including the query, source references, classification, and consumer attempt where feasible.
 
-**AUTHOR NOTE:** Define the smallest MVP context implementation. A curated repository snapshot plus explicit file retrieval may demonstrate governance more clearly than introducing an immature RAG system.
-
 ## Controlled dynamism after MVP
 
 Dynamic planning can preserve determinism through immutable workflow revisions:
@@ -213,12 +314,4 @@ Dynamic planning can preserve determinism through immutable workflow revisions:
 5. execution continues against that revision.
 
 No agent may silently rewrite its active graph.
-
-## MVP workflow questions
-
-- **AUTHOR NOTE:** Freeze the exact step order and identify which stages are agent, utility, gate, or validation steps.
-- **AUTHOR NOTE:** Define retry limits and which failures are safe to retry automatically.
-- **AUTHOR NOTE:** Decide whether reviewer is an autonomous agent, a human gate, or both in sequence.
-- **AUTHOR NOTE:** Define when patches are applied to the shared workspace and how conflicting patches are rejected.
-- **AUTHOR NOTE:** Define the contract for resuming after human changes.
 

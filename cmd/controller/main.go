@@ -14,6 +14,7 @@ import (
 	"github.com/go-logr/logr"
 	"go.uber.org/zap/zapcore"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -32,6 +33,7 @@ var (
 func init() {
 	_ = v1alpha1.AddToScheme(scheme)
 	_ = batchv1.AddToScheme(scheme)
+	_ = coordinationv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = networkingv1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
@@ -94,10 +96,24 @@ func main() {
 			Scheme: mgr.GetScheme(),
 			Audit:  recorder, StorageClass: storageClass},
 		&controllers.StepAttemptReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+			Audit:  recorder},
+		&controllers.AgentRunReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,
 			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev")},
+		&controllers.UtilityOperationReconciler{
+			Client:         mgr.GetClient(),
+			Scheme:         mgr.GetScheme(),
+			Audit:          recorder,
+			Policy:         policyEvaluator,
+			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
+			UtilityImage:   env("SOVEREIGN_UTILITY_IMAGE", "sovereign-utility-runner:dev")},
+		&controllers.ApprovalRequestReconciler{
+			Client: mgr.GetClient(),
+			Audit:  recorder},
 		&controllers.ArtifactReconciler{
 			Client: mgr.GetClient(),
 			Audit:  recorder},

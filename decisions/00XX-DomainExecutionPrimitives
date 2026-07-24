@@ -1,0 +1,44 @@
+# Domain Execution Primitives
+
+Status: Accepted
+
+## Context
+
+`StepAttempt` previously combined workflow retry state with the desired state and observed state of agents, deterministic utilities, human approval, and validation. Fields such as responsibility and inference were agent concepts, policy and credentials were utility concepts, and workload references changed meaning by execution kind. Controller branches, rather than the API, determined which authority relationship a field represented.
+
+This contradicts the control-plane thesis: when a relationship crosses systems, the control plane needs a named primitive with one source of desired state and one status-owning reconciler.
+
+## Decision
+
+Keep `StepAttempt` as the immutable workflow-attempt envelope and retry-history record. It contains only workflow identity, step identity, attempt number, execution kind, a typed domain execution reference, and projected lifecycle status.
+
+Represent each authority relationship with a separate CRD:
+
+- `AgentRun` represents bounded delegation to an autonomous runtime.
+- `UtilityOperation` represents authority to perform one deterministic operation.
+- `ApprovalRequest` represents the request side of an attributable human decision. Human intervention is still in development but I've already drawn out this primitive.
+- `ValidationRun` represents authority to evaluate a candidate through a validation provider.
+
+The workflow controller creates the StepAttempt and its immutable domain primitive. The domain controller owns implementation resources and detailed status. The StepAttempt controller observes only the referenced domain resource and projects its outcome for workflow progression.
+
+Artifacts identify their authoritative producer with a typed resource reference. A producer name without its kind is NOT sufficient lineage.
+
+## Consequences
+
+- Agent responsibility, capabilities, images, and inference cannot appear in utility or approval desired state.
+- Utility policy decisions, credentials, Jobs, and idempotency state are owned by `UtilityOperation`.
+- Approval clients cannot authorize work by patching StepAttempt status.
+- Validation provider state is owned by `ValidationRun`.
+- Each relationship can evolve its own admission, RBAC, failure model, and audit vocabulary.
+- The API surface and controller count increase, but the authority graph becomes explicit and inspectable.
+- Many changes necessary to break down these 4 entities with a high risk of breaking many established tests, including smoke demo.
+
+## Rejected Alternatives
+
+Keep one flat StepAttempt spec:
+
+This preserves fewer CRDs but makes invalid cross-kind states representable and gives shared fields unstable meanings.
+
+Use a discriminated union inside StepAttempt:
+
+This improves schema safety, but StepAttempt would still own multiple authority relationships and their detailed status. Separate CRDs provide stronger controller ownership, RBAC separation, and evidence lineage.

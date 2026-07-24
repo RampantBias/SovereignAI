@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: registry
+spec:
+  replicas: 1
+  serviceName: registry-headless
+  podManagementPolicy: OrderedReady
+  revisionHistoryLimit: 2
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: registry
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: registry
+          image: registry:3.1.1@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - /etc/distribution/config.yml
+          env:
+            - name: OTEL_TRACES_EXPORTER
+              value: none
+            - name: REGISTRY_HTTP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sovereign-registry-runtime
+                  key: http-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
+          ports:
+            - name: registry
+              containerPort: 5000
+            - name: health
+              containerPort: 5001
+          startupProbe:
+            httpGet:
+              path: /debug/health
+              port: health
+            failureThreshold: 30
+            periodSeconds: 2
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /debug/health
+              port: health
+            failureThreshold: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /debug/health
+              port: health
+            failureThreshold: 6
+            periodSeconds: 10
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: configuration
+              mountPath: /etc/distribution/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: tls
+              mountPath: /etc/distribution/tls
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/registry
+            - name: temporary
+              mountPath: /tmp
+      volumes:
+        - name: configuration
+          configMap:
+            name: registry-configuration
+        - name: tls
+          secret:
+            secretName: sovereign-registry-tls
+            defaultMode: 0440
+        - name: temporary
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 30Gi

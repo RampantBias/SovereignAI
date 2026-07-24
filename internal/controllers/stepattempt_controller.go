@@ -2,16 +2,11 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
-	"os"
+	"fmt"
 	"time"
 
-	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,460 +15,144 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+// StepAttemptReconciler owns only workflow attempt lifecycle. Execution and
+// authority belong to the domain resource referenced by status.executionRef.
 type StepAttemptReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	Audit          audit.Recorder
-	Now            func() time.Time
-	CollectorImage string
+	Scheme *runtime.Scheme
+	Audit  audit.Recorder
+	Now    func() time.Time
 }
 
 func (r *StepAttemptReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.StepAttempt{}).
-		Owns(&corev1.Pod{}).
-		Owns(&batchv1.Job{}).
-		Owns(&v1alpha1.InferenceLease{}).
-		Owns(&v1alpha1.HumanSession{}).
+		Owns(&v1alpha1.AgentRun{}).
+		Owns(&v1alpha1.UtilityOperation{}).
+		Owns(&v1alpha1.ApprovalRequest{}).
 		Owns(&v1alpha1.ValidationRun{}).
 		Complete(r)
 }
 
 func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
-	// Get step attempt CRD
 	var attempt v1alpha1.StepAttempt
 	if err := r.Get(ctx, request.NamespacedName, &attempt); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-
-	// Check for deletion
+	// Check for termination
 	if !attempt.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-
-	// Check for namespace termination
 	terminating, err := namespaceTerminating(ctx, r.Client, attempt.Namespace)
-	if err != nil {
+	if err != nil || terminating {
 		return ctrl.Result{}, err
 	}
-	if terminating {
-		return ctrl.Result{}, nil
-	}
-
-	// Transition to pending
+	// Shift to pending
 	if attempt.Status.Phase == "" {
 		return ctrl.Result{}, r.setPhase(ctx, &attempt, v1alpha1.PhasePending, "Initialized", "attempt initialized")
 	}
 	if terminalAttempt(attempt.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
-
-	// Reconcile each step type separately
-	switch attempt.Spec.Kind {
-	case v1alpha1.ExecutionKindAgent:
-		return r.reconcileAgent(ctx, &attempt)
-	case v1alpha1.ExecutionKindUtility:
-		return r.reconcileUtility(ctx, &attempt)
-	case v1alpha1.ExecutionKindHumanGate:
-		return ctrl.Result{}, r.setPhase(ctx, &attempt, v1alpha1.PhaseAwaitingApproval, "HumanApprovalRequired", "waiting for an authorized human decision")
-	case v1alpha1.ExecutionKindValidation:
-		return r.reconcileValidation(ctx, &attempt)
-	default:
-		return ctrl.Result{}, r.fail(ctx, &attempt, "UnsupportedKind", false)
-	}
-}
-
-func (r *StepAttemptReconciler) reconcileAgent(ctx context.Context, attempt *v1alpha1.StepAttempt) (ctrl.Result, error) {
-	endpoint := ""
-
-	// Verify lease
-	if attempt.Spec.Inference != nil {
-		lease, err := r.ensureLease(ctx, attempt)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		// Evaluate lease phase
-		switch lease.Status.Phase {
-		case v1alpha1.PhaseInterrupted:
-			// Must delete agent pod to avoid concurrent attempts running after inference interrupt
-			if err := r.deleteAgentPod(ctx, attempt); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, r.interrupt(ctx, attempt, lease.Status.Reason, true)
-		case v1alpha1.PhaseFailed:
-			return ctrl.Result{}, r.fail(ctx, attempt, "InferenceAdmissionFailed", true)
-		case v1alpha1.PhaseRunning:
-			endpoint = lease.Status.EndpointURL
-		default:
-			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-		}
-	}
-
-	// Create or observe agent pod
-	if attempt.Status.PodRef == "" {
-		if err := r.ensureAgentWorkload(ctx, attempt, endpoint); err != nil {
-			return ctrl.Result{}, err
-		}
-		attempt.Status.PodRef = attempt.Name
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhasePreparing, "PodCreated", "agent pod created")
-	}
-
-	// Get agent pod
-	var pod corev1.Pod
-	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Status.PodRef}, &pod); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, r.interrupt(ctx, attempt, "AgentPodLost", true)
-		}
-		return ctrl.Result{}, err
-	}
-
-	// Evaluate agent phase
-	switch pod.Status.Phase {
-	case corev1.PodSucceeded:
-		return r.reconcileCollection(ctx, attempt, v1alpha1.PhaseSucceeded, "ArtifactsCollected", false)
-	case corev1.PodFailed:
-		return r.reconcileCollection(ctx, attempt, v1alpha1.PhaseFailed, "AgentPodFailed", true)
-	case corev1.PodRunning:
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseRunning, "AgentRunning", "agent is running")
-	default:
+	if attempt.Status.ExecutionRef == nil {
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
-}
-
-func (r *StepAttemptReconciler) deleteAgentPod(ctx context.Context, attempt *v1alpha1.StepAttempt) error {
-	if attempt.Status.PodRef == "" {
-		return nil
+	if attempt.Status.ExecutionRef.APIVersion != v1alpha1.GroupVersion.String() || attempt.Status.ExecutionRef.Kind != domainKind(attempt.Spec.Kind) {
+		return ctrl.Result{}, r.fail(ctx, &attempt, "InvalidExecutionReference", false)
 	}
-
-	var pod corev1.Pod
-	key := types.NamespacedName{
-		Namespace: attempt.Namespace,
-		Name:      attempt.Status.PodRef,
-	}
-	if err := r.Get(ctx, key, &pod); err != nil {
-		return client.IgnoreNotFound(err)
-	}
-
-	return client.IgnoreNotFound(r.Delete(ctx, &pod))
-}
-
-// Reconciles artifacts created upon agent success
-func (r *StepAttemptReconciler) reconcileCollection(ctx context.Context, attempt *v1alpha1.StepAttempt, finalPhase v1alpha1.ResourcePhase, finalReason string, retryable bool) (ctrl.Result, error) {
-	if attempt.Status.JobRef == "" {
-		var workflow v1alpha1.SovereignWorkflow
-		if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Spec.WorkflowRef}, &workflow); err != nil {
-			return ctrl.Result{}, err
+	phase, reason, retryable, err := r.domainStatus(ctx, &attempt)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, r.interrupt(ctx, &attempt, "ExecutionPrimitiveLost", true)
 		}
-		objects := buildCollectorResources(attempt, &workflow, r.collectorImage())
-		for _, object := range objects {
-			if err := controllerutil.SetControllerReference(attempt, object, r.Scheme); err != nil {
-				return ctrl.Result{}, err
-			}
-			if err := r.Create(ctx, object); err != nil && !apierrors.IsAlreadyExists(err) {
-				return ctrl.Result{}, err
-			}
-		}
-		attempt.Status.JobRef = attempt.Name + "-collect"
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseCollecting, "CollectorCreated", "artifact collector job created")
-	}
-	var job batchv1.Job
-	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Status.JobRef}, &job); err != nil {
 		return ctrl.Result{}, err
 	}
-	if job.Status.Succeeded > 0 {
-		attempt.Status.ResultRef = job.Name
-		if finalPhase == v1alpha1.PhaseFailed {
-			return ctrl.Result{}, r.fail(ctx, attempt, finalReason, retryable)
+	if phase == "" {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+	attempt.Status.FailureReason = reason
+	attempt.Status.Retryable = retryable
+	return ctrl.Result{}, r.setPhase(ctx, &attempt, phase, domainPhaseReason(phase, reason), domainPhaseMessage(attempt.Status.ExecutionRef.Kind, phase))
+}
+
+func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alpha1.StepAttempt) (v1alpha1.ResourcePhase, string, bool, error) {
+	key := types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Status.ExecutionRef.Name}
+	switch attempt.Spec.Kind {
+	case v1alpha1.ExecutionKindAgent:
+		if attempt.Status.ExecutionRef.Kind != "AgentRun" {
+			return "", "", false, fmt.Errorf("agent attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseSucceeded, "ArtifactsCollected", "result contract and artifacts accepted")
-	}
-	if job.Status.Failed > 0 {
-		if finalPhase == v1alpha1.PhaseFailed {
-			return ctrl.Result{}, r.fail(ctx, attempt, finalReason, retryable)
+		var run v1alpha1.AgentRun
+		if err := r.Get(ctx, key, &run); err != nil {
+			return "", "", false, err
 		}
-		return ctrl.Result{}, r.fail(ctx, attempt, "ArtifactCollectionFailed", false)
-	}
-	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-}
-
-func (r *StepAttemptReconciler) collectorImage() string {
-	if r.CollectorImage != "" {
-		return r.CollectorImage
-	}
-	return "sovereign-artifact-collector:dev"
-}
-
-func (r *StepAttemptReconciler) reconcileUtility(ctx context.Context, attempt *v1alpha1.StepAttempt) (ctrl.Result, error) {
-	if attempt.Status.JobRef == "" {
-		job := buildUtilityJob(attempt)
-		if err := controllerutil.SetControllerReference(attempt, job, r.Scheme); err != nil {
-			return ctrl.Result{}, err
+		if err := validateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindAgent, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
 		}
-		if err := r.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, err
+		return run.Status.Phase, run.Status.FailureReason, run.Status.Retryable, nil
+	case v1alpha1.ExecutionKindUtility:
+		if attempt.Status.ExecutionRef.Kind != "UtilityOperation" {
+			return "", "", false, fmt.Errorf("utility attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
-		attempt.Status.JobRef = job.Name
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhasePreparing, "JobCreated", "utility job created")
-	}
-	var job batchv1.Job
-	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Status.JobRef}, &job); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
-	}
-	if job.Status.Succeeded > 0 {
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseSucceeded, "UtilityCompleted", "utility job completed")
-	}
-	if job.Status.Failed > 0 {
-		return ctrl.Result{}, r.fail(ctx, attempt, "UtilityJobFailed", true)
-	}
-	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-}
-
-// Reconciles the Validation step status (ephemeral testing)
-func (r *StepAttemptReconciler) reconcileValidation(ctx context.Context, attempt *v1alpha1.StepAttempt) (ctrl.Result, error) {
-	name := attempt.Name + "-validation"
-	var run v1alpha1.ValidationRun
-	err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: name}, &run)
-	if apierrors.IsNotFound(err) {
-		run = v1alpha1.ValidationRun{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace}, Spec: v1alpha1.ValidationRunSpec{WorkflowRef: attempt.Spec.WorkflowRef, Provider: "argocd-kustomize"}}
-		if err := controllerutil.SetControllerReference(attempt, &run, r.Scheme); err != nil {
-			return ctrl.Result{}, err
+		var operation v1alpha1.UtilityOperation
+		if err := r.Get(ctx, key, &operation); err != nil {
+			return "", "", false, err
 		}
-		if err := r.Create(ctx, &run); err != nil {
-			return ctrl.Result{}, err
+		if err := validateDomainBinding(attempt, &operation, operation.Spec.AttemptRef, v1alpha1.ExecutionKindUtility, operation.Spec.WorkflowRef, operation.Spec.StepName, operation.Spec.Attempt); err != nil {
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
 		}
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseValidating, "ValidationCreated", "validation run created")
-	}
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if run.Status.Phase == v1alpha1.PhaseSucceeded {
-		return ctrl.Result{}, r.setPhase(ctx, attempt, v1alpha1.PhaseSucceeded, "ValidationSucceeded", "validation succeeded")
-	}
-	if run.Status.Phase == v1alpha1.PhaseFailed {
-		return ctrl.Result{}, r.fail(ctx, attempt, "ValidationFailed", false)
-	}
-	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-}
-
-// Verifies or creates new inference lease based on inference request, attempt, and workflow
-func (r *StepAttemptReconciler) ensureLease(ctx context.Context, attempt *v1alpha1.StepAttempt) (*v1alpha1.InferenceLease, error) {
-	name := attempt.Spec.InferenceLeaseRef
-	var lease v1alpha1.InferenceLease
-	err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: name}, &lease)
-	if err == nil {
-		if err := r.appendInferenceLeaseRequested(ctx, attempt, lease.Name); err != nil {
-			return nil, err
+		return operation.Status.Phase, operation.Status.FailureReason, operation.Status.Retryable, nil
+	case v1alpha1.ExecutionKindHumanGate:
+		if attempt.Status.ExecutionRef.Kind != "ApprovalRequest" {
+			return "", "", false, fmt.Errorf("human gate attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
-		return &lease, nil
-	}
-	if !apierrors.IsNotFound(err) {
-		return nil, err
-	}
-	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Spec.WorkflowRef}, &workflow); err != nil {
-		return nil, err
-	}
-	lease = v1alpha1.InferenceLease{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace},
-		Spec: v1alpha1.InferenceLeaseSpec{
-			WorkflowRef:       workflow.Name,
-			AttemptRef:        attempt.Name,
-			ProjectRef:        workflow.Spec.ProjectName,
-			Tenant:            workflow.Spec.ProjectName,
-			Classification:    workflow.Spec.Classification,
-			SharingScope:      attempt.Spec.Inference.SharingScope,
-			Model:             attempt.Spec.Inference.Model,
-			ModelRevision:     attempt.Spec.Inference.ModelRevision,
-			EstimatedKVRAMMiB: attempt.Spec.Inference.EstimatedKVRAMMiB,
-			Priority:          attempt.Spec.Inference.Priority,
-			Evictable:         attempt.Spec.Inference.Evictable,
-		},
-	}
-	if err := controllerutil.SetControllerReference(attempt, &lease, r.Scheme); err != nil {
-		return nil, err
-	}
-	if err := r.Create(ctx, &lease); err != nil {
-		return nil, err
-	}
-	if err := r.appendInferenceLeaseRequested(ctx, attempt, lease.Name); err != nil {
-		return nil, err
-	}
-	return &lease, nil
-}
-
-func (r *StepAttemptReconciler) appendInferenceLeaseRequested(ctx context.Context, attempt *v1alpha1.StepAttempt, leaseName string) error {
-	return r.appendAttemptEvent(ctx, attempt, "InferenceLeaseRequested", "request", leaseName, "requested", "", map[string]string{"lease": leaseName}, nil)
-}
-
-func (r *StepAttemptReconciler) ensureAgentWorkload(ctx context.Context, attempt *v1alpha1.StepAttempt, endpoint string) error {
-	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Spec.WorkflowRef}, &workflow); err != nil {
-		return err
-	}
-
-	// Map output contracts to output obligations
-	var outputObligations []agentcontract.OutputObligation
-	for _, output := range attempt.Spec.OutputContracts {
-		outputObligations = append(outputObligations,
-			agentcontract.OutputObligation{Name: output.Name, Version: output.Version, Required: true})
-	}
-
-	// Generate input contract and write it to a configmap
-	controlPath := attemptControlPath(attempt.Name)
-	input := agentcontract.Input{
-		SchemaVersion:     agentcontract.Version,
-		WorkflowID:        workflow.Spec.WorkflowID,
-		StepName:          attempt.Spec.StepName,
-		Attempt:           attempt.Spec.Attempt,
-		Role:              attempt.Spec.StepName,
-		Responsibility:    attempt.Spec.Responsibility,
-		Capabilities:      append([]string(nil), attempt.Spec.Capabilities...),
-		Outputs:           outputObligations,
-		InferenceEndpoint: endpoint,
-		MCPServer:         "https://sovereign-mcp.sovereign-orchestrator-system.svc",
-		WorkspacePath:     "/workspace",
-		StagingPath:       attemptStagingPath(attempt.Name),
-		ControlPath:       controlPath,
-		ResultPath:        attemptResultPath(attempt.Name),
-		AuditEventsPath:   attemptAuditEventsPath(attempt.Name),
-	}
-	data, err := json.Marshal(input)
-	if err != nil {
-		return err
-	}
-	configName := attempt.Name + "-input"
-	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: attempt.Namespace}, Data: map[string]string{"input.json": string(data)}}
-	if err := controllerutil.SetControllerReference(attempt, config, r.Scheme); err != nil {
-		return err
-	}
-	if err := r.Create(ctx, config); err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
-	}
-	pod := buildAgentPod(attempt, workflow.Status.PvcName, configName)
-	if err := controllerutil.SetControllerReference(attempt, pod, r.Scheme); err != nil {
-		return err
-	}
-	return client.IgnoreAlreadyExists(r.Create(ctx, pod))
-}
-
-func buildAgentPod(attempt *v1alpha1.StepAttempt, pvcName, configName string) *corev1.Pod {
-	if pvcName == "" {
-		pvcName = attempt.Spec.WorkflowRef + "-workspace"
-	}
-
-	// Security configuration
-	automount := false // Prevents SA token from being mounted
-	nonRoot := true
-	readOnly := true
-	allowPrivilegeEscalation := false
-	runAsUser := int64(65532)
-	fsGroup := runAsUser
-
-	executable, _ := json.Marshal(attempt.Spec.Executable)
-	resultPath := attemptResultPath(attempt.Name)
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace, Labels: map[string]string{LabelWorkflow: attempt.Labels[LabelWorkflow], LabelStep: attempt.Spec.StepName, "sovereign-ai.io/attempt": attempt.Name}},
-		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
-			SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAsUser, FSGroup: &fsGroup},
-			Containers: []corev1.Container{{
-				Name: "agent", Image: attempt.Spec.Image, Command: []string{"/agent-wrapper"},
-				Args:            []string{"--input", "/control/input.json", "--result", resultPath},
-				Env:             []corev1.EnvVar{{Name: "SOVEREIGN_AGENT_EXECUTABLE", Value: string(executable)}},
-				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-				VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
-			}},
-			Volumes: []corev1.Volume{
-				{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}},
-				{Name: "input", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
-			},
-		},
-	}
-}
-
-func attemptControlPath(attemptName string) string {
-	return "/workspace/attempts/" + attemptName + "/control"
-}
-
-func attemptStagingPath(attemptName string) string {
-	return "/workspace/attempts/" + attemptName + "/staging"
-}
-
-func attemptResultPath(attemptName string) string {
-	return attemptControlPath(attemptName) + "/result.json"
-}
-
-func attemptAuditEventsPath(attemptName string) string {
-	return attemptControlPath(attemptName) + "/events.jsonl"
-}
-
-func buildUtilityJob(attempt *v1alpha1.StepAttempt) *batchv1.Job {
-	automount := false
-	backoff := int32(0)
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      attempt.Name,
-			Namespace: attempt.Namespace,
-			Labels: map[string]string{
-				LabelWorkflow: attempt.Labels[LabelWorkflow],
-				LabelStep:     attempt.Spec.StepName}},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoff,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyNever,
-					AutomountServiceAccountToken: &automount,
-					Containers: []corev1.Container{{
-						Name:    "utility",
-						Image:   attempt.Spec.Image,
-						Command: attempt.Spec.Executable,
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "workspace",
-							MountPath: "/workspace"}}}},
-					Volumes: []corev1.Volume{{
-						Name: "workspace",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: attempt.Spec.WorkflowRef + "-workspace"}}}},
-				}}},
-	}
-}
-
-func buildCollectorResources(attempt *v1alpha1.StepAttempt, workflow *v1alpha1.SovereignWorkflow, image string) []client.Object {
-	name := attempt.Name + "-collector"
-	jobName := attempt.Name + "-collect"
-	automount := true
-	backoff := int32(0)
-	resultPath := attemptResultPath(attempt.Name)
-	stagingPath := attemptStagingPath(attempt.Name)
-	auditEventsPath := attemptAuditEventsPath(attempt.Name)
-	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace}, AutomountServiceAccountToken: &automount}
-	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"artifacts"}, Verbs: []string{"create", "get"}}}}
-	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: attempt.Namespace}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: attempt.Namespace}}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}}
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: attempt.Namespace}, Spec: batchv1.JobSpec{BackoffLimit: &backoff, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: name,
-		Containers: []corev1.Container{{Name: "collector", Image: image, Args: []string{
-			"--namespace", attempt.Namespace, "--workflow", workflow.Name, "--attempt", attempt.Name,
-			"--result", resultPath, "--staging", stagingPath, "--artifact-store", "/workspace/.sovereign/artifacts",
-			"--audit-events", auditEventsPath, "--source-revision", workflow.Spec.DefinitionRevision,
-		}, Env: collectorAuditEnv(), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
-		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workflow.Status.PvcName}}}},
-	}}}}
-	return []client.Object{serviceAccount, role, binding, job}
-}
-
-func collectorAuditEnv() []corev1.EnvVar {
-	var env []corev1.EnvVar
-	for _, name := range []string{"SOVEREIGN_AUDIT_DSN", "SOVEREIGN_AUDIT_REQUIRED"} {
-		if value := os.Getenv(name); value != "" {
-			env = append(env, corev1.EnvVar{Name: name, Value: value})
+		var approval v1alpha1.ApprovalRequest
+		if err := r.Get(ctx, key, &approval); err != nil {
+			return "", "", false, err
 		}
+		if err := validateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef.Name, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
+		}
+		return approval.Status.Phase, approval.Status.FailureReason, approval.Status.Retryable, nil
+	case v1alpha1.ExecutionKindValidation:
+		if attempt.Status.ExecutionRef.Kind != "ValidationRun" {
+			return "", "", false, fmt.Errorf("validation attempt references %s", attempt.Status.ExecutionRef.Kind)
+		}
+		var run v1alpha1.ValidationRun
+		if err := r.Get(ctx, key, &run); err != nil {
+			return "", "", false, err
+		}
+		if err := validateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
+		}
+		return run.Status.Phase, run.Status.FailureReason, run.Status.Retryable, nil
+	default:
+		return v1alpha1.PhaseFailed, "UnsupportedKind", false, nil
 	}
-	return env
+}
+
+func domainPhaseReason(phase v1alpha1.ResourcePhase, failureReason string) string {
+	if failureReason != "" {
+		return failureReason
+	}
+	switch phase {
+	case v1alpha1.PhaseAwaitingApproval:
+		return "ApprovalRequested"
+	case v1alpha1.PhaseSucceeded:
+		return "DomainExecutionSucceeded"
+	case v1alpha1.PhaseFailed:
+		return "DomainExecutionFailed"
+	case v1alpha1.PhaseInterrupted:
+		return "DomainExecutionInterrupted"
+	default:
+		return "DomainExecutionObserved"
+	}
+}
+
+func domainPhaseMessage(kind string, phase v1alpha1.ResourcePhase) string {
+	return fmt.Sprintf("%s is %s", kind, phase)
 }
 
 func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.StepAttempt, phase v1alpha1.ResourcePhase, reason, message string) error {
@@ -481,34 +160,29 @@ func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.
 		if terminalAttempt(latest.Status.Phase) && latest.Status.Phase != phase {
 			return false
 		}
-		if latest.Status.Phase == phase {
-			condition := apiMeta.FindStatusCondition(latest.Status.Conditions, "Ready")
-			if condition != nil && condition.Reason == reason && condition.Message == message {
-				return false
-			}
+		condition := apiMeta.FindStatusCondition(latest.Status.Conditions, "Ready")
+		if latest.Status.Phase == phase && condition != nil && condition.Reason == reason && condition.Message == message {
+			return false
 		}
-		carryAttemptStatusIntent(attempt, latest)
 		now := metav1.Now()
 		if r.Now != nil {
 			now = metav1.NewTime(r.Now())
 		}
 		latest.Status.Phase = phase
+		latest.Status.FailureReason = attempt.Status.FailureReason
+		latest.Status.Retryable = attempt.Status.Retryable
 		latest.Status.ObservedGeneration = latest.Generation
 		if phase == v1alpha1.PhaseRunning && latest.Status.StartedAt == nil {
 			latest.Status.StartedAt = &now
 		}
 		if terminalAttempt(phase) {
 			latest.Status.CompletedAt = &now
-			latest.Status.Retryable = attempt.Status.Retryable
 		}
 		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: conditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: latest.Generation})
 		return true
 	})
-	if err != nil {
+	if err != nil || !changed {
 		return err
-	}
-	if !changed {
-		return nil
 	}
 	return r.appendPhaseEvent(ctx, updated, phase, reason)
 }
@@ -526,7 +200,6 @@ func (r *StepAttemptReconciler) interrupt(ctx context.Context, attempt *v1alpha1
 }
 
 func (r *StepAttemptReconciler) updateAttemptStatus(ctx context.Context, key types.NamespacedName, mutate func(*v1alpha1.StepAttempt) bool) (*v1alpha1.StepAttempt, bool, error) {
-	logger := ctrl.LoggerFrom(ctx).WithValues("stepAttempt", key.String())
 	var updated v1alpha1.StepAttempt
 	changed := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -536,134 +209,49 @@ func (r *StepAttemptReconciler) updateAttemptStatus(ctx context.Context, key typ
 		}
 		if !mutate(&latest) {
 			updated = latest
-			changed = false
 			return nil
 		}
 		if err := r.Status().Update(ctx, &latest); err != nil {
-			if apierrors.IsConflict(err) {
-				logger.V(1).Info("retrying step attempt status update after conflict", "resourceVersion", latest.ResourceVersion)
-			}
 			return err
 		}
-		updated = latest
-		changed = true
+		updated, changed = latest, true
 		return nil
 	})
-	if err != nil {
-		return nil, false, err
-	}
-	return &updated, changed, nil
-}
-
-func carryAttemptStatusIntent(source, target *v1alpha1.StepAttempt) {
-	if source.Status.PodRef != "" {
-		target.Status.PodRef = source.Status.PodRef
-	}
-	if source.Status.JobRef != "" {
-		target.Status.JobRef = source.Status.JobRef
-	}
-	if source.Status.ResultRef != "" {
-		target.Status.ResultRef = source.Status.ResultRef
-	}
-	if source.Status.FailureReason != "" {
-		target.Status.FailureReason = source.Status.FailureReason
-	}
+	return &updated, changed, err
 }
 
 func (r *StepAttemptReconciler) appendPhaseEvent(ctx context.Context, attempt *v1alpha1.StepAttempt, phase v1alpha1.ResourcePhase, reason string) error {
-	eventType, action, outcome := phaseEvent(attempt.Spec.Kind, phase, reason)
-	if eventType == "" {
-		return nil
-	}
-	references := make(map[string]string)
-	if attempt.Status.PodRef != "" {
-		references["pod"] = attempt.Status.PodRef
-	}
-	if attempt.Status.JobRef != "" {
-		references["job"] = attempt.Status.JobRef
-	}
-	if attempt.Spec.InferenceLeaseRef != "" {
-		references["lease"] = attempt.Spec.InferenceLeaseRef
-	}
-	if attempt.Status.ResultRef != "" {
-		references["result"] = attempt.Status.ResultRef
-	}
-	return r.appendAttemptEvent(ctx, attempt, eventType, action, attempt.Name, outcome, reason, references, nil)
-}
-
-func (r *StepAttemptReconciler) appendAttemptEvent(ctx context.Context, attempt *v1alpha1.StepAttempt, eventType, action, target, outcome, reason string, references map[string]string, data any) error {
 	if r.Audit == nil {
 		return nil
 	}
-	now := time.Now().UTC()
-	if r.Now != nil {
-		now = r.Now().UTC()
+	references := map[string]string{}
+	if attempt.Status.ExecutionRef != nil {
+		references["executionKind"] = attempt.Status.ExecutionRef.Kind
+		references["execution"] = attempt.Status.ExecutionRef.Name
 	}
-	return audit.AppendEvent(ctx, r.Audit, audit.EventOptions{
-		Source:     "stepattempt-controller",
-		Type:       eventType,
-		OccurredAt: now,
-		Actor:      audit.Actor{Kind: "Controller", ID: "stepattempt-controller"},
-		Subject: audit.Subject{
-			Namespace: attempt.Namespace,
-			Workflow:  attempt.Spec.WorkflowRef,
-			Step:      attempt.Spec.StepName,
-			Attempt:   attempt.Spec.Attempt,
-		},
-		Action:        action,
-		Target:        target,
-		Outcome:       outcome,
-		Reason:        reason,
-		CorrelationID: attempt.Spec.WorkflowRef,
-		References:    references,
-		Data:          data,
+	return appendControllerEvent(ctx, r.Audit, "stepattempt-controller", r.Now, audit.EventOptions{
+		Type:    "StepAttempt" + string(phase),
+		Subject: audit.Subject{Namespace: attempt.Namespace, Workflow: attempt.Spec.WorkflowRef, Step: attempt.Spec.StepName, Attempt: attempt.Spec.Attempt},
+		Action:  "observe", Target: attempt.Name, Outcome: string(phase), Reason: reason, References: references,
 	})
 }
 
-func phaseEvent(kind v1alpha1.ExecutionKind, phase v1alpha1.ResourcePhase, reason string) (eventType, action, outcome string) {
-	switch phase {
-	case v1alpha1.PhasePreparing:
-		if reason == "JobCreated" {
-			return "UtilityJobCreated", "create", "created"
-		}
-		if reason == "PodCreated" {
-			return "StepAttemptPodCreated", "create", "created"
-		}
-	case v1alpha1.PhaseRunning:
-		return "StepAttemptStarted", "start", "started"
-	case v1alpha1.PhaseAwaitingApproval:
-		return "HumanApprovalRequested", "request", "awaitingApproval"
-	case v1alpha1.PhaseValidating:
-		return "ValidationRunCreated", "create", "created"
-	case v1alpha1.PhaseSucceeded:
-		if kind == v1alpha1.ExecutionKindUtility {
-			return "UtilityJobSucceeded", "complete", "succeeded"
-		}
-		if kind == v1alpha1.ExecutionKindValidation {
-			return "ValidationRunReady", "complete", "succeeded"
-		}
-		return "StepAttemptSucceeded", "complete", "succeeded"
-	case v1alpha1.PhaseFailed:
-		if kind == v1alpha1.ExecutionKindUtility {
-			return "UtilityJobFailed", "complete", "failed"
-		}
-		if kind == v1alpha1.ExecutionKindValidation {
-			return "ValidationRunFailed", "complete", "failed"
-		}
-		return "StepAttemptFailed", "complete", "failed"
-	case v1alpha1.PhaseInterrupted:
-		return "StepAttemptInterrupted", "interrupt", "interrupted"
-	}
-	return "", "", ""
-}
-
 func terminalAttempt(phase v1alpha1.ResourcePhase) bool {
-	return phase == v1alpha1.PhaseSucceeded || phase == v1alpha1.PhaseFailed || phase == v1alpha1.PhaseCancelled || phase == v1alpha1.PhaseInterrupted
+	switch phase {
+	case v1alpha1.PhaseSucceeded, v1alpha1.PhaseFailed, v1alpha1.PhaseCancelled, v1alpha1.PhaseInterrupted:
+		return true
+	default:
+		return false
+	}
 }
 
 func conditionStatus(phase v1alpha1.ResourcePhase) metav1.ConditionStatus {
-	if phase == v1alpha1.PhaseSucceeded {
+	switch phase {
+	case v1alpha1.PhaseSucceeded:
 		return metav1.ConditionTrue
+	case v1alpha1.PhaseFailed, v1alpha1.PhaseCancelled, v1alpha1.PhaseInterrupted:
+		return metav1.ConditionFalse
+	default:
+		return metav1.ConditionUnknown
 	}
-	return metav1.ConditionFalse
 }

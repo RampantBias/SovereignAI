@@ -11,7 +11,6 @@ import (
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
-	"github.com/SovereignAI/internal/orchestration"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -26,17 +25,13 @@ import (
 type Server struct {
 	pb.UnimplementedOrchestratorServiceServer // Guarantees forward compatibility
 	Client                                    client.Client
-	GpuService                                orchestration.GpuService
-	CDClient                                  orchestration.CDClient
 	Auditor                                   audit.Recorder
 }
 
-func NewServer(client client.Client, gpuService orchestration.GpuService, cdClient orchestration.CDClient, auditor audit.Recorder) *Server {
+func NewServer(client client.Client, auditor audit.Recorder) *Server {
 	return &Server{
-		Client:     client,
-		GpuService: gpuService,
-		CDClient:   cdClient,
-		Auditor:    auditor,
+		Client:  client,
+		Auditor: auditor,
 	}
 }
 
@@ -62,17 +57,17 @@ func (s *Server) CleanWorkflow(ctx context.Context, req *pb.CleanWorkflowRequest
 
 	log.Printf("gRPC network edge: Processing Clean on Workflow %s for Project %s", req.GetWorkflowId(), req.GetProjectName())
 	workflow := workflows.Items[0]
-	if auditErr := s.appendAPIEvent(ctx, "WorkflowCleanupRequested", audit.Subject{Project: workflow.Spec.ProjectName, Namespace: workflow.Namespace, Workflow: workflow.Name}, "cleanup", workflow.Name, "requested", "", workflow.Name, nil, nil); auditErr != nil {
+	if auditErr := s.appendAPIEvent(ctx, "WorkflowCleanupRequested", audit.Subject{Project: workflow.Spec.Project.Name, Namespace: workflow.Namespace, Workflow: workflow.Name}, "cleanup", workflow.Name, "requested", "", workflow.Name, nil, nil); auditErr != nil {
 		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 	}
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: workflow.Namespace}}
 	if err := s.Client.Delete(ctx, namespace); err != nil && !apierrors.IsNotFound(err) {
-		if auditErr := s.appendAPIEvent(ctx, "WorkflowCleanupFailed", audit.Subject{Project: workflow.Spec.ProjectName, Namespace: workflow.Namespace, Workflow: workflow.Name}, "delete", workflow.Namespace, "failed", "NamespaceDeleteFailed", workflow.Name, nil, map[string]string{"error": err.Error()}); auditErr != nil {
+		if auditErr := s.appendAPIEvent(ctx, "WorkflowCleanupFailed", audit.Subject{Project: workflow.Spec.Project.Name, Namespace: workflow.Namespace, Workflow: workflow.Name}, "delete", workflow.Namespace, "failed", "NamespaceDeleteFailed", workflow.Name, nil, map[string]string{"error": err.Error()}); auditErr != nil {
 			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 		}
 		return nil, status.Errorf(codes.Internal, "failed to delete workflow namespace: %v", err)
 	}
-	if auditErr := s.appendAPIEvent(ctx, "WorkflowNamespaceDeleteRequested", audit.Subject{Project: workflow.Spec.ProjectName, Namespace: workflow.Namespace, Workflow: workflow.Name}, "delete", workflow.Namespace, "requested", "", workflow.Name, nil, nil); auditErr != nil {
+	if auditErr := s.appendAPIEvent(ctx, "WorkflowNamespaceDeleteRequested", audit.Subject{Project: workflow.Spec.Project.Name, Namespace: workflow.Namespace, Workflow: workflow.Name}, "delete", workflow.Namespace, "requested", "", workflow.Name, nil, nil); auditErr != nil {
 		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 	}
 
@@ -144,7 +139,7 @@ func (s *Server) ListWorkflows(ctx context.Context, req *pb.ListWorkflowsRequest
 	var pbWorkflows []*pb.WorkflowStatusDTO
 	for _, wf := range list.Items {
 		pbWorkflows = append(pbWorkflows, &pb.WorkflowStatusDTO{
-			ProjectName: wf.Spec.ProjectName,
+			ProjectName: wf.Spec.Project.Name,
 			WorkflowId:  wf.Spec.WorkflowID,
 			Status:      wf.Status.Phase,
 			CurrentStep: wf.Status.ActiveStepName,
@@ -280,7 +275,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 	}
 	workflowCRD.ObjectMeta.Labels["sovereign-ai.io/project"] = projectName
 	workflowCRD.ObjectMeta.Labels["sovereign-ai.io/workflow-id"] = workflowID
-	workflowCRD.Spec.ProjectName = projectName
+	workflowCRD.Spec.Project.Name = projectName
 	workflowCRD.Spec.WorkflowID = workflowID
 
 	// Create Workflow

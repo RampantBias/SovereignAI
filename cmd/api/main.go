@@ -11,14 +11,11 @@ import (
 	v1 "github.com/SovereignAI/internal/api/v1"
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
-	"github.com/SovereignAI/internal/argo"
 	"github.com/SovereignAI/internal/audit"
-	"github.com/SovereignAI/internal/orchestration/inference"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -46,21 +43,6 @@ func main() {
 		log.Fatalf("unable to initialize direct kubernetes client: %v", err)
 	}
 
-	// Instantiate external services
-	dynamicClient, err := dynamic.NewForConfig(restConfig)
-	if err != nil {
-		log.Fatalf("failed to build dynamic client: %v", err)
-	}
-
-	cdClient, err := argo.NewManager(dynamicClient, argo.ClientConfig{}, "argocd")
-	if err != nil {
-		log.Fatalf("failed to initialize CD client: %v", err)
-	}
-
-	// The GPUService should consume the direct client as both its reader and writer to
-	// eliminate reliance on manager caches
-	gpuSvc := inference.NewService(k8sClient, k8sClient)
-
 	// Open Auditor
 	recorder, closeAudit, auditMode, err := audit.OpenConfigured(ctx, audit.ConfigFromEnv())
 	if err != nil {
@@ -81,7 +63,7 @@ func main() {
 
 	// Build and register the gRPC pipeline
 	grpcServer := grpc.NewServer()
-	apiServer := v1.NewServer(k8sClient, gpuSvc, cdClient, recorder)
+	apiServer := v1.NewServer(k8sClient, recorder)
 	pb.RegisterOrchestratorServiceServer(grpcServer, apiServer)
 	reflection.Register(grpcServer)
 

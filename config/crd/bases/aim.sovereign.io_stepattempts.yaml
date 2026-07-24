@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: stepattempts.aim.sovereign.io
 spec:
   group: aim.sovereign.io
@@ -38,80 +38,21 @@ spec:
           metadata:
             type: object
           spec:
+            description: |-
+              StepAttemptSpec is a workflow lifecycle envelope. Domain execution intent is
+              held by the owned AgentRun, UtilityOperation, ApprovalRequest, or ValidationRun.
             properties:
               attempt:
                 format: int32
                 type: integer
-              capabilities:
-                items:
-                  type: string
-                type: array
-              executable:
-                items:
-                  type: string
-                type: array
-              responsibility:
-                type: string
-              image:
-                type: string
-              inference:
-                properties:
-                  estimatedKVRAMMiB:
-                    format: int64
-                    type: integer
-                  evictable:
-                    type: boolean
-                  model:
-                    type: string
-                  modelRevision:
-                    type: string
-                  priority:
-                    format: int32
-                    type: integer
-                  sharingScope:
-                    type: string
-                required:
-                - estimatedKVRAMMiB
-                - model
-                - modelRevision
-                - sharingScope
-                type: object
-              inferenceLeaseRef:
-                type: string
-              inputs:
-                items:
-                  properties:
-                    digest:
-                      type: string
-                    name:
-                      type: string
-                  required:
-                  - name
-                  type: object
-                type: array
               kind:
                 type: string
-              outputContracts:
-                items:
-                  properties:
-                    name:
-                      type: string
-                    version:
-                      type: string
-                  required:
-                  - name
-                  - version
-                  type: object
-                type: array
               stepName:
-                type: string
-              timeout:
                 type: string
               workflowRef:
                 type: string
             required:
             - attempt
-            - responsibility
             - kind
             - stepName
             - workflowRef
@@ -177,18 +118,27 @@ spec:
                   - type
                   type: object
                 type: array
+              executionRef:
+                description: TypedLocalReference identifies the domain primitive owned
+                  by a StepAttempt.
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - apiVersion
+                - kind
+                - name
+                type: object
               failureReason:
-                type: string
-              jobRef:
                 type: string
               observedGeneration:
                 format: int64
                 type: integer
               phase:
-                type: string
-              podRef:
-                type: string
-              resultRef:
                 type: string
               retryable:
                 type: boolean
@@ -199,6 +149,9 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: step attempt spec is immutable
+          rule: self.spec == oldSelf.spec
     served: true
     storage: true
     subresources:

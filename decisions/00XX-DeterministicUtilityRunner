@@ -1,0 +1,131 @@
+# Deterministic Utility Runner
+
+Status: Accepted
+
+## Context
+
+SovereignAI workflows contain two different kinds of execution boundaries:
+- Agent steps
+    - Where an autonomous runtime produces artifacts under a declared responsibility
+- Deterministic steps
+    - where the workflow performs a constrained operation such as creating a branch, running tests, committing a change, generating a build digest, calling a validation API, or merging an approved result.
+
+Reasoning behind deterministic steps is discussed in an earlier ADR.
+
+The deterministic steps must remain outside direct agent control. An agent may produce an artifact that proposes work, but the platform should decide when and how deterministic operations occur. This is part of the control-plane thesis: useful AI workflows require governed execution, durable state, idempotent recovery, explainable lineage, and controlled authority boundaries. 
+
+There are a few existing systems that are adjacent to this and inspired this, but none could be used as they don't directly satisfy the established boundary:
+
+- MCP servers expose tools dynamically to agents but the utility runner is scheduled by the control plane and should not be discovered or invoked freely by an agent.
+- CI runners execute jobs, but they are usually tied to repository-centric pipelines rather than SovereignAI workflow attempts, artifacts, approval gates, and audit lineage. CI execution may be called by a deterministic step, but we won't use the same architecture.
+- Workflow engines such as Argo or Tekton can schedule containers, but they do not define the SovereignAI operation contract, result contract, idempotency model, or audit vocabulary.
+
+The platform therefore needs a first-party execution boundary for deterministic operations.
+
+## Decision
+
+Build a deterministic utility runner as a platform-owned runtime boundary.
+
+The runner will be invoked by `UtilityOperation` workloads. A `StepAttempt` owns workflow retry history and references the operation, but it does not own policy admission, credentials, Jobs, or utility result state. It will:
+
+- Read a `UtilityContract` input document
+- Select the named operation from an allow-listed registry
+- Validate any operation-specific inputs before execution
+- Execute the operation inside the workflow workspace
+- Emit runtime audit events to a JSONL file
+- Write a structured `result.json`
+- Declare output artifacts that satisfy workflow output obligations
+- Rely on the existing artifact collector to ingest utility outputs and runtime audit events after the job exits
+
+The utility contract intentionally resembles the agent contract in its shared workflow envelope:
+
+- Schema version
+- Workflow ID
+- Step name
+- Attempt number
+- Input artifacts
+- Output obligations
+- Workspace, staging, control, result, and audit paths
+- Result outcome, message, error, and artifact declarations
+
+The utility contract will differ where the authority boundary differs:
+
+- Utility inputs include an immutable `UtilityOperation` authority reference, the admitting policy decision, `operation`, controller-derived `idempotencyKey`, operation parameters, and any Project-owned command template
+- Agent inputs include role/capability context, inference endpoint, and MCP context
+- Utility execution is selected from platform-owned operations;
+- Agent execution is delegated to an agent runtime behind the agent wrapper.
+
+Utility workflow steps create a first-class `UtilityOperation` CRD. Its immutable spec names one allow-listed operation and supplies only operation parameters. It cannot supply an arbitrary command or choose its credential class. The `UtilityOperation` controller derives the credential class and resolves Project-owned repository, test, build, and credential configuration before scheduling the Job. For now these will remain simpler in-memory implementations while I continue iterating further.
+
+Initial operations are:
+
+- `repository.initialize`;
+- `git.createBranch`;
+- `git.commit`;
+- `git.push`;
+- `git.merge`; and
+- `test.run`; and
+- `build.image`.
+
+Git operations must be idempotent enough for Kubernetes reconciliation retries. They should observe existing state before creating side effects and include the idempotency key in durable output where practical.
+
+## Contract Abstraction
+
+The agent contract and utility contract share enough structure that some duplication is expected. That duplication represents a common execution envelope, not necessarily a single domain model.
+
+Utility's execution envelope does create issues for the currently established StepAttempt CRD. I'll need to modify this CRD to separate the boundaries. This will separate agent and utility, but I'll scope Validation in as well since it's similarly applicable.
+
+I won't introduce a broad Go interface for both contracts at this stage. A shared interface would mainly help internal code reuse, but these contracts have different authority semantics and I think a shared contract would misrepresent that. Hiding those differences at this stage could make the boundary less clear. However, there are a few things I can do now to avoid this misrepresentation while still abstracting shared structure.
+
+#### Abstract Shared Contract Primitives
+- Artifact inputs & outputs
+- Output obligations
+- Result errors
+- Outcome constants
+- Path-containment helpers
+
+#### Keep Separate
+- Keep agent-specific and utility-specific input structs separate
+- Keep schema versions separate
+- Keep validation rules close to each contract
+- Convert between contract result shapes only at integration boundaries, such as in artifact collection.
+
+This should preserve clear responsibilities while still abstracting what should stay the same as the contracts evolve.
+
+## Consequences
+
+Positive consequences:
+
+- Deterministic side effects are platform-owned rather than agent-owned
+- Operation execution becomes auditable and replayable
+- Utility jobs can be retried safely when operations are idempotent
+- Utility outputs flow through the same artifact model as agent outputs
+- The platform can add non-software deterministic operations later without changing the agent wrapper
+- The demo can prove branch/test/commit/build/merge behavior without embedding those responsibilities in an agent binary
+
+Tradeoffs and limitations:
+
+- The platform now owns another runtime image and operation registry
+- Every new deterministic capability requires an explicit operation implementation
+- Test and build operations execute Project-owned command templates inside Project-selected images, with the trusted static utility runner installed by an init container
+- Identity and authorization remain demo-grade until approval/identity work is completed
+- Arbitrary process execution is not registered as a utility operation. This is somewhat good, but adds more work. It didn't feel right to have this even in a demo.
+- Operation idempotency must be designed per operation, not assumed by the runner
+
+## Rejected Alternatives
+
+Use MCP directly:
+
+MCP is useful for agent-facing tool discovery and context access, but deterministic platform operations should not be dynamically selected by an agent. The control plane must schedule and audit these operations as workflow obligations.
+
+Use arbitrary shell jobs:
+
+This would be simple but would not provide a stable operation vocabulary, idempotency model, or result contract. It also blurs the authority boundary between workflow intent and infrastructure side effects.
+
+Use one shared agent/utility contract immediately:
+
+The contracts share an envelope, but their semantics are different. Keeping them separate avoids forcing agent concepts into utility steps or utility concepts into agent steps before the domain model settles. They operate on different authority, and merging them risks unfetterd authority delegation.
+
+## Notes
+
+The utility runner is analogous to an MCP server only at a high level: both expose capabilities. The important difference is that the utility runner is a deterministic operation executor controlled by the platform, not a tool server controlled by an agent. 

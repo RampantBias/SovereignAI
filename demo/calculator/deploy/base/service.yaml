@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: calculator
+  labels:
+    app.kubernetes.io/name: calculator
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: calculator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
