@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
@@ -23,6 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+const repositoryCredentialKey = "credentials"
 
 // UtilityOperationReconciler is the authority owner for deterministic
 // platform operations. StepAttempt observes this resource but cannot execute it.
@@ -401,6 +406,10 @@ func (r *UtilityOperationReconciler) ensureCredential(ctx context.Context, opera
 	if err := r.Get(ctx, types.NamespacedName{Namespace: sourceNamespace, Name: ref.Name}, &source); err != nil {
 		return "", fmt.Errorf("resolve %s credential %s/%s: %w", credentialClass, sourceNamespace, ref.Name, err)
 	}
+	credentialData, err := operationCredentialData(&source, credentialClass)
+	if err != nil {
+		return "", fmt.Errorf("validate %s credential %s/%s: %w", credentialClass, sourceNamespace, ref.Name, err)
+	}
 	targetName := operation.Name + "-credential"
 	var existing corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: targetName}, &existing); err == nil {
@@ -416,10 +425,7 @@ func (r *UtilityOperationReconciler) ensureCredential(ctx context.Context, opera
 		Name: targetName, Namespace: operation.Namespace,
 		Labels:      map[string]string{"sovereign-ai.io/utility-operation": operation.Name, "sovereign-ai.io/credential-class": credentialClass},
 		Annotations: map[string]string{"sovereign-ai.io/source-credential": sourceNamespace + "/" + source.Name, "sovereign-ai.io/source-credential-uid": string(source.UID)},
-	}, Type: source.Type, Immutable: &immutable, Data: make(map[string][]byte, len(source.Data))}
-	for name, value := range source.Data {
-		target.Data[name] = append([]byte(nil), value...)
-	}
+	}, Type: source.Type, Immutable: &immutable, Data: credentialData}
 	if err := controllerutil.SetControllerReference(operation, target, r.Scheme); err != nil {
 		return "", err
 	}
@@ -430,6 +436,64 @@ func (r *UtilityOperationReconciler) ensureCredential(ctx context.Context, opera
 		return "", err
 	}
 	return targetName, nil
+}
+
+// factory for credential extraction/validation
+func operationCredentialData(source *corev1.Secret, credentialClass string) (map[string][]byte, error) {
+	if credentialClass == utility.CredentialClassRepository {
+		return repositoryCredentialData(source)
+	}
+
+	data := make(map[string][]byte, len(source.Data))
+	for name, value := range source.Data {
+		data[name] = append([]byte(nil), value...)
+	}
+	return data, nil
+}
+
+// Extracts and validates repository credential URL, returns formatted credentials for container env injection
+func repositoryCredentialData(source *corev1.Secret) (map[string][]byte, error) {
+	if source.Type != corev1.SecretTypeOpaque {
+		return nil, fmt.Errorf("repository credential Secret must have type %q", corev1.SecretTypeOpaque)
+	}
+	if len(source.Data) != 1 {
+		return nil, fmt.Errorf("repository credential Secret must contain exactly the %q key", repositoryCredentialKey)
+	}
+
+	contents, ok := source.Data[repositoryCredentialKey]
+	if !ok || len(contents) == 0 {
+		return nil, fmt.Errorf("repository credential Secret must contain a non-empty %q key", repositoryCredentialKey)
+	}
+	if !utf8.Valid(contents) {
+		return nil, fmt.Errorf("repository credential entry must be valid UTF-8")
+	}
+
+	entry := strings.ReplaceAll(string(contents), "\r\n", "\n")
+	entry = strings.TrimSuffix(entry, "\n")
+	if entry == "" || strings.ContainsAny(entry, "\r\n") || strings.TrimSpace(entry) != entry {
+		return nil, fmt.Errorf("repository credential Secret must contain exactly one credential-store entry")
+	}
+
+	credentialURL, err := url.Parse(entry)
+	if err != nil {
+		return nil, fmt.Errorf("repository credential entry must be a valid HTTPS credential-store URL")
+	}
+	if credentialURL.User == nil {
+		return nil, fmt.Errorf("repository credential entry must be one HTTPS URL with an encoded username and secret")
+	}
+	password, hasPassword := credentialURL.User.Password()
+	// Validate credential entry for valid URL
+	if !strings.EqualFold(credentialURL.Scheme, "https") ||
+		credentialURL.Host == "" ||
+		credentialURL.User.Username() == "" ||
+		!hasPassword ||
+		password == "" ||
+		credentialURL.RawQuery != "" ||
+		credentialURL.Fragment != "" {
+		return nil, fmt.Errorf("repository credential entry must be one HTTPS URL with an encoded username and secret")
+	}
+
+	return map[string][]byte{repositoryCredentialKey: append([]byte(nil), contents...)}, nil
 }
 
 func (r *UtilityOperationReconciler) startCollection(ctx context.Context, operation *v1alpha1.UtilityOperation) (ctrl.Result, error) {
@@ -584,17 +648,22 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 			VolumeMounts:    []corev1.VolumeMount{{Name: "utility-runtime", MountPath: "/sovereign-bin"}},
 		}}
 	}
+	// Add secret to container environment
 	if workload.credentialSecret != "" {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "operation-credential", MountPath: "/var/run/sovereign/credentials", ReadOnly: true})
 		secretSource := &corev1.SecretVolumeSource{SecretName: workload.credentialSecret}
-		if workload.credentialClass == utility.CredentialClassRegistry {
+		switch workload.credentialClass {
+		case utility.CredentialClassRegistry:
 			secretSource.Items = []corev1.KeyToPath{{Key: corev1.DockerConfigJsonKey, Path: "config.json"}}
 			container.Env = append(container.Env, corev1.EnvVar{Name: "DOCKER_CONFIG", Value: "/var/run/sovereign/credentials"})
-		} else {
+		case utility.CredentialClassRepository:
+			secretSource.Items = []corev1.KeyToPath{{Key: repositoryCredentialKey, Path: repositoryCredentialKey}}
 			container.Env = append(container.Env,
-				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: "1"}, corev1.EnvVar{Name: "GIT_CONFIG_KEY_0", Value: "credential.helper"},
-				corev1.EnvVar{Name: "GIT_CONFIG_VALUE_0", Value: "store --file=/var/run/sovereign/credentials/credentials"},
-				corev1.EnvVar{Name: "GIT_SSH_COMMAND", Value: "ssh -i /var/run/sovereign/credentials/ssh-privatekey -o IdentitiesOnly=yes -o UserKnownHostsFile=/var/run/sovereign/credentials/known_hosts"},
+				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: "2"},
+				corev1.EnvVar{Name: "GIT_CONFIG_KEY_0", Value: "credential.helper"}, corev1.EnvVar{Name: "GIT_CONFIG_VALUE_0", Value: ""},
+				corev1.EnvVar{Name: "GIT_CONFIG_KEY_1", Value: "credential.helper"},
+				corev1.EnvVar{Name: "GIT_CONFIG_VALUE_1", Value: "store --file=/var/run/sovereign/credentials/credentials"},
+				corev1.EnvVar{Name: "GIT_TERMINAL_PROMPT", Value: "0"},
 			)
 		}
 		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{Name: "operation-credential", VolumeSource: corev1.VolumeSource{Secret: secretSource}})
