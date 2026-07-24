@@ -5,3 +5,4 @@ bin/
 dist/
 .env
 controller.exe
+demo/*
