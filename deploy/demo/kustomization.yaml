@@ -6,3 +6,4 @@ resources:
   # kustomization and its referenced manifests.
   - postgresql
   - registry
+  - argocd

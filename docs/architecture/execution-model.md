@@ -159,6 +159,65 @@ The Lease is an authority and coordination primitive, not a filesystem lock. The
 
 This guarantees exclusivity for workloads created through the SovereignAI control plane. Cluster administrators or other principals able to mount the PVC or modify the Lease remain outside this boundary and must be constrained by Kubernetes RBAC and admission policy.
 
+The resulting authority lifecycle is defined in the
+[execution model](../docs/architecture/execution-model.md#exclusive-workspace-writer-authority).
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    state "No authorized writer<br/>holderIdentity = empty<br/>epoch = n" as Available
+    state "Writer authorized<br/>holderIdentity = execution unit<br/>epoch = n + 1" as Active
+    state "Waiting for quiescence<br/>same holder and epoch retained" as Quiescing
+    state "Authority lost<br/>stale execution term" as Lost
+    state "Epoch exhausted<br/>acquisition prohibited" as Exhausted
+
+    [*] --> Available: Workflow creates Lease<br/>epoch = 0
+
+    Available --> Available: Request is not authorized<br/>deny request
+
+    Available --> Active: Valid delegation and lifecycle<br/>atomic acquisition succeeds<br/>set holder; increment epoch<br/>audit acquisition
+
+    Available --> Exhausted: Acquisition requested<br/>epoch = maximum value
+
+    Active --> Active: Same execution reconciles<br/>holder and epoch match<br/>recover exact term
+
+    Active --> Active: Competing execution requests authority<br/>block request
+
+    Active --> Quiescing: Execution completes, is interrupted,<br/>or begins deletion
+
+    Quiescing --> Quiescing: Writer or collector remains active<br/>retain authority term
+
+    Quiescing --> Available: Writer and collector are terminal or absent<br/>clear holder; retain epoch<br/>audit release
+
+    Active --> Lost: Observed holder or epoch differs
+    Quiescing --> Lost: Observed holder or epoch differs
+
+    Lost --> [*]: Interrupt stale workload<br/>do not reacquire or release changed term
+
+    Exhausted --> [*]: Require explicit remediation<br/>never wrap or reset epoch
+
+    note right of Active
+        Only the exact holder and epoch
+        receive a writable workspace mount.
+
+        Lease expiry alone never transfers
+        workspace authority.
+    end note
+
+    note right of Quiescing
+        Authority remains held through
+        artifact collection.
+    end note
+
+    note right of Available
+        The Lease is a coordination and authority
+        record, not a filesystem lock.
+
+        RBAC and admission policy protect Lease
+        mutation and direct writable PVC mounts.
+    end note
+```
+
 ## Agent runtime contract
 
 The Go wrapper supervises an arbitrary agent executable supplied by a custom image. It enforces a platform contract without dictating the agent framework.
@@ -183,8 +242,6 @@ The wrapper is responsible for:
 
 The wrapper must not contain agent reasoning or Git credentials.
 
-**AUTHOR NOTE:** Define the executable discovery mechanism: fixed path, image annotation, workflow field, or OCI image contract.
-
 ## Artifact contracts
 
 Artifacts should be formally typed even when a step may produce a variable number of them. A contract contains:
@@ -201,8 +258,6 @@ Artifacts should be formally typed even when a step may produce a variable numbe
 Examples include `implementation-plan/v1`, `patch/v1`, `test-report/v1`, `review/v1`, and `validation-result/v1`.
 
 Variable output is represented as a collection conforming to a declared contract, not as untyped files discovered after execution.
-
-**AUTHOR NOTE:** Choose the MVP schema system. JSON Schema is a practical first choice because the wrapper already exchanges JSON, but OCI artifacts or protobuf may be useful later.
 
 ## Deterministic utility steps
 
@@ -248,8 +303,6 @@ For the MVP, step input combines:
 
 The context engine is intentionally under-specified. The workflow controller requests context but does not construct it itself. Context access is capability-checked and audited, including the query, source references, classification, and consumer attempt where feasible.
 
-**AUTHOR NOTE:** Define the smallest MVP context implementation. A curated repository snapshot plus explicit file retrieval may demonstrate governance more clearly than introducing an immature RAG system.
-
 ## Controlled dynamism after MVP
 
 Dynamic planning can preserve determinism through immutable workflow revisions:
@@ -262,10 +315,3 @@ Dynamic planning can preserve determinism through immutable workflow revisions:
 
 No agent may silently rewrite its active graph.
 
-## MVP workflow questions
-
-- **AUTHOR NOTE:** Freeze the exact step order and identify which stages are agent, utility, gate, or validation steps.
-- **AUTHOR NOTE:** Define retry limits and which failures are safe to retry automatically.
-- **AUTHOR NOTE:** Decide whether reviewer is an autonomous agent, a human gate, or both in sequence.
-- **AUTHOR NOTE:** Define when patches are applied to the shared workspace and how conflicting patches are rejected.
-- **AUTHOR NOTE:** Define the contract for resuming after human changes.

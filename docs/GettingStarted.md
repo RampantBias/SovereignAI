@@ -4,10 +4,9 @@ This guide records the startup order for the reduced SovereignAI MVP. The
 acceptance contract in [`mvp.md`](mvp.md) is authoritative when this guide and
 the MVP contract disagree.
 
-The demo stack is under active construction. At present, the PostgreSQL
-package is the reference implementation for a bundled service. Add the other
-packages to `deploy/demo/kustomization.yaml` only after each child renders on
-its own.
+The demo stack is under active construction. PostgreSQL, the registry, and
+Argo CD are currently integrated. Add another package to
+`deploy/demo/kustomization.yaml` only after that child renders on its own.
 
 Additionally, I will migrate this towards a quick one-liner once I've developed
 all of the resources. But for now this works better for as it allows me to 
@@ -51,6 +50,8 @@ kubectl kustomize deploy/demo
 
 The command should succeed before installation. Rendering does not prove
 that referenced Secrets exist or that an image can run on the target node.
+Rendering currently needs network access to retrieve the commit-pinned Argo CD
+manifest.
 
 ## 3. PostgreSQL audit database
 
@@ -169,7 +170,28 @@ Namespace also deletes namespaced PVCs. The ordered uninstall work must remove
 the workload while retaining the PVC unless the operator explicitly requests
 retained-data deletion.
 
-## 4. Calculator Git remote
+## 4. Argo CD
+
+Install the checksum-pinned Argo CD package:
+
+```console
+bash deploy/linux/install-argocd.sh
+```
+
+The installer uses server-side apply for Argo CD's large CRDs, waits for all
+Argo CD workloads, and rejects external Service or Ingress exposure.
+
+Access the API/UI only through a loopback port-forward:
+
+```console
+kubectl -n argocd port-forward --address 127.0.0.1 service/argocd-server 8443:443
+```
+
+Open `https://127.0.0.1:8443`. Initial login and password-rotation directions
+are in [`../deploy/demo/argocd/README.md`](../deploy/demo/argocd/README.md).
+Do not change the port-forward address to `0.0.0.0` for the reduced demo.
+
+## 5. Calculator Git remote
 
 The calculator runs from an existing external HTTPS Git remote. Git hosting is
 not installed by the demo stack.
@@ -194,7 +216,7 @@ Record that full SHA in the Project's
 change request. The seed script uses the operator's local Git credential
 helper. It does not use the Kubernetes repository Secret created below.
 
-## 5. Repository credential Secret
+## 6. Repository credential Secret
 
 Trusted utility operations use a Project-owned Kubernetes Secret to reach the
 calculator remote. The reduced MVP accepts exactly this shape:
@@ -245,7 +267,7 @@ The controller validates the source Secret and projects only the
 `credentials` entry into a short-lived trusted utility workload. Agents and
 the MCP service do not receive it.
 
-## 6. Other startup credentials
+## 7. Other startup credentials
 
 The completed demo will also need the following credential boundaries. Their
 exact creation commands belong beside the components that consume them:
