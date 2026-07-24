@@ -8,6 +8,7 @@ resources:
   - service-account.yaml
   - rbac.yaml
   - controller.yaml
+  - controller-metrics-service.yaml
   - api.yaml
   - api-service.yaml
   - mcp.yaml
