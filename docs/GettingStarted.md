@@ -117,10 +117,51 @@ endpoint inside the cluster is:
 postgresql.sovereign-audit:5432
 ```
 
-The SovereignAI control-plane package must eventually consume a DSN derived
-from this generated credential through a Secret-backed
-`SOVEREIGN_AUDIT_DSN`. That wiring belongs with the SovereignAI demo component;
-do not put the DSN directly in a Deployment manifest.
+The SovereignAI control-plane package consumes a DSN derived from this
+generated credential through a Secret-backed
+`SOVEREIGN_AUDIT_DSN`. The controller and API Deployments consume the
+`sovereign-audit-client` Secret described below; the DSN is not stored directly
+in either Deployment manifest.
+
+### 3.4 Create the audit client Secret
+
+Apply the control-plane Namespace before creating its Secret:
+
+```console
+kubectl apply -f deploy/base/namespace.yaml
+```
+
+Create a temporary file named `audit-client.env` outside the repository. Use
+the same username and password supplied in `postgresql-credentials.env`:
+
+```text
+SOVEREIGN_AUDIT_DSN=postgres://sovereign_audit:CHOOSE_A_DEMO_PASSWORD@postgresql.sovereign-audit.svc.cluster.local:5432/sovereign_audit?sslmode=disable
+SOVEREIGN_AUDIT_REQUIRED=true
+```
+
+For this simple demo flow, choose an alphanumeric PostgreSQL password. If the
+password contains URI-reserved characters, percent-encode it in the DSN.
+
+Create or update the client Secret from the file:
+
+```console
+kubectl create secret generic sovereign-audit-client --namespace sovereign-orchestrator-system --type=Opaque --from-env-file=/path/to/audit-client.env --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Delete the temporary file after `kubectl` succeeds. The PostgreSQL Secret and
+the audit client Secret intentionally serve different consumers: PostgreSQL
+reads `username` and `password`, while the controller and API read
+`SOVEREIGN_AUDIT_DSN` and `SOVEREIGN_AUDIT_REQUIRED`.
+
+Verify only the client Secret's type and key names:
+
+```console
+kubectl -n sovereign-orchestrator-system get secret sovereign-audit-client -o go-template='type={{.type}}{{"\n"}}keys={{range $key, $_ := .data}}{{$key}} {{end}}{{"\n"}}'
+```
+
+Apply the control plane only after this Secret exists. A missing Secret keeps
+the controller and API Pods from starting instead of silently falling back to
+process-local audit storage.
 
 Do not use `kubectl delete -k deploy/demo/postgresql` as a data-preserving
 uninstall procedure. The package contains its Namespace, and deleting the
@@ -218,4 +259,3 @@ exact creation commands belong beside the components that consume them:
 Do not add placeholder Secret values to Kustomize packages. A component should
 reference a documented Secret name and key contract; the ordered installer
 creates the actual Secret.
-

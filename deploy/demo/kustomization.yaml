@@ -5,3 +5,4 @@ resources:
   # Add another child only after that directory contains a renderable
   # kustomization and its referenced manifests.
   - postgresql
+  - registry

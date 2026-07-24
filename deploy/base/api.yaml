@@ -20,6 +20,9 @@ spec:
         - name: api
           image: sovereign-api:dev
           imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: sovereign-audit-client
           ports:
             - name: grpc
               containerPort: 8080

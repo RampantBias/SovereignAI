@@ -20,6 +20,9 @@ spec:
         - name: controller
           image: sovereign-controller:dev
           imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: sovereign-audit-client
           env:
             - name: SOVEREIGN_SYSTEM_NAMESPACE
               value: sovereign-orchestrator-system

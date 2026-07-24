@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-configuration
+data:
+  config.yml: |
+    version: 0.1
+    log:
+      level: info
+      formatter: json
+      fields:
+        service: sovereign-registry
+    storage:
+      filesystem:
+        rootdirectory: /var/lib/registry
+      delete:
+        enabled: false
+      maintenance:
+        uploadpurging:
+          enabled: true
+          age: 168h
+          interval: 24h
+          dryrun: false
+    http:
+      addr: 0.0.0.0:5000
+      net: tcp
+      draintimeout: 30s
+      relativeurls: true
+      tls:
+        certificate: /etc/distribution/tls/tls.crt
+        key: /etc/distribution/tls/tls.key
+        minimumtls: tls1.2
+      headers:
+        X-Content-Type-Options:
+          - nosniff
+      debug:
+        addr: 0.0.0.0:5001
+        prometheus:
+          enabled: true
+          path: /metrics
+    health:
+      storagedriver:
+        enabled: true
+        interval: 10s
+        threshold: 3
