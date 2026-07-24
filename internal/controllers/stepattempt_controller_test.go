@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/SovereignAI/internal/agentcontract"
@@ -234,6 +235,162 @@ func TestUtilityOperationScopesRegistryCredentialToUtilityContainer(t *testing.T
 	}
 	if !foundCredential {
 		t.Fatal("utility container did not receive its operation-scoped credential")
+	}
+}
+
+func TestRepositoryCredentialSecretContract(t *testing.T) {
+	const validEntry = "https://demo-user:token%3Awith%40symbols@example.test\n"
+
+	tests := []struct {
+		name    string
+		secret  *corev1.Secret
+		wantErr bool
+	}{
+		{
+			name:   "one HTTPS credential-store entry",
+			secret: &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{repositoryCredentialKey: []byte(validEntry)}},
+		},
+		{
+			name:    "wrong Secret type",
+			secret:  &corev1.Secret{Type: corev1.SecretTypeBasicAuth, Data: map[string][]byte{repositoryCredentialKey: []byte(validEntry)}},
+			wantErr: true,
+		},
+		{
+			name:    "missing credentials key",
+			secret:  &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{"username": []byte("demo-user")}},
+			wantErr: true,
+		},
+		{
+			name: "extra key",
+			secret: &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{
+				repositoryCredentialKey: []byte(validEntry),
+				"extra":                 []byte("not-allowed"),
+			}},
+			wantErr: true,
+		},
+		{
+			name:    "empty entry",
+			secret:  &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{repositoryCredentialKey: nil}},
+			wantErr: true,
+		},
+		{
+			name: "multiple entries",
+			secret: &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{
+				repositoryCredentialKey: []byte(validEntry + "https://other-user:other-secret@example.test\n"),
+			}},
+			wantErr: true,
+		},
+		{
+			name:    "HTTP entry",
+			secret:  &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{repositoryCredentialKey: []byte("http://demo-user:secret@example.test\n")}},
+			wantErr: true,
+		},
+		{
+			name:    "missing username",
+			secret:  &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{repositoryCredentialKey: []byte("https://:secret@example.test\n")}},
+			wantErr: true,
+		},
+		{
+			name:    "missing secret",
+			secret:  &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{repositoryCredentialKey: []byte("https://demo-user@example.test\n")}},
+			wantErr: true,
+		},
+		{
+			name:    "invalid URL encoding",
+			secret:  &corev1.Secret{Type: corev1.SecretTypeOpaque, Data: map[string][]byte{repositoryCredentialKey: []byte("https://demo-user:secret%ZZ@example.test\n")}},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := repositoryCredentialData(test.secret)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("repositoryCredentialData() error = nil, want contract rejection")
+				}
+				if strings.Contains(err.Error(), "token%3Awith%40symbols") || strings.Contains(err.Error(), "other-secret") {
+					t.Fatalf("credential validation error exposed secret material: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("repositoryCredentialData() error = %v", err)
+			}
+			if len(data) != 1 || string(data[repositoryCredentialKey]) != validEntry {
+				t.Fatalf("repository credential data = %#v, want only the original credentials entry", data)
+			}
+		})
+	}
+}
+
+func TestUtilityOperationScopesRepositoryCredentialToHTTPSGit(t *testing.T) {
+	scheme := attemptScheme(t)
+	workflow := workflowFixture()
+	project := projectFixture()
+	project.Spec.ApplicationRepository.CredentialRef = v1alpha1.NamespacedReference{Namespace: "credentials", Name: "calculator-git"}
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "calculator-git", Namespace: "credentials", UID: "calculator-git-uid"},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{repositoryCredentialKey: []byte("https://demo-user:encoded-token@example.test\n")},
+	}
+	attempt := authorizedAttempt("initialize-001", "wf", "initialize", v1alpha1.ExecutionKindUtility)
+	operation := &v1alpha1.UtilityOperation{
+		ObjectMeta: metav1.ObjectMeta{Name: "initialize-001", Namespace: "wf", UID: "initialize-operation-uid"},
+		Spec: v1alpha1.UtilityOperationSpec{
+			AttemptRef: "initialize-001", WorkflowRef: "wf", StepName: "initialize", Attempt: 1,
+			Operation: v1alpha1.UtilityOperationRequest{Name: "repository.initialize"},
+		},
+		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
+	}
+	ownByAttempt(operation, attempt)
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.UtilityOperation{}).
+		WithObjects(workflow, workspaceLeaseFixture(), project, sourceSecret, attempt, operation).Build()
+	reconciler := &UtilityOperationReconciler{Client: client, Scheme: scheme, Policy: allowPolicy{}}
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(operation)); err != nil {
+		t.Fatal(err)
+	}
+
+	var credential corev1.Secret
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: operation.Namespace, Name: operation.Name + "-credential"}, &credential); err != nil {
+		t.Fatal(err)
+	}
+	if len(credential.Data) != 1 || string(credential.Data[repositoryCredentialKey]) != string(sourceSecret.Data[repositoryCredentialKey]) {
+		t.Fatalf("operation credential did not preserve the exact repository credential contract: %#v", credential.Data)
+	}
+
+	var job batchv1.Job
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: operation.Namespace, Name: operation.Name}, &job); err != nil {
+		t.Fatal(err)
+	}
+	var credentialSource *corev1.SecretVolumeSource
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.Name == "operation-credential" {
+			credentialSource = volume.Secret
+			break
+		}
+	}
+	if credentialSource == nil || len(credentialSource.Items) != 1 ||
+		credentialSource.Items[0].Key != repositoryCredentialKey ||
+		credentialSource.Items[0].Path != repositoryCredentialKey {
+		t.Fatalf("repository credential volume exposes unexpected keys: %#v", credentialSource)
+	}
+
+	environment := make(map[string]string)
+	for _, variable := range job.Spec.Template.Spec.Containers[0].Env {
+		environment[variable.Name] = variable.Value
+	}
+	if environment["GIT_CONFIG_COUNT"] != "2" ||
+		environment["GIT_CONFIG_VALUE_0"] != "" ||
+		environment["GIT_CONFIG_VALUE_1"] != "store --file=/var/run/sovereign/credentials/credentials" {
+		t.Fatalf("Git credential helper configuration = %#v", environment)
+	}
+	if environment["GIT_TERMINAL_PROMPT"] != "0" {
+		t.Fatalf("GIT_TERMINAL_PROMPT = %q, want 0", environment["GIT_TERMINAL_PROMPT"])
+	}
+	if _, found := environment["GIT_SSH_COMMAND"]; found {
+		t.Fatal("HTTPS-only repository operation received SSH configuration")
 	}
 }
 
