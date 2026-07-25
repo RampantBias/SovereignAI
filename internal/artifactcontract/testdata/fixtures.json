@@ -1,0 +1,184 @@
+[
+  {
+    "contract": "change-request/v1",
+    "document": {
+      "summary": "Add divide support",
+      "description": "Add calculator division without regressing existing operations.",
+      "acceptanceCriteria": ["84 / 2 returns 42", "division by zero returns HTTP 422"],
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "contract": "repository-revision/v1",
+    "document": {
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "requestedRevision": "main",
+      "resolvedCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "utilityOperation": {"namespace": "workflow", "name": "initialize-001", "uid": "utility-operation-uid"}
+    }
+  },
+  {
+    "contract": "implementation-plan/v1",
+    "document": {
+      "summary": "Implement division and its tests",
+      "changeRequestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repositoryRevisionDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "affectedPaths": [
+        {"path": "src/main.go", "action": "modify"},
+        {"path": "src/main_test.go", "action": "modify"}
+      ],
+      "implementationSteps": ["Add divide dispatch", "Handle a zero divisor"],
+      "testStrategy": ["Run go test ./..."],
+      "acceptanceMapping": [
+        {"criterionIndex": 1, "verification": "Exercise 84 divided by 2"},
+        {"criterionIndex": 2, "verification": "Exercise a zero right operand"}
+      ],
+      "risks": ["Floating point edge cases"],
+      "assumptions": []
+    }
+  },
+  {
+    "contract": "change-set/v1",
+    "document": {
+      "format": "unified-diff",
+      "summary": "Replace the operation implementation",
+      "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "changeRequestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "implementationPlanDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "patch": "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+new\n",
+      "patchDigest": "sha256:44e2217ae8ff6faf34756c71b7b805ac2176d1a8f74c2f4a4f88a8423972a4d4",
+      "files": ["main.go"],
+      "byteCount": 81,
+      "lineCounts": {"added": 1, "deleted": 1}
+    }
+  },
+  {
+    "contract": "prepared-candidate/v1",
+    "document": {
+      "repositoryRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "changeSetDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "branch": "sovereign/workflow-uid",
+      "candidateTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "changedPaths": ["main.go"],
+      "preparationCommandDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  {
+    "contract": "test-report/v1",
+    "document": {
+      "preparedCandidateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "candidateTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedTreeAfter": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "workspaceClean": true,
+      "commandDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "environmentImageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "outcome": "passed",
+      "exitCode": 0,
+      "durationMilliseconds": 1500,
+      "stdout": {
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "capturedBytes": 0,
+        "excerpt": "",
+        "truncated": false
+      },
+      "stderr": {
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "capturedBytes": 0,
+        "excerpt": "",
+        "truncated": false
+      },
+      "testCount": 12
+    }
+  },
+  {
+    "contract": "candidate-revision/v1",
+    "document": {
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "preparedCandidateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "testReportDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "changeSetDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "branch": "sovereign/workflow-uid",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "tree": "cccccccccccccccccccccccccccccccccccccccc",
+      "commitMessageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  {
+    "contract": "image-digest/v1",
+    "document": {
+      "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageRepository": "registry.example.test/calculator",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "candidateCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "candidateTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "builderImageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "buildCommandDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dockerfileDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "contextTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  {
+    "contract": "validation-result/v1",
+    "document": {
+      "validationRun": {"namespace": "workflow", "name": "validation-001", "uid": "validation-run-uid"},
+      "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageArtifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "candidateCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "candidateTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "imageRepository": "registry.example.test/calculator",
+      "imageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "infrastructureRevision": "infra-v1",
+      "provider": "argocd/kustomize",
+      "application": {"namespace": "argocd", "name": "validation-001", "uid": "application-uid"},
+      "observedSourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "observedImageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "syncStatus": "Synced",
+      "healthStatus": "Healthy",
+      "endpointChecks": [
+        {"name": "healthz", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+        {"name": "add", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+        {"name": "subtract", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+        {"name": "multiply", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+        {"name": "divide", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+        {"name": "division-by-zero", "outcome": "passed", "httpStatus": 422, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+      ],
+      "reviewInstructions": {
+        "namespace": "workflow",
+        "service": "calculator",
+        "localPort": 18080,
+        "healthPath": "/healthz",
+        "calculationPath": "/api/v1/calculate"
+      },
+      "startedAt": "2026-07-24T12:00:00Z",
+      "completedAt": "2026-07-24T12:01:00Z",
+      "outcome": "passed"
+    }
+  },
+  {
+    "contract": "merge-revision/v1",
+    "document": {
+      "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "validationResultDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "targetBranch": "main",
+      "previousTargetCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "candidateCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "candidateTree": "cccccccccccccccccccccccccccccccccccccccc",
+      "mergeCommit": "dddddddddddddddddddddddddddddddddddddddd",
+      "mergeTree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "approvalRequest": {"namespace": "workflow", "name": "approval-001", "uid": "approval-request-uid"},
+      "approvalDecision": {"namespace": "workflow", "name": "decision-001", "uid": "approval-decision-uid"},
+      "validationRun": {"namespace": "workflow", "name": "validation-001", "uid": "validation-run-uid"},
+      "remoteProof": {
+        "ref": "refs/heads/main",
+        "observedCommit": "dddddddddddddddddddddddddddddddddddddddd",
+        "verifiedAt": "2026-07-24T12:05:00Z"
+      }
+    }
+  }
+]

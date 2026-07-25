@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/repository-revision.schema.json",
+  "title": "repository-revision/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repositoryURL", "requestedRevision", "resolvedCommit", "utilityOperation"],
+  "properties": {
+    "repositoryURL": {"$ref": "common.schema.json#/$defs/RepositoryURL"},
+    "requestedRevision": {"type": "string", "minLength": 1, "maxLength": 255},
+    "resolvedCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "utilityOperation": {"$ref": "common.schema.json#/$defs/ObjectIdentity"}
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/candidate-revision.schema.json",
+  "title": "candidate-revision/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repositoryURL", "preparedCandidateDigest", "testReportDigest", "changeSetDigest", "sourceCommit", "branch", "commit", "tree", "commitMessageDigest"],
+  "properties": {
+    "repositoryURL": {"$ref": "common.schema.json#/$defs/RepositoryURL"},
+    "preparedCandidateDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "testReportDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "changeSetDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "sourceCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "branch": {"$ref": "common.schema.json#/$defs/SovereignBranch"},
+    "commit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "tree": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "commitMessageDigest": {"$ref": "common.schema.json#/$defs/Digest"}
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/validation-result.schema.json",
+  "title": "validation-result/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["validationRun", "candidateRevisionDigest", "imageArtifactDigest", "candidateCommit", "candidateTree", "imageRepository", "imageDigest", "infrastructureRevision", "provider", "application", "observedSourceRevision", "observedImageDigest", "syncStatus", "healthStatus", "endpointChecks", "reviewInstructions", "startedAt", "completedAt", "outcome"],
+  "properties": {
+    "validationRun": {"$ref": "common.schema.json#/$defs/ObjectIdentity"},
+    "candidateRevisionDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "imageArtifactDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "candidateCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "candidateTree": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "imageRepository": {"$ref": "common.schema.json#/$defs/OCIRepository"},
+    "imageDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "infrastructureRevision": {"type": "string", "minLength": 1, "maxLength": 255},
+    "provider": {"const": "argocd/kustomize"},
+    "application": {"$ref": "common.schema.json#/$defs/ObjectIdentity"},
+    "observedSourceRevision": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "observedImageDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "syncStatus": {"enum": ["Synced", "OutOfSync", "Unknown"]},
+    "healthStatus": {"enum": ["Healthy", "Progressing", "Degraded", "Missing", "Unknown"]},
+    "endpointChecks": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "outcome", "httpStatus", "responseDigest"],
+        "properties": {
+          "name": {"enum": ["healthz", "add", "subtract", "multiply", "divide", "division-by-zero"]},
+          "outcome": {"enum": ["passed", "failed"]},
+          "httpStatus": {"type": "integer", "minimum": 100, "maximum": 599},
+          "responseDigest": {"$ref": "common.schema.json#/$defs/Digest"}
+        }
+      }
+    },
+    "reviewInstructions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "service", "localPort", "healthPath", "calculationPath"],
+      "properties": {
+        "namespace": {"type": "string", "minLength": 1, "maxLength": 63},
+        "service": {"type": "string", "minLength": 1, "maxLength": 63},
+        "localPort": {"type": "integer", "minimum": 1024, "maximum": 65535},
+        "healthPath": {"const": "/healthz"},
+        "calculationPath": {"const": "/api/v1/calculate"}
+      }
+    },
+    "startedAt": {"$ref": "common.schema.json#/$defs/Timestamp"},
+    "completedAt": {"$ref": "common.schema.json#/$defs/Timestamp"},
+    "outcome": {"enum": ["passed", "failed"]}
+  }
+}
