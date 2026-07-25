@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/SovereignAI/internal/agentcontract"
+	"github.com/SovereignAI/internal/artifactcontract"
 )
 
 func main() {
@@ -68,9 +70,11 @@ func writeSuccess(input agentcontract.Input, resultPath string) error {
 	artifacts := make([]agentcontract.ArtifactOutput, 0, len(input.Outputs))
 	for _, output := range input.Outputs {
 		path := filepath.Join(input.StagingPath, artifactFileName(output))
-		body := fmt.Sprintf("# %s\n\nWorkflow: %s\nStep: %s\nAttempt: %d\nResponsibility: %s\n",
-			output.Name, input.WorkflowID, input.StepName, input.Attempt, input.Responsibility)
-		if err := os.WriteFile(path, []byte(body), 0o640); err != nil {
+		body, err := smokeArtifactContent(output.Name + "/" + output.Version)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, body, 0o640); err != nil {
 			return err
 		}
 		artifacts = append(artifacts, agentcontract.ArtifactOutput{
@@ -113,7 +117,27 @@ func writeInvalidResult(resultPath string) error {
 func artifactFileName(output agentcontract.OutputObligation) string {
 	name := strings.ToLower(output.Name + "-" + output.Version)
 	replacer := strings.NewReplacer("/", "-", "_", "-", " ", "-")
-	return strings.Trim(replacer.Replace(name), "-") + ".md"
+	return strings.Trim(replacer.Replace(name), "-") + ".json"
+}
+
+func smokeArtifactContent(contract string) ([]byte, error) {
+	switch contract {
+	case artifactcontract.ImplementationPlanContract:
+		return json.Marshal(artifactcontract.ImplementationPlan{
+			Summary:                  "Contract-validation smoke plan",
+			ChangeRequestDigest:      "sha256:" + strings.Repeat("a", 64),
+			RepositoryRevisionDigest: "sha256:" + strings.Repeat("b", 64),
+			SourceCommit:             strings.Repeat("a", 40),
+			AffectedPaths:            []artifactcontract.AffectedPath{{Path: "README.md", Action: "modify"}},
+			ImplementationSteps:      []string{"Exercise typed Artifact collection"},
+			TestStrategy:             []string{"Observe accepted Artifact status"},
+			AcceptanceMapping:        []artifactcontract.AcceptanceMapping{{CriterionIndex: 1, Verification: "Collector and controller accept the exact bytes"}},
+			Risks:                    []string{},
+			Assumptions:              []string{},
+		})
+	default:
+		return nil, fmt.Errorf("smoke agent has no fixture for registered contract %q", contract)
+	}
 }
 
 func env(name, fallback string) string {
