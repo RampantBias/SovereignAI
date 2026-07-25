@@ -8,8 +8,6 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func NewCreateCmd(client pb.OrchestratorServiceClient) *cobra.Command {
@@ -55,45 +53,46 @@ func newCreateProjectCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 }
 
 var (
-	projectName  string
-	manifestPath string
-	serverAddr   string
+	projectName   string
+	manifestPath  string
+	changeRequest string
 )
 
 func newCreateWorkflowCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "workflow",
 		Short:   "Initialize a new Sovereign Workflow for a Project",
-		Example: `sovctl create workflow --project-name alpha -f workflow-definition.yaml`,
+		Example: `sovctl create workflow --project-name alpha -f workflow-definition.yaml -c ./demo/change-requests/calculator-divide.v1.json`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Try to read file
-			fileData, err := os.ReadFile(manifestPath)
+			// Try to read workflow manifest file
+			manifestFileData, err := os.ReadFile(manifestPath)
 			if err != nil {
 				return fmt.Errorf("failed to process local workflow definition file: %w", err)
 			}
 
+			// Try to read change request file
+			changeRequestFileData, err := os.ReadFile(changeRequest)
+			if err != nil {
+				return fmt.Errorf("failed to process local change-request file: %w", err)
+			}
+
 			// Verify the payload is not empty
-			if len(fileData) == 0 {
+			if len(manifestFileData) == 0 {
 				return fmt.Errorf("provided manifest file %q is empty", manifestPath)
+			}
+			if len(changeRequestFileData) == 0 {
+				return fmt.Errorf("provided change request file %q is empty", manifestPath)
 			}
 
 			// Add control plane transit timeout
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			// TODO: Swap with OIDC / TLS per-rpc [later]
-			conn, err := grpc.NewClient(serverAddr,
-				grpc.WithTransportCredentials(insecure.NewCredentials()),
-			)
-			if err != nil {
-				return fmt.Errorf("failed to lock link to orchestrator API server: %w", err)
-			}
-			defer conn.Close()
-
 			response, err := client.CreateWorkflow(ctx, &pb.CreateWorkflowRequest{
-				ProjectName:     projectName,
-				ManifestContent: string(fileData),
+				ProjectName:          projectName,
+				ManifestContent:      string(manifestFileData),
+				ChangeRequestContent: changeRequestFileData,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to submit workflow: %w", err)
@@ -107,10 +106,10 @@ func newCreateWorkflowCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 	// Args
 	cmd.Flags().StringVarP(&projectName, "project", "p", "", "Target allocation workspace name (Required)")
 	cmd.Flags().StringVarP(&manifestPath, "file", "f", "", "Local filepath containing the declarative workflow specification (Required)")
+	cmd.Flags().StringVarP(&changeRequest, "change-request", "c", "", "Change request containing the workflow task information (Required)")
 	_ = cmd.MarkFlagRequired("project")
 	_ = cmd.MarkFlagRequired("file")
-
-	cmd.Flags().StringVar(&serverAddr, "server", "127.0.0.1:8090", "Target address endpoint of the local Orchestrator")
+	_ = cmd.MarkFlagRequired("change-request")
 
 	return cmd
 }
