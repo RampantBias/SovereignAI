@@ -2,9 +2,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  # Add another child only after that directory contains a renderable
-  # kustomization and its referenced manifests.
+  - ../../config/crd/bases
+  - ../base
   - postgresql
   - registry
   - argocd
-  - prometheus
+  - nvidia-device-plugin
+  - model-cache
+
+# Prometheus is intentionally a standalone optional package:
+#   kubectl apply -k deploy/demo/prometheus

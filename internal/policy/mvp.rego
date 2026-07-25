@@ -22,6 +22,7 @@ decision := {"allowed": true, "reasons": [], "evict": []} if {
 utility_non_privileged := {
   "repository.initialize",
   "git.createBranch",
+  "candidate.prepare",
   "test.run",
 }
 

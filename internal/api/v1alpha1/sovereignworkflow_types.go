@@ -48,7 +48,7 @@ type AgentStepSpec struct {
 // an arbitrary process command. The controller derives the idempotency key and
 // resolves Project-owned commands and credentials before scheduling a Job.
 type UtilityOperationRequest struct {
-	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;git.commit;git.push;git.merge;test.run;build.image
+	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;candidate.prepare;git.commit;git.push;git.merge;test.run;build.image
 	Name       string            `json:"name"`
 	Parameters map[string]string `json:"parameters,omitempty"`
 }

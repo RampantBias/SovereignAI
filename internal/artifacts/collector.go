@@ -1,8 +1,6 @@
 package artifacts
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +9,7 @@ import (
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 )
 
 type Collected struct {
@@ -20,28 +19,48 @@ type Collected struct {
 func Collect(stagingRoot, artifactRoot, workflow string, producer v1alpha1.TypedLocalReference, sourceRevision string, outputs []agentcontract.ArtifactOutput) ([]Collected, error) {
 	collected := make([]Collected, 0, len(outputs))
 	for _, output := range outputs {
+		if output.MediaType != "" && output.MediaType != "application/json" {
+			return nil, fmt.Errorf("artifact contract %q requires application/json, got %q", output.Contract, output.MediaType)
+		}
+		contract, err := contractReference(output.Contract)
+		if err != nil {
+			return nil, err
+		}
 		source, err := containedPath(stagingRoot, output.Path)
 		if err != nil {
 			return nil, err
 		}
-		info, err := os.Stat(source)
+		info, err := os.Lstat(source)
 		if err != nil {
 			return nil, fmt.Errorf("inspect artifact %q: %w", output.Path, err)
 		}
 		if !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("artifact %q must be a regular file", output.Path)
 		}
-		digest, err := hashFile(source)
-		if err != nil {
-			return nil, err
+		if info.Size() > artifactcontract.MaxArtifactBytes {
+			return nil, fmt.Errorf("artifact %q exceeds %d-byte limit", output.Path, artifactcontract.MaxArtifactBytes)
 		}
+		content, err := os.ReadFile(source)
+		if err != nil {
+			return nil, fmt.Errorf("read artifact %q: %w", output.Path, err)
+		}
+		if err := artifactcontract.DefaultRegistry().Validate(contract.Name, contract.Version, content); err != nil {
+			return nil, fmt.Errorf("validate artifact %q: %w", output.Path, err)
+		}
+		digest := strings.TrimPrefix(artifactcontract.DigestBytes(content), "sha256:")
 		destination := filepath.Join(artifactRoot, digest)
 		if err := copyIfAbsent(source, destination); err != nil {
 			return nil, err
 		}
-		contract, err := contractReference(output.Contract)
+		storedContent, err := os.ReadFile(destination)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read stored artifact %q: %w", destination, err)
+		}
+		if storedDigest := strings.TrimPrefix(artifactcontract.DigestBytes(storedContent), "sha256:"); storedDigest != digest {
+			return nil, fmt.Errorf("stored artifact %q digest mismatch: expected sha256:%s, got sha256:%s", destination, digest, storedDigest)
+		}
+		if err := artifactcontract.DefaultRegistry().Validate(contract.Name, contract.Version, storedContent); err != nil {
+			return nil, fmt.Errorf("validate stored artifact %q: %w", destination, err)
 		}
 		collected = append(collected, Collected{Spec: v1alpha1.ArtifactSpec{
 			WorkflowRef:    workflow,
@@ -57,8 +76,8 @@ func Collect(stagingRoot, artifactRoot, workflow string, producer v1alpha1.Typed
 
 func contractReference(contract string) (v1alpha1.ContractReference, error) {
 	name, version, ok := strings.Cut(contract, "/")
-	if !ok || name == "" || version == "" {
-		return v1alpha1.ContractReference{}, fmt.Errorf("artifact contract %q must use name/version form", contract)
+	if !ok || name == "" || version == "" || strings.Contains(version, "/") {
+		return v1alpha1.ContractReference{}, fmt.Errorf("artifact contract %q must use exact name/version form", contract)
 	}
 	return v1alpha1.ContractReference{Name: name, Version: version}, nil
 }
@@ -77,19 +96,6 @@ func containedPath(root, candidate string) (string, error) {
 		return "", fmt.Errorf("artifact path %q escapes staging root", candidate)
 	}
 	return candidatePath, nil
-}
-
-func hashFile(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open artifact: %w", err)
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", fmt.Errorf("hash artifact: %w", err)
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func copyIfAbsent(source, destination string) error {

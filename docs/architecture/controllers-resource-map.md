@@ -32,6 +32,7 @@
     subgraph Workloads and Services
         direction TB
         agentPod[Agent Pod]
+        utilityOperation[Utility Operation]
         inferencePod[Inference Pod]
         collectorJob[Collector Job]
         workspacePvc[Workspace PVC]
@@ -42,17 +43,19 @@
         workflowController -->|reconciles| sovereignWorkflow
         workflowController -->|creates/manages| stepAttempt
 
-        sovereignWorkflow -->|owns| stepAttempt
-        sovereignWorkflow -->|owns| workspacePvc
+        sovereignWorkflow -->|owns/creates| stepAttempt
+        sovereignWorkflow -->|owns/creates| workspacePvc
         sovereignWorkflow -->|references| stepAttempt
 
-        stepAttempt -->|owns| agentPod
+        stepAttempt -->|owns/creates| agentPod
+        stepAttempt -->|owns/creates| utilityOperation
         stepAttempt -->|owns| collectorJob
 
         inferenceLeaseController -->|owns| inferenceLease
         inferenceLeaseController -->|references| inferencePod
 
         inferenceEndpointController -->|owns| inferenceEndpoint
+        inferenceEndpointController -->|references| inferencePod
     end
 
 ```

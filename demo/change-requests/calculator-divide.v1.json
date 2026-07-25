@@ -6,6 +6,6 @@
     "A divide request with a zero right operand returns HTTP 422 with the error code division_by_zero.",
     "Existing health, add, subtract, multiply, unsupported-operation, and malformed-request behavior remains passing."
   ],
-  "repositoryURL": " https://github.com/RampantBias/calculator-demo.git",
+  "repositoryURL": "https://github.com/RampantBias/calculator-demo.git",
   "sourceCommit": "478daad19967dd08f13de44b6c7c8becb17d8c1e"
 }

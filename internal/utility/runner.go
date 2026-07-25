@@ -10,6 +10,7 @@ import (
 const (
 	OperationRepositoryInitialize = "repository.initialize"
 	OperationGitCreateBranch      = "git.createBranch"
+	OperationCandidatePrepare     = "candidate.prepare"
 	OperationGitCommit            = "git.commit"
 	OperationGitPush              = "git.push"
 	OperationGitMerge             = "git.merge"
