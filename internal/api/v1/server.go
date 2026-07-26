@@ -285,28 +285,52 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 
 	// Create namespace
 	if err := s.Client.Create(ctx, ns); err != nil {
-		// Duplicate namespace
-		if !apierrors.IsAlreadyExists(err) {
-			if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateFailed", subject, "create", targetNamespace, "failed",
-				"NamespaceCreateFailed", workflowID, nil, map[string]string{"error": err.Error()}); auditErr != nil {
-				return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
-			}
-			return nil, status.Errorf(codes.Internal, "failed to seed workspace runtime context: %v", err)
-		}
-
-		// Failed to create namespace
-		if auditErr := s.appendAPIEvent(ctx, "NamespaceCreated", subject, "create", targetNamespace, "alreadyExists", "",
-			workflowID, map[string]string{"namespace": targetNamespace}, nil); auditErr != nil {
+		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateFailed", subject, "create", targetNamespace, "failed",
+			"NamespaceCreateFailed", workflowID, nil, map[string]string{"error": err.Error()}); auditErr != nil {
 			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 		}
-	} else {
-		if auditErr := s.appendAPIEvent(ctx, "NamespaceCreated", subject, "create", targetNamespace, "created", "",
-			workflowID, map[string]string{"namespace": targetNamespace}, nil); auditErr != nil {
-			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
-		}
+		return nil, status.Errorf(codes.Internal, "failed to seed workspace runtime context: %v", err)
+	}
+	if auditErr := s.appendAPIEvent(ctx, "NamespaceCreated", subject, "create", targetNamespace, "created", "",
+		workflowID, map[string]string{"namespace": targetNamespace}, nil); auditErr != nil {
+		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 	}
 
-	// Must override for now (TODO: Since workflow names must be unique, I need to optionalize it from entry)
+	// Stage the exact admitted bytes in an immutable, namespace-local ingress
+	// object. The workflow controller will copy this into workspace before a
+	// new stepAttempt. This avoids separate handling for the workspace provisioning.
+	immutable := true
+	const bootstrapKey = "change-request.json"
+	changeRequestCm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      bootstrapIngressName(workflowID),
+			Namespace: targetNamespace,
+			Labels: map[string]string{
+				"sovereign-ai.io/workflow-id": workflowID,
+				"sovereign-ai.io/purpose":     "bootstrap-input",
+			},
+		},
+		Immutable:  &immutable,
+		BinaryData: map[string][]byte{bootstrapKey: append([]byte(nil), req.ChangeRequestContent...)},
+	}
+	if err := s.Client.Create(ctx, changeRequestCm); err != nil {
+		auditErr := s.appendAPIEvent(ctx, "WorkflowCreateFailed", subject, "create", changeRequestCm.Name, "failed",
+			"BootstrapConfigMapCreateFailed", workflowID, nil, map[string]string{"error": err.Error()})
+		if rollbackErr := s.rollbackWorkflowNamespace(ctx, ns, subject, workflowID, "BootstrapConfigMapCreateFailed"); rollbackErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to create bootstrap input: %v; rollback failed: %v", err, rollbackErr)
+		}
+		if auditErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to create bootstrap input: %v; failed to record audit event: %v", err, auditErr)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to create bootstrap input: %v", err)
+	}
+	changeRequestDigest := artifactcontract.DigestBytes(req.ChangeRequestContent)
+	if auditErr := s.appendAPIEvent(ctx, "WorkflowBootstrapInputStaged", subject, "create", changeRequestCm.Name, "created", "",
+		workflowID, map[string]string{"configMap": changeRequestCm.Name, "digest": changeRequestDigest}, nil); auditErr != nil {
+		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
+	}
+
+	// Must override for now
 	workflowCRD.ObjectMeta.Name = workflowID
 	workflowCRD.ObjectMeta.Namespace = targetNamespace
 	if workflowCRD.ObjectMeta.Labels == nil {
@@ -317,25 +341,28 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 	workflowCRD.Spec.Project.Name = projectName
 	workflowCRD.Spec.WorkflowID = workflowID
 	workflowCRD.Spec.RequesterSubject = requester.Subject
+	workflowCRD.Spec.Bootstrap = v1alpha1.WorkflowBootstrapSpec{
+		SourceRef:      v1alpha1.UIDReference{Name: changeRequestCm.Name, UID: changeRequestCm.UID},
+		Key:            bootstrapKey,
+		ExpectedDigest: changeRequestDigest,
+		Contract:       v1alpha1.ContractReference{Name: "change-request", Version: "v1"},
+		ArtifactName:   "change-request",
+	}
 
 	// Create Workflow
 	if err := s.Client.Create(ctx, &workflowCRD); err != nil {
-		rollbackOutcome := "requested"
-		if deleteErr := s.Client.Delete(ctx, ns); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-			rollbackOutcome = "failed"
+		auditErr := s.appendAPIEvent(ctx, "WorkflowCreateFailed", subject, "create", workflowID, "failed",
+			"WorkflowCreateFailed", workflowID, nil, map[string]string{"error": err.Error()})
+		if rollbackErr := s.rollbackWorkflowNamespace(ctx, ns, subject, workflowID, "WorkflowCreateFailed"); rollbackErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to create workflow: %v; rollback failed: %v", err, rollbackErr)
 		}
-		if auditErr := s.appendAPIEvent(ctx, "NamespaceRollbackRequested", subject, "delete", targetNamespace,
-			rollbackOutcome, "WorkflowCreateFailed", workflowID, map[string]string{"namespace": targetNamespace}, nil); auditErr != nil {
-			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
-		}
-		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateFailed", subject, "create", workflowID, "failed",
-			"WorkflowCreateFailed", workflowID, nil, map[string]string{"error": err.Error()}); auditErr != nil {
-			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
+		if auditErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to create workflow: %v; failed to record audit event: %v", err, auditErr)
 		}
 		return nil, status.Errorf(codes.Internal, "failed to bind custom resource spec to target substrate: %v", err)
 	}
-	if auditErr := s.appendAPIEvent(ctx, "WorkflowAdmitted", subject, "create", workflowID, "created", "",
-		workflowID, map[string]string{"namespace": targetNamespace}, nil); auditErr != nil {
+	if auditErr := s.appendAPIEvent(ctx, "WorkflowBootstrapStaged", subject, "create", workflowID, "created", "",
+		workflowID, map[string]string{"namespace": targetNamespace, "configMap": changeRequestCm.Name, "digest": changeRequestDigest}, nil); auditErr != nil {
 		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 	}
 
@@ -354,6 +381,34 @@ func generateRandomSuffix() string {
 		b[i] = charset[seededRand.Intn(len(charset))]
 	}
 	return string(b)
+}
+
+func bootstrapIngressName(workflowID string) string {
+	const suffix = "-bootstrap-input"
+	maximumPrefix := 63 - len(suffix)
+	prefix := strings.Trim(workflowID, "-")
+	if len(prefix) > maximumPrefix {
+		prefix = strings.TrimRight(prefix[:maximumPrefix], "-")
+	}
+	return prefix + suffix
+}
+
+func (s *Server) rollbackWorkflowNamespace(ctx context.Context, namespace *corev1.Namespace, subject audit.Subject, workflowID, reason string) error {
+	deleteErr := s.Client.Delete(ctx, namespace)
+	outcome := "requested"
+	data := map[string]string{}
+	if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+		outcome = "failed"
+		data["error"] = deleteErr.Error()
+	}
+	if auditErr := s.appendAPIEvent(ctx, "NamespaceRollbackRequested", subject, "delete", namespace.Name,
+		outcome, reason, workflowID, map[string]string{"namespace": namespace.Name}, data); auditErr != nil {
+		return auditErr
+	}
+	if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+		return deleteErr
+	}
+	return nil
 }
 
 // Helper method for building API events consistently within the API server

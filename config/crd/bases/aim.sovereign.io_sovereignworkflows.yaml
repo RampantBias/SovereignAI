@@ -40,6 +40,51 @@ spec:
             description: SovereignWorkflowSpec defines the desired state (The user's
               intent)
             properties:
+              bootstrap:
+                description: |-
+                  WorkflowBootstrapSpec identifies the immutable ingress object whose exact
+                  bytes must become the first accepted workflow Artifact.
+                properties:
+                  artifactName:
+                    type: string
+                  contract:
+                    properties:
+                      name:
+                        type: string
+                      version:
+                        type: string
+                    required:
+                    - name
+                    - version
+                    type: object
+                  expectedDigest:
+                    type: string
+                  key:
+                    type: string
+                  sourceRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                required:
+                - artifactName
+                - contract
+                - expectedDigest
+                - key
+                - sourceRef
+                type: object
+                x-kubernetes-validations:
+                - message: bootstrap is immutable
+                  rule: self == oldSelf
               classification:
                 type: string
               definitionRevision:
@@ -236,6 +281,7 @@ spec:
               workflowId:
                 type: string
             required:
+            - bootstrap
             - projectRef
             - requestedVolumeSize
             - requesterSubject
@@ -249,6 +295,27 @@ spec:
                 type: string
               activeStep:
                 type: string
+              bootstrapArtifactRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              bootstrapJobRef:
+                type: string
+              bootstrapWriterEpoch:
+                format: int32
+                type: integer
+              bootstrapWriterReleased:
+                type: boolean
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

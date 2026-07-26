@@ -10,6 +10,7 @@ IMAGES=(
   sovereign-smoke-agent:dev
   sovereign-mcp-server:dev
   sovereign-artifact-collector:dev
+  sovereign-artifact-bootstrap:dev
 )
 
 if ! command -v docker >/dev/null 2>&1; then

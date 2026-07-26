@@ -21,6 +21,7 @@ images:
 	docker build --target smoke-agent -t sovereign-smoke-agent:dev .
 	docker build --target mcp-server -t sovereign-mcp-server:dev .
 	docker build --target artifact-collector -t sovereign-artifact-collector:dev .
+	docker build --target artifact-bootstrap -t sovereign-artifact-bootstrap:dev .
 
 verify: test
 	git diff --exit-code

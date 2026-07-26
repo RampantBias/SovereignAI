@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,8 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -62,9 +65,9 @@ func TestCreateWorkflowCreatesIsolationNamespace(t *testing.T) {
 	scheme := testScheme(t)
 	project := &v1alpha1.SovereignProject{}
 	project.Name = "platform"
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()
+	kubeClient := &assignUIDClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()}
 	recorder := &audit.MemoryRecorder{}
-	server := NewServer(client, recorder)
+	server := NewServer(kubeClient, recorder)
 	requestContext := contractMaintainerContext("frank")
 	manifest := `apiVersion: aim.sovereign.io/v1alpha1
 kind: SovereignWorkflow
@@ -87,29 +90,74 @@ spec:
 	}
 	var workflow v1alpha1.SovereignWorkflow
 	namespace := "platform-" + response.WorkflowId
-	if err := client.Get(context.Background(), objectKey(namespace, response.WorkflowId), &workflow); err != nil {
+	if err := kubeClient.Get(context.Background(), objectKey(namespace, response.WorkflowId), &workflow); err != nil {
 		t.Fatal(err)
 	}
 	if workflow.Spec.Project.Name != "platform" || workflow.Spec.WorkflowID != response.WorkflowId || workflow.Spec.RequesterSubject != "frank" {
 		t.Fatalf("unexpected workflow identity: %#v", workflow.Spec)
 	}
 	var ns corev1.Namespace
-	if err := client.Get(context.Background(), objectKey("", namespace), &ns); err != nil {
+	if err := kubeClient.Get(context.Background(), objectKey("", namespace), &ns); err != nil {
 		t.Fatal(err)
 	}
 	if ns.Labels["sovereign-ai.io/workflow-id"] != response.WorkflowId {
 		t.Fatalf("namespace labels = %#v", ns.Labels)
 	}
-	for _, eventType := range []string{"WorkflowSubmitted", "NamespaceCreated", "WorkflowAdmitted"} {
+	var source corev1.ConfigMap
+	if err := kubeClient.Get(context.Background(), objectKey(namespace, bootstrapIngressName(response.WorkflowId)), &source); err != nil {
+		t.Fatal(err)
+	}
+	wantContent := validWorkflowChangeRequest(t)
+	if source.Immutable == nil || !*source.Immutable {
+		t.Fatal("bootstrap ConfigMap is not immutable")
+	}
+	if got := source.BinaryData["change-request.json"]; string(got) != string(wantContent) {
+		t.Fatalf("bootstrap bytes = %q, want exact request bytes %q", got, wantContent)
+	}
+	wantDigest := artifactcontract.DigestBytes(wantContent)
+	if workflow.Spec.Bootstrap.SourceRef.Name != source.Name ||
+		workflow.Spec.Bootstrap.SourceRef.UID != source.UID ||
+		workflow.Spec.Bootstrap.Key != "change-request.json" ||
+		workflow.Spec.Bootstrap.ExpectedDigest != wantDigest ||
+		workflow.Spec.Bootstrap.Contract != (v1alpha1.ContractReference{Name: "change-request", Version: "v1"}) ||
+		workflow.Spec.Bootstrap.ArtifactName != "change-request" {
+		t.Fatalf("unexpected bootstrap identity: %#v", workflow.Spec.Bootstrap)
+	}
+	for _, eventType := range []string{"WorkflowSubmitted", "NamespaceCreated", "WorkflowBootstrapInputStaged", "WorkflowBootstrapStaged"} {
 		if !recorder.Has(eventType) {
 			t.Fatalf("expected %s audit event, got %#v", eventType, recorder.AllEvents())
 		}
+	}
+	if recorder.Has("WorkflowAdmitted") {
+		t.Fatalf("API admitted workflow before bootstrap Artifact acceptance: %#v", recorder.AllEvents())
 	}
 	for _, event := range recorder.AllEvents() {
 		if event.Type == "WorkflowSubmitted" && (event.Requester == nil || event.Requester.ID != "frank") {
 			t.Fatalf("workflow submission requester was not recorded: %#v", event)
 		}
 	}
+}
+
+type assignUIDClient struct {
+	client.Client
+}
+
+func (c *assignUIDClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if object.GetUID() == "" {
+		object.SetUID(types.UID("test-" + object.GetName()))
+	}
+	return c.Client.Create(ctx, object, options...)
+}
+
+type failConfigMapCreateClient struct {
+	client.Client
+}
+
+func (c *failConfigMapCreateClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if _, ok := object.(*corev1.ConfigMap); ok {
+		return errors.New("injected ConfigMap creation failure")
+	}
+	return c.Client.Create(ctx, object, options...)
 }
 
 func TestCreateWorkflowRequiresContractMaintainerBeforeSideEffects(t *testing.T) {
@@ -176,6 +224,34 @@ func TestCreateWorkflowRejectsInvalidChangeRequestBeforeSideEffects(t *testing.T
 	}
 	if !recorder.Has("WorkflowCreateRejected") {
 		t.Fatalf("invalid change request was not audited: %#v", recorder.AllEvents())
+	}
+}
+
+func TestCreateWorkflowRollsBackNamespaceWhenBootstrapStagingFails(t *testing.T) {
+	scheme := testScheme(t)
+	project := &v1alpha1.SovereignProject{}
+	project.Name = "platform"
+	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()
+	kubeClient := &failConfigMapCreateClient{Client: baseClient}
+	recorder := audit.NewMemoryRecorder()
+	server := NewServer(kubeClient, recorder)
+
+	_, err := server.CreateWorkflow(contractMaintainerContext("frank"), &pb.CreateWorkflowRequest{
+		ProjectName: "platform", ManifestContent: validWorkflowManifest(),
+		ChangeRequestContent: validWorkflowChangeRequest(t),
+	})
+	if grpcstatus.Code(err) != codes.Internal {
+		t.Fatalf("CreateWorkflow() code = %s, want Internal: %v", grpcstatus.Code(err), err)
+	}
+	var namespaces corev1.NamespaceList
+	if err := baseClient.List(context.Background(), &namespaces); err != nil {
+		t.Fatal(err)
+	}
+	if len(namespaces.Items) != 0 {
+		t.Fatalf("bootstrap staging failure retained namespaces: %#v", namespaces.Items)
+	}
+	if !recorder.Has("WorkflowCreateFailed") || !recorder.Has("NamespaceRollbackRequested") {
+		t.Fatalf("bootstrap rollback was not audited: %#v", recorder.AllEvents())
 	}
 }
 

@@ -95,9 +95,11 @@ func main() {
 			Client: mgr.GetClient(),
 			Audit:  recorder},
 		&controllers.WorkflowReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
-			Audit:  recorder, StorageClass: storageClass},
+			Client:         mgr.GetClient(),
+			Scheme:         mgr.GetScheme(),
+			Audit:          recorder,
+			StorageClass:   storageClass,
+			BootstrapImage: env("SOVEREIGN_BOOTSTRAP_IMAGE", "sovereign-artifact-bootstrap:dev")},
 		&controllers.StepAttemptReconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),

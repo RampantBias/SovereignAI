@@ -9,6 +9,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/domain/state"
+	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,10 +32,11 @@ const (
 
 type WorkflowReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	Audit        audit.Recorder
-	Now          func() time.Time
-	StorageClass string
+	Scheme         *runtime.Scheme
+	Audit          audit.Recorder
+	Now            func() time.Time
+	StorageClass   string
+	BootstrapImage string
 }
 
 func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -42,6 +44,8 @@ func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1alpha1.SovereignWorkflow{}).
 		Owns(&v1alpha1.StepAttempt{}).
 		Owns(&coordinationv1.Lease{}).
+		Owns(&batchv1.Job{}).
+		Owns(&v1alpha1.Artifact{}).
 		Complete(r)
 }
 
@@ -96,6 +100,13 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	}
 	if workflow.Status.WorkspaceWriterLeaseRef == "" {
 		return ctrl.Result{}, r.ensureWorkspaceWriterLease(ctx, &workflow)
+	}
+	bootstrapReady, bootstrapResult, err := r.reconcileBootstrap(ctx, &workflow)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !bootstrapReady {
+		return bootstrapResult, nil
 	}
 
 	// Check if workflow is being retried
