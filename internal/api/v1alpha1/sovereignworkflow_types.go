@@ -72,8 +72,11 @@ type ValidationStepSpec struct {
 
 // SovereignWorkflowSpec defines the desired state (The user's intent)
 type SovereignWorkflowSpec struct {
-	Project             UIDReference `json:"projectRef"`
-	WorkflowID          string       `json:"workflowId"`
+	Project    UIDReference `json:"projectRef"`
+	WorkflowID string       `json:"workflowId"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="requesterSubject is immutable"
+	RequesterSubject    string       `json:"requesterSubject"`
 	DefinitionRevision  string       `json:"definitionRevision,omitempty"`
 	Classification      string       `json:"classification,omitempty"`
 	Steps               []StepConfig `json:"steps"`

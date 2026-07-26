@@ -2,12 +2,18 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/SovereignAI/internal/api/requestidentity"
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/audit"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -59,11 +65,13 @@ func TestCreateWorkflowCreatesIsolationNamespace(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()
 	recorder := &audit.MemoryRecorder{}
 	server := NewServer(client, recorder)
+	requestContext := contractMaintainerContext("frank")
 	manifest := `apiVersion: aim.sovereign.io/v1alpha1
 kind: SovereignWorkflow
 metadata:
   name: change
 spec:
+  requesterSubject: forged-requester
   requestedVolumeSize: 1Gi
   steps:
   - name: architect
@@ -71,7 +79,9 @@ spec:
     responsibility: plan
     order: 1
 `
-	response, err := server.CreateWorkflow(context.Background(), &pb.CreateWorkflowRequest{ProjectName: "platform", ManifestContent: manifest})
+	response, err := server.CreateWorkflow(requestContext, &pb.CreateWorkflowRequest{
+		ProjectName: "platform", ManifestContent: manifest, ChangeRequestContent: validWorkflowChangeRequest(t),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +90,7 @@ spec:
 	if err := client.Get(context.Background(), objectKey(namespace, response.WorkflowId), &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if workflow.Spec.Project.Name != "platform" || workflow.Spec.WorkflowID != response.WorkflowId {
+	if workflow.Spec.Project.Name != "platform" || workflow.Spec.WorkflowID != response.WorkflowId || workflow.Spec.RequesterSubject != "frank" {
 		t.Fatalf("unexpected workflow identity: %#v", workflow.Spec)
 	}
 	var ns corev1.Namespace
@@ -94,6 +104,78 @@ spec:
 		if !recorder.Has(eventType) {
 			t.Fatalf("expected %s audit event, got %#v", eventType, recorder.AllEvents())
 		}
+	}
+	for _, event := range recorder.AllEvents() {
+		if event.Type == "WorkflowSubmitted" && (event.Requester == nil || event.Requester.ID != "frank") {
+			t.Fatalf("workflow submission requester was not recorded: %#v", event)
+		}
+	}
+}
+
+func TestCreateWorkflowRequiresContractMaintainerBeforeSideEffects(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		ctx  context.Context
+		code codes.Code
+	}{
+		{name: "missing identity", ctx: context.Background(), code: codes.Unauthenticated},
+		{
+			name: "wrong group",
+			ctx: requestidentity.WithIdentity(context.Background(), requestidentity.Identity{
+				Subject: "developer", Groups: []string{"developers"},
+			}),
+			code: codes.PermissionDenied,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := testScheme(t)
+			project := &v1alpha1.SovereignProject{}
+			project.Name = "platform"
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()
+			server := NewServer(kubeClient, audit.NewMemoryRecorder())
+
+			_, err := server.CreateWorkflow(test.ctx, &pb.CreateWorkflowRequest{
+				ProjectName: "platform", ManifestContent: validWorkflowManifest(),
+				ChangeRequestContent: validWorkflowChangeRequest(t),
+			})
+			if grpcstatus.Code(err) != test.code {
+				t.Fatalf("CreateWorkflow() code = %s, want %s: %v", grpcstatus.Code(err), test.code, err)
+			}
+			var namespaces corev1.NamespaceList
+			if err := kubeClient.List(context.Background(), &namespaces); err != nil {
+				t.Fatal(err)
+			}
+			if len(namespaces.Items) != 0 {
+				t.Fatalf("authorization failure created namespaces: %#v", namespaces.Items)
+			}
+		})
+	}
+}
+
+func TestCreateWorkflowRejectsInvalidChangeRequestBeforeSideEffects(t *testing.T) {
+	scheme := testScheme(t)
+	project := &v1alpha1.SovereignProject{}
+	project.Name = "platform"
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()
+	recorder := audit.NewMemoryRecorder()
+	server := NewServer(kubeClient, recorder)
+
+	_, err := server.CreateWorkflow(contractMaintainerContext("frank"), &pb.CreateWorkflowRequest{
+		ProjectName: "platform", ManifestContent: validWorkflowManifest(),
+		ChangeRequestContent: []byte(`{"unexpected":true}`),
+	})
+	if grpcstatus.Code(err) != codes.InvalidArgument {
+		t.Fatalf("CreateWorkflow() code = %s, want InvalidArgument: %v", grpcstatus.Code(err), err)
+	}
+	var namespaces corev1.NamespaceList
+	if err := kubeClient.List(context.Background(), &namespaces); err != nil {
+		t.Fatal(err)
+	}
+	if len(namespaces.Items) != 0 {
+		t.Fatalf("invalid change request created namespaces: %#v", namespaces.Items)
+	}
+	if !recorder.Has("WorkflowCreateRejected") {
+		t.Fatalf("invalid change request was not audited: %#v", recorder.AllEvents())
 	}
 }
 
@@ -179,4 +261,40 @@ func objectKey(namespace, name string) clientObjectKey {
 type clientObjectKey = struct {
 	Namespace string
 	Name      string
+}
+
+func contractMaintainerContext(subject string) context.Context {
+	return requestidentity.WithIdentity(context.Background(), requestidentity.Identity{
+		Subject: subject,
+		Groups:  []string{workflowSubmitterGroup},
+	})
+}
+
+func validWorkflowManifest() string {
+	return `apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: change
+spec:
+  requestedVolumeSize: 1Gi
+  steps:
+  - name: architect
+    kind: Agent
+    responsibility: plan
+    order: 1
+`
+}
+
+func validWorkflowChangeRequest(t *testing.T) []byte {
+	t.Helper()
+	content, err := json.Marshal(artifactcontract.ChangeRequest{
+		Summary: "Add divide support", Description: "Implement calculator division.",
+		AcceptanceCriteria: []string{"84 / 2 returns 42"},
+		RepositoryURL:      "https://git.example.test/calculator.git",
+		SourceCommit:       strings.Repeat("a", 40),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return content
 }

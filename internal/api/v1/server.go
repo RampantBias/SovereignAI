@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SovereignAI/internal/api/requestidentity"
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/audit"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -175,10 +177,41 @@ func (s *Server) GetWorkflowTimeline(ctx context.Context, req *pb.GetWorkflowTim
 }
 
 func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowRequest) (*pb.CreateWorkflowResponse, error) {
-	// Validate workflow request via unmarshal
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "workflow request is required")
+	}
+
+	// Clean given name
+	projectName := normalizeName(strings.TrimSpace(req.ProjectName))
+	if projectName == "" {
+		return nil, status.Error(codes.InvalidArgument, "project name must not be blank")
+	}
+
+	// Get requestor identity
+	requester, authErr := requireWorkflowRequester(ctx)
+	if authErr != nil {
+		reason := "RequesterUnauthenticated"
+		if status.Code(authErr) == codes.PermissionDenied {
+			reason = "RequesterUnauthorized"
+		}
+		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
+			"submit", "", "rejected", reason, projectName, nil, nil); auditErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
+		}
+		return nil, authErr
+	}
+
+	// Verify there is manifest & change-request content
+	if len(req.ManifestContent) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "empty workflow manifest given")
+	}
+	if len(req.ChangeRequestContent) == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "empty change request given")
+	}
+
+	// Parse workflow request via unmarshal
 	var workflowCRD v1alpha1.SovereignWorkflow
 	if err := yaml.Unmarshal([]byte(req.ManifestContent), &workflowCRD); err != nil {
-		projectName := normalizeName(req.ProjectName)
 		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName}, "submit",
 			"", "rejected", "InvalidManifest", projectName, nil, map[string]string{"error": err.Error()}); auditErr != nil {
 			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
@@ -186,8 +219,16 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse workflow manifest: %v", err)
 	}
 
-	// Clean given name
-	projectName := normalizeName(req.ProjectName)
+	// Validate the exact submitted bytes. Do not decode and re-marshal them:
+	// their digest and eventual stored representation are byte-preserving.
+	if err := artifactcontract.ValidateContract(artifactcontract.ChangeRequestContract, req.GetChangeRequestContent()); err != nil {
+		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
+			"submit", workflowCRD.Name, "rejected", "InvalidChangeRequest", projectName, nil,
+			map[string]string{"error": err.Error()}); auditErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
+		}
+		return nil, status.Errorf(codes.InvalidArgument, "invalid change-request/v1: %v", err)
+	}
 
 	// Verify Project exists and can be queried
 	var project v1alpha1.SovereignProject
@@ -206,7 +247,6 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		}
 		return nil, status.Errorf(codes.Internal, "failed to read project: %v", err)
 	}
-
 	// Verify workflow has at least 1 step
 	if len(workflowCRD.Spec.Steps) == 0 {
 		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
@@ -216,7 +256,6 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		}
 		return nil, status.Error(codes.InvalidArgument, "workflow must contain at least one step")
 	}
-
 	// normalize workflow and namespace names
 	baseName := normalizeName(workflowCRD.Name)
 	if baseName == "" {
@@ -231,7 +270,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 	}
 
-	// Dynamic Provisioning for isolation boundaries
+	// Dynamic Provisioning of namespace for isolation boundaries
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: targetNamespace,
@@ -239,7 +278,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 				"sovereign-ai.io/project":      projectName,
 				"app.kubernetes.io/managed-by": "sovereign-orchestrator",
 				"sovereign-ai.io/workflow-id":  workflowID,
-				"istio-injection":              "enabled", // Safe hooks for your upcoming mesh logic
+				//"istio-injection":              "enabled", // Safe hooks for upcoming mesh logic
 			},
 		},
 	}
@@ -277,6 +316,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 	workflowCRD.ObjectMeta.Labels["sovereign-ai.io/workflow-id"] = workflowID
 	workflowCRD.Spec.Project.Name = projectName
 	workflowCRD.Spec.WorkflowID = workflowID
+	workflowCRD.Spec.RequesterSubject = requester.Subject
 
 	// Create Workflow
 	if err := s.Client.Create(ctx, &workflowCRD); err != nil {
@@ -318,11 +358,16 @@ func generateRandomSuffix() string {
 
 // Helper method for building API events consistently within the API server
 func (s *Server) appendAPIEvent(ctx context.Context, eventType string, subject audit.Subject, action, target, outcome, reason, correlationID string, references map[string]string, data any) error {
+	var requester *audit.Actor
+	if identity, ok := requestidentity.FromContext(ctx); ok && identity.Valid() {
+		requester = &audit.Actor{Kind: "User", ID: identity.Subject}
+	}
 	return audit.AppendEvent(ctx, s.Auditor, audit.EventOptions{
 		Source:        "api",
 		Type:          eventType,
 		OccurredAt:    time.Now().UTC(),
 		Actor:         audit.Actor{Kind: "API", ID: "api-server"},
+		Requester:     requester,
 		Subject:       subject,
 		Action:        action,
 		Target:        target,
@@ -332,6 +377,19 @@ func (s *Server) appendAPIEvent(ctx context.Context, eventType string, subject a
 		References:    references,
 		Data:          data,
 	})
+}
+
+const workflowSubmitterGroup = "contract-maintainers"
+
+func requireWorkflowRequester(ctx context.Context) (requestidentity.Identity, error) {
+	identity, ok := requestidentity.FromContext(ctx)
+	if !ok || !identity.Valid() {
+		return requestidentity.Identity{}, status.Error(codes.Unauthenticated, "authenticated requester is required")
+	}
+	if !identity.InGroup(workflowSubmitterGroup) {
+		return requestidentity.Identity{}, status.Errorf(codes.PermissionDenied, "requester must belong to %q", workflowSubmitterGroup)
+	}
+	return identity, nil
 }
 
 func timelineEventDTO(event audit.TimelineEvent) *pb.AuditEventDTO {

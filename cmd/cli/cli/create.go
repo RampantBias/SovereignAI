@@ -52,17 +52,13 @@ func newCreateProjectCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 	return cmd
 }
 
-var (
-	projectName   string
-	manifestPath  string
-	changeRequest string
-)
-
 func newCreateWorkflowCmd(client pb.OrchestratorServiceClient) *cobra.Command {
+	var projectName, manifestPath, changeRequest string
+
 	cmd := &cobra.Command{
 		Use:     "workflow",
 		Short:   "Initialize a new Sovereign Workflow for a Project",
-		Example: `sovctl create workflow --project-name alpha -f workflow-definition.yaml -c ./demo/change-requests/calculator-divide.v1.json`,
+		Example: `sovctl create workflow --project alpha -f workflow-definition.yaml -c ./demo/change-requests/calculator-divide.v1.json`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Try to read workflow manifest file
@@ -82,11 +78,11 @@ func newCreateWorkflowCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 				return fmt.Errorf("provided manifest file %q is empty", manifestPath)
 			}
 			if len(changeRequestFileData) == 0 {
-				return fmt.Errorf("provided change request file %q is empty", manifestPath)
+				return fmt.Errorf("provided change request file %q is empty", changeRequest)
 			}
 
 			// Add control plane transit timeout
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 
 			response, err := client.CreateWorkflow(ctx, &pb.CreateWorkflowRequest{
@@ -106,7 +102,7 @@ func newCreateWorkflowCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 	// Args
 	cmd.Flags().StringVarP(&projectName, "project", "p", "", "Target allocation workspace name (Required)")
 	cmd.Flags().StringVarP(&manifestPath, "file", "f", "", "Local filepath containing the declarative workflow specification (Required)")
-	cmd.Flags().StringVarP(&changeRequest, "change-request", "c", "", "Change request containing the workflow task information (Required)")
+	cmd.Flags().StringVarP(&changeRequest, "change-request", "c", "", "Local filepath containing the change-request/v1 JSON document (Required)")
 	_ = cmd.MarkFlagRequired("project")
 	_ = cmd.MarkFlagRequired("file")
 	_ = cmd.MarkFlagRequired("change-request")

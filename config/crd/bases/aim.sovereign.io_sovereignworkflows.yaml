@@ -60,6 +60,12 @@ spec:
                 type: object
               requestedVolumeSize:
                 type: string
+              requesterSubject:
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: requesterSubject is immutable
+                  rule: self == oldSelf
               steps:
                 items:
                   description: StepConfig declares one workflow stage and exactly
@@ -232,6 +238,7 @@ spec:
             required:
             - projectRef
             - requestedVolumeSize
+            - requesterSubject
             - steps
             - workflowId
             type: object
