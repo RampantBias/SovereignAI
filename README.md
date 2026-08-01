@@ -6,7 +6,15 @@ The project operates below agent frameworks such as LangGraph and LangChain. It 
 
 SovereignAI is designed first for sovereign, air-gapped, and regulated environments. The initial implementation runs local models on Kubernetes-managed GPU infrastructure. Cloud inference may become an optional provider later, but it is not an MVP goal.
 
-> **Project status:** pre-alpha architectural prototype. The repository contains partially implemented controllers, APIs, CLI commands, GPU accounting, and agent-runtime scaffolding. It is NOT ready for production use.
+**Project status:** pre-alpha architectural prototype. The repository contains partially implemented controllers, APIs, CLI commands, GPU accounting, and agent-runtime scaffolding. It is NOT ready for production use and has NO plans to ever reach production.
+
+## Development Approach and AI Assistance
+
+I conceived, architected, and built the initial implementation of this software by hand. The original control plane binaries, controller code, inference, & all decision documents were written by me and were refined by me with AI review. I built up to basic handoffs and state transitions of generic task/result/artifact contracts between steps. 
+
+As this project is only worked in my free time and I needed to both represent the thesis I synthesized and reach an MVP stage by the first week of September I needed to re-accelerate. I begain using AI much more heavily in July 2026 to handle refactoring, implementation, testing, deployment, and documentation while working towards a September MVP. An informal estimate would place about half of the implementation as being AI written or substantially refined with AI.
+
+I have still remained responsible for the goals, architectural decisions, and accepted behaviors. Going forward, I'm aiming to simplify as much as I can for the MVP to ensure that what's built from here on is my own while using AI only for review, refinement, and trivial implementation work.
 
 ## Why this exists
 
@@ -89,15 +97,6 @@ See [MVP scope](docs/mvp.md) for commitments and non-goals.
 
 ## Current limitations
 
-The current code and the target architecture are not yet aligned. Known gaps include an unfinished agent wrapper, minimal tests, incomplete installation assets, inconsistent example manifests, hard-coded configuration, and controller logic that still combines responsibilities intended for separate providers or resources.
+The current code and the target architecture are not yet aligned. Known gaps include an unfinished agent wrapper, minimal tests, incomplete installation assets, inconsistent example manifests, and hard-coded configuration. The MVP workflow is not yet complete, and there are still significant design and non-working implementation issues.
 
 The architecture documents describe the intended direction. Existing code should not be assumed to implement every documented guarantee.
-
-## Author notes
-
-The following project-level details still need an owner decision:
-
-- **AUTHOR NOTE:** Choose the public project name and one-sentence positioning statement used in articles and the September presentation.
-- **AUTHOR NOTE:** Add the intended open-source license and contribution policy.
-- **AUTHOR NOTE:** Define the supported Kubernetes and NVIDIA software versions for the MVP test environment.
-- **AUTHOR NOTE:** Add reproducible build, installation, and demonstration instructions once the architecture realignment is complete.

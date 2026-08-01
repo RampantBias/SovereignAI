@@ -66,6 +66,7 @@ spec:
                     enum:
                     - repository.initialize
                     - git.createBranch
+                    - candidate.prepare
                     - git.commit
                     - git.push
                     - git.merge

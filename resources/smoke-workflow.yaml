@@ -23,5 +23,5 @@ spec:
         capabilities: ["artifact.publish"]
       maxAttempts: 2
       outputs:
-        - name: smoke-report
+        - name: implementation-plan
           version: v1

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/merge-revision.schema.json",
+  "title": "merge-revision/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidateRevisionDigest", "validationResultDigest", "repositoryURL", "targetBranch", "previousTargetCommit", "candidateCommit", "candidateTree", "mergeCommit", "mergeTree", "approvalRequest", "approvalDecision", "validationRun", "remoteProof"],
+  "properties": {
+    "candidateRevisionDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "validationResultDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "repositoryURL": {"$ref": "common.schema.json#/$defs/RepositoryURL"},
+    "targetBranch": {"$ref": "common.schema.json#/$defs/Branch"},
+    "previousTargetCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "candidateCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "candidateTree": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "mergeCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "mergeTree": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "approvalRequest": {"$ref": "common.schema.json#/$defs/ObjectIdentity"},
+    "approvalDecision": {"$ref": "common.schema.json#/$defs/ObjectIdentity"},
+    "validationRun": {"$ref": "common.schema.json#/$defs/ObjectIdentity"},
+    "remoteProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "observedCommit", "verifiedAt"],
+      "properties": {
+        "ref": {"type": "string", "minLength": 12, "maxLength": 266, "pattern": "^refs/heads/"},
+        "observedCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+        "verifiedAt": {"$ref": "common.schema.json#/$defs/Timestamp"}
+      }
+    }
+  }
+}

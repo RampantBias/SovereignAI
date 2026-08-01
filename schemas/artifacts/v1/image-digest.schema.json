@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/image-digest.schema.json",
+  "title": "image-digest/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidateRevisionDigest", "imageRepository", "digest", "candidateCommit", "candidateTree", "builderImageDigest", "buildCommandDigest", "dockerfileDigest", "contextTree"],
+  "properties": {
+    "candidateRevisionDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "imageRepository": {"$ref": "common.schema.json#/$defs/OCIRepository"},
+    "digest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "candidateCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "candidateTree": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "builderImageDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "buildCommandDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "dockerfileDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "contextTree": {"$ref": "common.schema.json#/$defs/GitOID"}
+  }
+}

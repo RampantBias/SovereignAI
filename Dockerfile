@@ -11,6 +11,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/utility-runner ./cmd/utility-runner
 RUN CGO_ENABLED=0 go build -trimpath -o /out/smoke-agent ./cmd/smoke-agent
 RUN CGO_ENABLED=0 go build -trimpath -o /out/mcp-server ./cmd/mcp-server
 RUN CGO_ENABLED=0 go build -trimpath -o /out/artifact-collector ./cmd/artifact-collector
+RUN CGO_ENABLED=0 go build -trimpath -o /out/artifact-bootstrap ./cmd/artifact-bootstrap
 
 FROM gcr.io/distroless/static-debian12:nonroot AS controller
 COPY --from=builder /out/controller /controller
@@ -45,3 +46,7 @@ ENTRYPOINT ["/mcp-server"]
 FROM gcr.io/distroless/static-debian12:nonroot AS artifact-collector
 COPY --from=builder /out/artifact-collector /artifact-collector
 ENTRYPOINT ["/artifact-collector"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS artifact-bootstrap
+COPY --from=builder /out/artifact-bootstrap /artifact-bootstrap
+ENTRYPOINT ["/artifact-bootstrap"]

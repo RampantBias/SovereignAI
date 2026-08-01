@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/change-request.schema.json",
+  "title": "change-request/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "description", "acceptanceCriteria", "repositoryURL", "sourceCommit"],
+  "properties": {
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "description": {"type": "string", "minLength": 1, "maxLength": 16384},
+    "acceptanceCriteria": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+    },
+    "repositoryURL": {"$ref": "common.schema.json#/$defs/RepositoryURL"},
+    "sourceCommit": {"$ref": "common.schema.json#/$defs/GitOID"}
+  }
+}

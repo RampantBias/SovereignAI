@@ -256,11 +256,12 @@ func (x *CleanWorkflowResponse) GetMessage() string {
 
 // CreateWorkflow
 type CreateWorkflowRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	ProjectName     string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
-	ManifestContent string                 `protobuf:"bytes,2,opt,name=manifest_content,json=manifestContent,proto3" json:"manifest_content,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	ProjectName          string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	ManifestContent      string                 `protobuf:"bytes,2,opt,name=manifest_content,json=manifestContent,proto3" json:"manifest_content,omitempty"`
+	ChangeRequestContent []byte                 `protobuf:"bytes,3,opt,name=change_request_content,json=changeRequestContent,proto3" json:"change_request_content,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *CreateWorkflowRequest) Reset() {
@@ -305,6 +306,13 @@ func (x *CreateWorkflowRequest) GetManifestContent() string {
 		return x.ManifestContent
 	}
 	return ""
+}
+
+func (x *CreateWorkflowRequest) GetChangeRequestContent() []byte {
+	if x != nil {
+		return x.ChangeRequestContent
+	}
+	return nil
 }
 
 type CreateWorkflowResponse struct {
@@ -920,10 +928,11 @@ const file_internal_api_v1_orchestrator_proto_rawDesc = "" +
 	"\fproject_name\x18\x02 \x01(\tR\vprojectName\"K\n" +
 	"\x15CleanWorkflowResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"e\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x9b\x01\n" +
 	"\x15CreateWorkflowRequest\x12!\n" +
 	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12)\n" +
-	"\x10manifest_content\x18\x02 \x01(\tR\x0fmanifestContent\"9\n" +
+	"\x10manifest_content\x18\x02 \x01(\tR\x0fmanifestContent\x124\n" +
+	"\x16change_request_content\x18\x03 \x01(\fR\x14changeRequestContent\"9\n" +
 	"\x16CreateWorkflowResponse\x12\x1f\n" +
 	"\vworkflow_id\x18\x01 \x01(\tR\n" +
 	"workflowId\"9\n" +

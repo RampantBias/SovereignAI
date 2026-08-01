@@ -71,6 +71,17 @@ spec:
                 - name
                 - uid
                 type: object
+              inputs:
+                items:
+                  properties:
+                    digest:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               stepName:
                 type: string
               workflowRef:

@@ -37,6 +37,20 @@ func TestDeterministicID(t *testing.T) {
 	}
 }
 
+func TestNewEventPreservesRequester(t *testing.T) {
+	requester := &Actor{Kind: "User", ID: "frank"}
+	event, err := NewEvent(EventOptions{
+		Source: "api", Type: "WorkflowSubmitted", Actor: Actor{Kind: "API", ID: "api-server"},
+		Requester: requester, Subject: Subject{Project: "platform"}, Action: "submit", Outcome: "accepted",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Requester == nil || *event.Requester != *requester {
+		t.Fatalf("requester was not preserved: %#v", event.Requester)
+	}
+}
+
 func TestBuildTimelineProjectsEventForPlayback(t *testing.T) {
 	event := Event{
 		ID:            "evt-1",

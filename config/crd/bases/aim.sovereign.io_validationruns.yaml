@@ -50,6 +50,17 @@ spec:
                 type: string
               imageDigest:
                 type: string
+              inputs:
+                items:
+                  properties:
+                    digest:
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
               overlayPath:
                 type: string
               provider:

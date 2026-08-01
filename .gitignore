@@ -4,4 +4,3 @@ coverage.out
 bin/
 dist/
 .env
-controller.exe

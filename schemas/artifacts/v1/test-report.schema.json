@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/test-report.schema.json",
+  "title": "test-report/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["preparedCandidateDigest", "baseCommit", "candidateTree", "observedTreeAfter", "workspaceClean", "commandDigest", "environmentImageDigest", "outcome", "durationMilliseconds", "stdout", "stderr"],
+  "properties": {
+    "preparedCandidateDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "baseCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "candidateTree": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "observedTreeAfter": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "workspaceClean": {"type": "boolean"},
+    "commandDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "environmentImageDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "outcome": {"enum": ["passed", "failed", "timed-out", "environment-error", "tree-drift"]},
+    "exitCode": {"type": "integer"},
+    "durationMilliseconds": {"type": "integer", "minimum": 0},
+    "stdout": {"$ref": "#/$defs/StreamEvidence"},
+    "stderr": {"$ref": "#/$defs/StreamEvidence"},
+    "testCount": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "StreamEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "capturedBytes", "excerpt", "truncated"],
+      "properties": {
+        "digest": {"$ref": "common.schema.json#/$defs/Digest"},
+        "capturedBytes": {"type": "integer", "minimum": 0, "maximum": 1048576},
+        "excerpt": {"type": "string", "maxLength": 16384},
+        "truncated": {"type": "boolean"}
+      }
+    }
+  }
+}

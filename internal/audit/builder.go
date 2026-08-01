@@ -13,6 +13,7 @@ type EventOptions struct {
 	Type          string
 	OccurredAt    time.Time
 	Actor         Actor
+	Requester     *Actor
 	Subject       Subject
 	Action        string
 	Target        string
@@ -64,6 +65,7 @@ func NewEvent(options EventOptions) (Event, error) {
 		SchemaVersion: "v1",
 		OccurredAt:    occurredAt.UTC(),
 		Actor:         options.Actor,
+		Requester:     options.Requester,
 		Subject:       options.Subject,
 		Action:        options.Action,
 		Target:        options.Target,

@@ -48,6 +48,9 @@ func TestMVPPolicyGovernsUtilityOperations(t *testing.T) {
 		{name: "test operation", allowed: true, request: map[string]any{
 			"operation": "test.run", "workflow": "wf", "step": "tests", "project": "project",
 		}},
+		{name: "candidate preparation without credential", allowed: true, request: map[string]any{
+			"operation": "candidate.prepare", "workflow": "wf", "step": "prepare-candidate", "project": "project",
+		}},
 		{name: "push without repository credential", allowed: false, request: map[string]any{
 			"operation": "git.push", "credentialClass": "repository", "hasCredential": false,
 			"parameters": map[string]string{"branch": "feature"},

@@ -48,7 +48,7 @@ type AgentStepSpec struct {
 // an arbitrary process command. The controller derives the idempotency key and
 // resolves Project-owned commands and credentials before scheduling a Job.
 type UtilityOperationRequest struct {
-	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;git.commit;git.push;git.merge;test.run;build.image
+	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;candidate.prepare;git.commit;git.push;git.merge;test.run;build.image
 	Name       string            `json:"name"`
 	Parameters map[string]string `json:"parameters,omitempty"`
 }
@@ -70,14 +70,29 @@ type ValidationStepSpec struct {
 	Destination string `json:"destination,omitempty"`
 }
 
+// WorkflowBootstrapSpec identifies the immutable ingress object whose exact
+// bytes must become the first accepted workflow Artifact.
+type WorkflowBootstrapSpec struct {
+	SourceRef      UIDReference      `json:"sourceRef"`
+	Key            string            `json:"key"`
+	ExpectedDigest string            `json:"expectedDigest"`
+	Contract       ContractReference `json:"contract"`
+	ArtifactName   string            `json:"artifactName"`
+}
+
 // SovereignWorkflowSpec defines the desired state (The user's intent)
 type SovereignWorkflowSpec struct {
-	Project             UIDReference `json:"projectRef"`
-	WorkflowID          string       `json:"workflowId"`
-	DefinitionRevision  string       `json:"definitionRevision,omitempty"`
-	Classification      string       `json:"classification,omitempty"`
-	Steps               []StepConfig `json:"steps"`
-	RequestedVolumeSize string       `json:"requestedVolumeSize"`
+	Project    UIDReference `json:"projectRef"`
+	WorkflowID string       `json:"workflowId"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="requesterSubject is immutable"
+	RequesterSubject string `json:"requesterSubject"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="bootstrap is immutable"
+	Bootstrap           WorkflowBootstrapSpec `json:"bootstrap"`
+	DefinitionRevision  string                `json:"definitionRevision,omitempty"`
+	Classification      string                `json:"classification,omitempty"`
+	Steps               []StepConfig          `json:"steps"`
+	RequestedVolumeSize string                `json:"requestedVolumeSize"`
 }
 
 // SovereignWorkflowStatus defines the observed state
@@ -88,7 +103,11 @@ type SovereignWorkflowStatus struct {
 	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
 	PvcName                 string             `json:"pvcName,omitempty"`                 // Bound storage resource
 	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"` // Lease serializing writable workspace mounts
-	Conditions              []metav1.Condition `json:"conditions,omitempty"`              // Standard K8s status conditions
+	BootstrapJobRef         string             `json:"bootstrapJobRef,omitempty"`
+	BootstrapArtifactRef    *UIDReference      `json:"bootstrapArtifactRef,omitempty"`
+	BootstrapWriterEpoch    int32              `json:"bootstrapWriterEpoch,omitempty"`
+	BootstrapWriterReleased bool               `json:"bootstrapWriterReleased,omitempty"`
+	Conditions              []metav1.Condition `json:"conditions,omitempty"` // Standard K8s status conditions
 }
 
 // +kubebuilder:object:root=true

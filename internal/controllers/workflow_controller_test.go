@@ -2,10 +2,12 @@ package controllers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,17 +28,61 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 	if err := coordinationv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
 	workflow := &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
-		Spec: v1alpha1.SovereignWorkflowSpec{Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-1", Steps: []v1alpha1.StepConfig{{
-			Name: "architect", Kind: v1alpha1.ExecutionKindAgent,
-			Agent: &v1alpha1.AgentStepSpec{Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
-		}}},
-		Status: v1alpha1.SovereignWorkflowStatus{Phase: string(v1alpha1.PhasePending)},
+		Spec: v1alpha1.SovereignWorkflowSpec{
+			Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-1",
+			Bootstrap: v1alpha1.WorkflowBootstrapSpec{
+				SourceRef:      v1alpha1.UIDReference{Name: "wf-1-bootstrap-input", UID: "source-uid"},
+				Key:            "change-request.json",
+				ExpectedDigest: "sha256:" + strings.Repeat("a", 64),
+				Contract:       v1alpha1.ContractReference{Name: "change-request", Version: "v1"},
+				ArtifactName:   "change-request",
+			},
+			Steps: []v1alpha1.StepConfig{{
+				Name: "architect", Kind: v1alpha1.ExecutionKindAgent,
+				Agent: &v1alpha1.AgentStepSpec{Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
+			}},
+		},
+		Status: v1alpha1.SovereignWorkflowStatus{
+			Phase:                string(v1alpha1.PhasePending),
+			BootstrapArtifactRef: &v1alpha1.UIDReference{Name: "change-request", UID: "artifact-uid"},
+			Conditions: []metav1.Condition{{
+				Type: "BootstrapReady", Status: metav1.ConditionTrue, Reason: "ChangeRequestAccepted",
+			}},
+		},
+	}
+	controller := true
+	artifact := &v1alpha1.Artifact{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "change-request", Namespace: workflow.Namespace, UID: "artifact-uid",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow",
+				Name: workflow.Name, UID: workflow.UID, Controller: &controller,
+			}},
+		},
+		Spec: v1alpha1.ArtifactSpec{
+			WorkflowRef: workflow.Name,
+			ProducerRef: v1alpha1.TypedLocalReference{
+				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: workflow.Name,
+			},
+			Contract: workflow.Spec.Bootstrap.Contract,
+			Digest:   workflow.Spec.Bootstrap.ExpectedDigest,
+			Path:     bootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest),
+		},
+		Status: v1alpha1.ArtifactStatus{
+			Phase: v1alpha1.PhaseSucceeded,
+			Conditions: []metav1.Condition{{
+				Type: "Valid", Status: metav1.ConditionTrue, Reason: "ContractAccepted",
+			}},
+		},
 	}
 	client := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.StepAttempt{}, &v1alpha1.AgentRun{}).
-		WithObjects(workflow).Build()
+		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.StepAttempt{}, &v1alpha1.AgentRun{}, &v1alpha1.Artifact{}).
+		WithObjects(workflow, artifact).Build()
 	reconciler := &WorkflowReconciler{Client: client, Scheme: scheme, Audit: audit.NewMemoryRecorder()}
 	request := ctrl.Request{NamespacedName: types.NamespacedName{Name: workflow.Name, Namespace: workflow.Namespace}}
 	for range 3 {

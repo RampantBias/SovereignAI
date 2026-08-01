@@ -5,43 +5,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-type ResourcePhase string
-
-const (
-	PhasePending          ResourcePhase = "Pending"
-	PhaseAdmitted         ResourcePhase = "Admitted"
-	PhasePreparing        ResourcePhase = "Preparing"
-	PhaseRunning          ResourcePhase = "Running"
-	PhaseCollecting       ResourcePhase = "Collecting"
-	PhaseAwaitingApproval ResourcePhase = "AwaitingApproval"
-	PhaseIntervening      ResourcePhase = "Intervening"
-	PhaseValidating       ResourcePhase = "Validating"
-	PhaseRetrying         ResourcePhase = "Retrying"
-	PhaseSucceeded        ResourcePhase = "Succeeded"
-	PhaseFailed           ResourcePhase = "Failed"
-	PhaseCancelled        ResourcePhase = "Cancelled"
-	PhaseInterrupted      ResourcePhase = "Interrupted"
-)
-
-type ExecutionKind string
-
-const (
-	ExecutionKindAgent      ExecutionKind = "Agent"
-	ExecutionKindUtility    ExecutionKind = "Utility"
-	ExecutionKindHumanGate  ExecutionKind = "HumanGate"
-	ExecutionKindValidation ExecutionKind = "Validation"
-)
-
-type SharingScope string
-
-const (
-	SharingDedicated            SharingScope = "Dedicated"
-	SharingWithinWorkflow       SharingScope = "SharedWithinWorkflow"
-	SharingWithinProject        SharingScope = "SharedWithinProject"
-	SharingWithinTenant         SharingScope = "SharedWithinTenant"
-	SharingWithinClassification SharingScope = "SharedWithinClassification"
-)
-
 type ApprovalMode string
 
 const (
@@ -56,16 +19,6 @@ const (
 	Approved ApprovalChoice = `Approved`
 	Denied   ApprovalChoice = `Denied`
 )
-
-type UIDReference struct {
-	Name string    `json:"name"`
-	UID  types.UID `json:"uid"`
-}
-
-type NamespacedReference struct {
-	Namespace string `json:"namespace,omitempty"`
-	Name      string `json:"name"`
-}
 
 type Subject struct {
 	SubjectId   string   `json:"subjectId"`
@@ -267,11 +220,12 @@ type ApprovalRequest struct {
 }
 
 type ApprovalRequestSpec struct {
-	AttemptRef  UIDReference `json:"attemptRef"`
-	WorkflowRef UIDReference `json:"workflowRef"`
-	StepName    string       `json:"stepName"`
-	Attempt     int32        `json:"attempt"`
-	Approval    ApprovalSpec `json:"approval"`
+	AttemptRef  UIDReference        `json:"attemptRef"`
+	WorkflowRef UIDReference        `json:"workflowRef"`
+	StepName    string              `json:"stepName"`
+	Attempt     int32               `json:"attempt"`
+	Approval    ApprovalSpec        `json:"approval"`
+	Inputs      []ArtifactReference `json:"inputs,omitempty"`
 }
 
 type ApprovalRequestStatus struct {
@@ -338,13 +292,16 @@ type Artifact struct {
 }
 
 type ArtifactSpec struct {
-	WorkflowRef    string              `json:"workflowRef"`
-	ProducerRef    TypedLocalReference `json:"producerRef"`
-	Contract       ContractReference   `json:"contract"`
-	Digest         string              `json:"digest"`
-	Path           string              `json:"path"`
-	Classification string              `json:"classification,omitempty"`
-	SourceRevision string              `json:"sourceRevision,omitempty"`
+	WorkflowRef      string              `json:"workflowRef"`
+	WorkflowUID      types.UID           `json:"workflowUID"`
+	ProducerRef      TypedLocalReference `json:"producerRef"`
+	ProducerUID      types.UID           `json:"producerUID"`
+	ProducerGrantRef UIDReference        `json:"producerGrantRef"`
+	Contract         ContractReference   `json:"contract"`
+	Digest           string              `json:"digest"`
+	Path             string              `json:"path"`
+	Classification   string              `json:"classification,omitempty"`
+	SourceRevision   string              `json:"sourceRevision,omitempty"`
 }
 
 type ArtifactStatus struct {
@@ -414,15 +371,16 @@ type ValidationRun struct {
 }
 
 type ValidationRunSpec struct {
-	AttemptRef  string `json:"attemptRef"`
-	WorkflowRef string `json:"workflowRef"`
-	StepName    string `json:"stepName"`
-	Attempt     int32  `json:"attempt"`
-	Provider    string `json:"provider"`
-	Commit      string `json:"commit,omitempty"`
-	ImageDigest string `json:"imageDigest,omitempty"`
-	OverlayPath string `json:"overlayPath,omitempty"`
-	Destination string `json:"destination,omitempty"`
+	AttemptRef  string              `json:"attemptRef"`
+	WorkflowRef string              `json:"workflowRef"`
+	StepName    string              `json:"stepName"`
+	Attempt     int32               `json:"attempt"`
+	Provider    string              `json:"provider"`
+	Commit      string              `json:"commit,omitempty"`
+	ImageDigest string              `json:"imageDigest,omitempty"`
+	OverlayPath string              `json:"overlayPath,omitempty"`
+	Destination string              `json:"destination,omitempty"`
+	Inputs      []ArtifactReference `json:"inputs,omitempty"`
 }
 
 type ValidationRunStatus struct {
@@ -441,94 +399,6 @@ type ValidationRunList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []ValidationRun `json:"items"`
-}
-
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=iendpoint
-type InferenceEndpoint struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   InferenceEndpointSpec   `json:"spec"`
-	Status InferenceEndpointStatus `json:"status,omitempty"`
-}
-
-type InferenceEndpointSpec struct {
-	Provider          string           `json:"provider"`
-	Model             string           `json:"model"`
-	ModelRevision     string           `json:"modelRevision"`
-	RuntimeImage      string           `json:"runtimeImage"`
-	Tenant            string           `json:"tenant"`
-	Classification    string           `json:"classification"`
-	SharingScope      SharingScope     `json:"sharingScope"`
-	StaticVRAMMiB     int64            `json:"staticVRAMMiB"`
-	MaxKVRAMMiB       int64            `json:"maxKVRAMMiB"`
-	SafetyHeadroomMiB int64            `json:"safetyHeadroomMiB,omitempty"`
-	IdleTTL           *metav1.Duration `json:"idleTTL,omitempty"`
-}
-
-type InferenceEndpointStatus struct {
-	ObservedGeneration int64                 `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase         `json:"phase,omitempty"`
-	PodRef             string                `json:"podRef,omitempty"`
-	ServiceRef         string                `json:"serviceRef,omitempty"`
-	NodeName           string                `json:"nodeName,omitempty"`
-	DeviceName         string                `json:"deviceName,omitempty"`
-	AllocatedKVRAMMiB  int64                 `json:"allocatedKVRAMMiB,omitempty"`
-	ActiveLeaseCount   int32                 `json:"activeLeaseCount,omitempty"`
-	ActiveLeases       []NamespacedReference `json:"activeLeases,omitempty"`
-	LastUsedAt         *metav1.Time          `json:"lastUsedAt,omitempty"`
-	Conditions         []metav1.Condition    `json:"conditions,omitempty"`
-}
-
-// +kubebuilder:object:root=true
-type InferenceEndpointList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []InferenceEndpoint `json:"items"`
-}
-
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=ilease
-type InferenceLease struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   InferenceLeaseSpec   `json:"spec"`
-	Status InferenceLeaseStatus `json:"status,omitempty"`
-}
-
-type InferenceLeaseSpec struct {
-	WorkflowRef       string       `json:"workflowRef"`
-	AttemptRef        string       `json:"attemptRef"`
-	ProjectRef        string       `json:"projectRef"`
-	Tenant            string       `json:"tenant"`
-	Classification    string       `json:"classification"`
-	SharingScope      SharingScope `json:"sharingScope"`
-	Model             string       `json:"model"`
-	ModelRevision     string       `json:"modelRevision"`
-	EstimatedKVRAMMiB int64        `json:"estimatedKVRAMMiB"`
-	Priority          int32        `json:"priority,omitempty"`
-	Evictable         bool         `json:"evictable,omitempty"`
-}
-
-type InferenceLeaseStatus struct {
-	ObservedGeneration int64               `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase       `json:"phase,omitempty"`
-	EndpointRef        NamespacedReference `json:"endpointRef,omitempty"`
-	EndpointURL        string              `json:"endpointURL,omitempty"`
-	DecisionID         string              `json:"decisionID,omitempty"`
-	Reason             string              `json:"reason,omitempty"`
-	Conditions         []metav1.Condition  `json:"conditions,omitempty"`
-}
-
-// +kubebuilder:object:root=true
-type InferenceLeaseList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []InferenceLease `json:"items"`
 }
 
 // +kubebuilder:object:root=true
