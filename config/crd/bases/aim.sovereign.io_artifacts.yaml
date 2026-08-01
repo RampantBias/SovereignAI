@@ -55,6 +55,20 @@ spec:
                 type: string
               path:
                 type: string
+              producerGrantRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
               producerRef:
                 description: TypedLocalReference identifies the domain primitive owned
                   by a StepAttempt.
@@ -70,16 +84,31 @@ spec:
                 - kind
                 - name
                 type: object
+              producerUID:
+                description: |-
+                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                  intent and helps make sure that UIDs and names do not get conflated.
+                type: string
               sourceRevision:
                 type: string
               workflowRef:
+                type: string
+              workflowUID:
+                description: |-
+                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                  intent and helps make sure that UIDs and names do not get conflated.
                 type: string
             required:
             - contract
             - digest
             - path
+            - producerGrantRef
             - producerRef
+            - producerUID
             - workflowRef
+            - workflowUID
             type: object
           status:
             properties:
