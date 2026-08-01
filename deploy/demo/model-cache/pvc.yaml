@@ -2,7 +2,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: sovereign-model-cache
-  namespace: sovereign-orchestrator-system
+  namespace: sovereign-inference
   labels:
     app.kubernetes.io/name: sovereign-model-cache
     app.kubernetes.io/part-of: sovereign-ai

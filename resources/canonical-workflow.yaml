@@ -1,0 +1,203 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: calculator-plan4
+spec:
+  projectRef:
+    name: calculator
+    uid: replace-with-project-uid
+  definitionRevision: plan4-v1
+  classification: internal
+  requestedVolumeSize: 1Gi
+  steps:
+    - name: initialize-repository
+      kind: Utility
+      order: 1
+      utility:
+        name: repository.initialize
+      inputs:
+        - name: change-request
+      outputs:
+        - name: repository-revision
+          version: v1
+      timeout: 10m
+      maxAttempts: 2
+    - name: architect
+      kind: Agent
+      order: 2
+      agent:
+        responsibility: architect
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent", "--role", "architect"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+          estimatedKVRAMMiB: 2048
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: repository-revision
+      outputs:
+        - name: implementation-plan
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: test-author
+      kind: Agent
+      order: 3
+      agent:
+        responsibility: test-author
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent", "--role", "test-author"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+          estimatedKVRAMMiB: 2048
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+      outputs:
+        - name: test-change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: developer
+      kind: Agent
+      order: 4
+      agent:
+        responsibility: developer
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent", "--role", "developer"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+          estimatedKVRAMMiB: 2048
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+        - name: test-change-set
+      outputs:
+        - name: change-set
+          version: v1
+        - name: combined-change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: prepare-candidate
+      kind: Utility
+      order: 5
+      utility:
+        name: candidate.prepare
+      inputs:
+        - name: change-set
+        - name: combined-change-set
+        - name: repository-revision
+        - name: test-change-set
+      outputs:
+        - name: authority-comparison
+          version: v1
+        - name: prepared-candidate
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: test-candidate
+      kind: Utility
+      order: 6
+      utility:
+        name: test.run
+      inputs:
+        - name: authority-comparison
+        - name: prepared-candidate
+      outputs:
+        - name: test-report
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: commit-candidate
+      kind: Utility
+      order: 7
+      utility:
+        name: git.commit
+      inputs:
+        - name: authority-comparison
+        - name: prepared-candidate
+        - name: test-report
+      outputs:
+        - name: candidate-revision
+          version: v1
+      timeout: 10m
+      maxAttempts: 2
+    - name: push-candidate
+      kind: Utility
+      order: 8
+      utility:
+        name: git.push
+      inputs:
+        - name: candidate-revision
+      outputs:
+        - name: candidate-remote-proof
+          version: v1
+      timeout: 10m
+      maxAttempts: 2
+    - name: build-calculator
+      kind: Utility
+      order: 9
+      utility:
+        name: build.image
+      inputs:
+        - name: candidate-remote-proof
+        - name: candidate-revision
+      outputs:
+        - name: image-digest
+          version: v1
+      timeout: 30m
+      maxAttempts: 2
+    - name: ephemeral-validation
+      kind: Validation
+      order: 10
+      validation:
+        provider: argocd-kustomize
+      inputs:
+        - name: candidate-remote-proof
+        - name: candidate-revision
+        - name: image-digest
+      outputs:
+        - name: validation-result
+          version: v1
+      timeout: 30m
+      maxAttempts: 2
+    - name: product-approval
+      kind: HumanGate
+      order: 11
+      approval:
+        mode: AnyOf
+        requiredGroups: ["maintainers"]
+        denyBehavior: Fail
+      inputs:
+        - name: candidate-remote-proof
+        - name: candidate-revision
+        - name: image-digest
+        - name: validation-result
+      timeout: 24h
+      maxAttempts: 1
+    - name: merge-candidate
+      kind: Utility
+      order: 12
+      utility:
+        name: git.merge
+      inputs:
+        - name: candidate-remote-proof
+        - name: candidate-revision
+        - name: validation-result
+      outputs:
+        - name: merge-revision
+          version: v1
+      timeout: 10m
+      maxAttempts: 2

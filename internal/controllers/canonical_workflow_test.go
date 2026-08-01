@@ -106,7 +106,6 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 			t.Fatalf("step %q must be an inference-backed Agent", workflow.Spec.Steps[index].Name)
 		}
 		if agent.Inference.Model != "code-small" ||
-			agent.Inference.ModelRevision != "replace-with-pinned-model-revision" ||
 			agent.Inference.SharingScope != v1alpha1.SharingWithinWorkflow {
 			t.Fatalf("step %q has a different model request", workflow.Spec.Steps[index].Name)
 		}

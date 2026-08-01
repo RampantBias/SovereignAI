@@ -8,6 +8,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/inference"
 	admission "github.com/SovereignAI/internal/inference"
 	policyengine "github.com/SovereignAI/internal/policy"
 	corev1 "k8s.io/api/core/v1"
@@ -25,10 +26,10 @@ const InferenceNamespace = "sovereign-inference"
 type InferenceLeaseReconciler struct {
 	client.Client
 	Scheme               *runtime.Scheme
-	RuntimeImage         string
 	DefaultStaticVRAMMiB int64
 	DefaultMaxKVRAMMiB   int64
 	SafetyHeadroomMiB    int64
+	Profile              inference.Profile
 	Policy               policyengine.Evaluator
 	Audit                audit.Recorder
 	Now                  func() time.Time
@@ -230,19 +231,22 @@ func (r *InferenceLeaseReconciler) ensureEndpoint(ctx context.Context, lease *v1
 	if maxKV == 0 {
 		maxKV = 8192
 	}
-	image := r.RuntimeImage
-	if image == "" {
-		image = "vllm/vllm-openai:v0.10.2"
-	}
 	endpoint = v1alpha1.InferenceEndpoint{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: InferenceNamespace, Labels: map[string]string{
 			"sovereign-ai.io/project": lease.Spec.ProjectRef, "sovereign-ai.io/tenant": lease.Spec.Tenant,
 			"sovereign-ai.io/classification": lease.Spec.Classification,
 		}},
 		Spec: v1alpha1.InferenceEndpointSpec{
-			Provider: "vllm", Model: lease.Spec.Model, ModelRevision: lease.Spec.ModelRevision, RuntimeImage: image,
-			Tenant: lease.Spec.Tenant, Classification: lease.Spec.Classification, SharingScope: lease.Spec.SharingScope,
-			StaticVRAMMiB: staticVRAM, MaxKVRAMMiB: maxKV, SafetyHeadroomMiB: r.SafetyHeadroomMiB,
+			Provider:          "vllm",
+			Model:             lease.Spec.Model,
+			ModelRevision:     lease.Spec.ModelRevision,
+			RuntimeImage:      r.Profile.RuntimeImage,
+			Tenant:            lease.Spec.Tenant,
+			Classification:    lease.Spec.Classification,
+			SharingScope:      lease.Spec.SharingScope,
+			StaticVRAMMiB:     staticVRAM,
+			MaxKVRAMMiB:       maxKV,
+			SafetyHeadroomMiB: r.SafetyHeadroomMiB,
 		},
 	}
 	if err := r.Create(ctx, &endpoint); err != nil {

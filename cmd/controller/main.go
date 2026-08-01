@@ -9,6 +9,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllers"
+	"github.com/SovereignAI/internal/inference"
 	"github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/validation"
 	"github.com/go-logr/logr"
@@ -86,6 +87,27 @@ func main() {
 		log.Fatalf("unable to create validation client: %v", err)
 	}
 
+	// Initialize vLLM inference snapshot for MVP
+	inferenceProfile := inference.Profile{
+		RuntimeImage:      env("SOVEREIGN_VLLM_IMAGE", "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b"), //7/25/26 v0.26.0 linux/amd64
+		ModelID:           env("SOVEREIGN_MODEL_ID", "Qwen/Qwen2.5-Coder-3B-Instruct"),
+		ModelRevision:     env("SOVEREIGN_MODEL_REVISION", "488639f1ff808d1d3d0ba301aef8c11461451ec5"), //8/1/26
+		ServedModelName:   env("SOVEREIGN_SERVED_MODEL_NAME", "code-small"),
+		CachePVCName:      env("SOVEREIGN_MODEL_CACHE_PVC", "sovereign-model-cache"),
+		CachePath:         env("SOVEREIGN_MODEL_CACHE_PATH", "/model-cache"),
+		GPUNodeLabelKey:   "sovereign-ai.io/gpu-node",
+		GPUNodeLabelValue: "true",
+		StartupTimeout:    time.Minute * 15,
+		RequestTimeout:    time.Minute * 3,
+		MaxOutputTokens:   2048,
+		MaxResponseBytes:  4194304, // 4 MB
+	}
+
+	// Validate inference profile
+	if err := inferenceProfile.Validate(); err != nil {
+		log.Fatalf("invalid inference profile: %v", err)
+	}
+
 	// Inject Argo/Kustomize deployment into ephemeral workspace
 	validationProvider := validation.NewArgoKustomize(dynamicClient, env("SOVEREIGN_ARGO_NAMESPACE", "argocd"))
 
@@ -132,13 +154,14 @@ func main() {
 			Provider: validationProvider,
 			Audit:    recorder},
 		&controllers.InferenceEndpointReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
-			Audit:  recorder},
+			Client:  mgr.GetClient(),
+			Scheme:  mgr.GetScheme(),
+			Audit:   recorder,
+			Profile: inferenceProfile},
 		&controllers.InferenceLeaseReconciler{
 			Client:               mgr.GetClient(),
 			Scheme:               mgr.GetScheme(),
-			RuntimeImage:         env("SOVEREIGN_VLLM_IMAGE", "vllm/vllm-openai:v0.10.2"),
+			Profile:              inferenceProfile,
 			DefaultStaticVRAMMiB: int64(envInt("SOVEREIGN_MODEL_VRAM_MIB", 4096)),
 			DefaultMaxKVRAMMiB:   int64(envInt("SOVEREIGN_KV_VRAM_MIB", 8192)),
 			SafetyHeadroomMiB:    int64(envInt("SOVEREIGN_VRAM_HEADROOM_MIB", 1024)),

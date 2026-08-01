@@ -9,6 +9,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/inference"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -23,9 +24,10 @@ import (
 
 type InferenceEndpointReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Audit  audit.Recorder
-	Now    func() time.Time
+	Profile inference.Profile
+	Scheme  *runtime.Scheme
+	Audit   audit.Recorder
+	Now     func() time.Time
 }
 
 func (r *InferenceEndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
