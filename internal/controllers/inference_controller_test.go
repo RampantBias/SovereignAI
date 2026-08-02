@@ -3,8 +3,10 @@ package controllers
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/inference"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,11 +54,14 @@ func TestInferenceLeaseBindsCompatibleWarmEndpoint(t *testing.T) {
 }
 
 func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
+	reconciler := InferenceEndpointReconciler{
+		Profile: testInferenceProfile(),
+	}
 	endpoint := &v1alpha1.InferenceEndpoint{
 		ObjectMeta: metav1.ObjectMeta{Name: "endpoint", Namespace: InferenceNamespace},
 		Spec:       v1alpha1.InferenceEndpointSpec{Model: "code", ModelRevision: "v1", RuntimeImage: "vllm@sha256:test"},
 	}
-	pod, service := buildInferenceWorkloads(endpoint)
+	pod, service := reconciler.buildInferenceWorkloads(endpoint)
 	if pod.Spec.NodeName != "" {
 		t.Fatalf("controller pinned inference to node %q", pod.Spec.NodeName)
 	}
@@ -83,4 +88,21 @@ func inferenceScheme(t *testing.T) *runtime.Scheme {
 		t.Fatal(err)
 	}
 	return scheme
+}
+
+func testInferenceProfile() inference.Profile {
+	return inference.Profile{
+		RuntimeImage:      "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b",
+		ModelID:           "Qwen/Qwen2.5-Coder-3B-Instruct",
+		ModelRevision:     "488639f1ff808d1d3d0ba301aef8c11461451ec5",
+		ServedModelName:   "code-small",
+		CachePVCName:      "sovereign-model-cache",
+		CachePath:         "/model-cache",
+		GPUNodeLabelKey:   "sovereign-ai.io/gpu-node",
+		GPUNodeLabelValue: "true",
+		StartupTimeout:    time.Minute * 15,
+		RequestTimeout:    time.Minute * 3,
+		MaxOutputTokens:   2048,
+		MaxResponseBytes:  4194304, // 4 MB
+	}
 }

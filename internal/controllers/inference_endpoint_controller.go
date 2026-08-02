@@ -46,7 +46,7 @@ func (r *InferenceEndpointReconciler) Reconcile(ctx context.Context, request ctr
 	}
 
 	// Build inference workloads (inference pod + exposing service)
-	pod, service := buildInferenceWorkloads(&endpoint)
+	pod, service := r.buildInferenceWorkloads(&endpoint)
 
 	// Create or observe inference workloads in cluster
 	if err := r.createInferenceWorkloads(ctx, &endpoint, pod, service); err != nil {
@@ -100,17 +100,78 @@ func (r *InferenceEndpointReconciler) appendEndpointEvent(ctx context.Context, e
 	})
 }
 
-func buildInferenceWorkloads(endpoint *v1alpha1.InferenceEndpoint) (*corev1.Pod, *corev1.Service) {
+func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1.InferenceEndpoint) (*corev1.Pod, *corev1.Service) {
 	labels := map[string]string{"app.kubernetes.io/name": "vllm-server", "sovereign-ai.io/endpoint-id": endpoint.Name, "sovereign-ai.io/model": endpoint.Spec.Model}
+	startupFailureThreshold := int32(r.Profile.StartupTimeout / (10 * time.Second))
+	automount := false
+	runtimeClass := "nvidia"
+	shmSizeLimit := resource.MustParse("1Gi")
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: endpoint.Name, Namespace: endpoint.Namespace, Labels: labels},
-		Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyAlways, Containers: []corev1.Container{{
-			Name: "vllm", Image: endpoint.Spec.RuntimeImage,
-			Args:           []string{"--model", endpoint.Spec.Model, "--revision", endpoint.Spec.ModelRevision, "--port", "8000"},
-			Ports:          []corev1.ContainerPort{{Name: "http", ContainerPort: 8000}},
-			Resources:      corev1.ResourceRequirements{Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")}},
-			ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/health", Port: intstr.FromInt32(8000)}}, PeriodSeconds: 5},
-		}}},
+		Spec: corev1.PodSpec{
+			RestartPolicy:                corev1.RestartPolicyAlways,
+			RuntimeClassName:             &runtimeClass,
+			AutomountServiceAccountToken: &automount,
+			Volumes: []corev1.Volume{
+				corev1.Volume{
+					Name: "model-cache",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: r.Profile.CachePVCName},
+					},
+				},
+				corev1.Volume{
+					Name: "shm",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{
+							Medium:    corev1.StorageMediumMemory,
+							SizeLimit: &shmSizeLimit,
+						},
+					},
+				},
+			},
+			NodeSelector: map[string]string{r.Profile.GPUNodeLabelKey: r.Profile.GPUNodeLabelValue},
+			Containers: []corev1.Container{{
+				Name:  "vllm",
+				Image: endpoint.Spec.RuntimeImage,
+				Args: []string{
+					"--model", r.Profile.ModelID,
+					"--revision", r.Profile.ModelRevision,
+					"--served-model-name", r.Profile.ServedModelName,
+					"--download-dir", r.Profile.CachePath,
+					"--host", "0.0.0.0",
+					"--port", "8000",
+					"--dtype", "bfloat16",
+					"--tensor-parallel-size", "1",
+					"--gpu-memory-utilization", "0.80",
+					"--max-model-len", "8192",
+					"--max-num-seqs", "1",
+					"--generation-config", "vllm",
+					"--enforce-eager",
+				},
+				Ports:     []corev1.ContainerPort{{Name: "http", ContainerPort: 8000}},
+				Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")}},
+				VolumeMounts: []corev1.VolumeMount{
+					corev1.VolumeMount{
+						Name:      "model-cache",
+						ReadOnly:  true,
+						MountPath: r.Profile.CachePath},
+					corev1.VolumeMount{
+						Name:      "shm",
+						MountPath: "/dev/shm",
+					}},
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler:     corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/health", Port: intstr.FromInt32(8000)}},
+					PeriodSeconds:    5,
+					FailureThreshold: 3},
+				StartupProbe: &corev1.Probe{
+					TimeoutSeconds:   3,
+					PeriodSeconds:    10,
+					FailureThreshold: startupFailureThreshold,
+					ProbeHandler:     corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/health", Port: intstr.FromInt32(8000)}},
+				},
+			}}},
 	}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: endpoint.Name, Namespace: endpoint.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "http", Port: 8000, TargetPort: intstr.FromInt32(8000)}}}}
 	return pod, service
