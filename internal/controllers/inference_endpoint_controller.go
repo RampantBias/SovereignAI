@@ -150,6 +150,11 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 					"--generation-config", "vllm",
 					"--enforce-eager",
 				},
+				Env: []corev1.EnvVar{
+					{Name: "HF_HUB_OFFLINE", Value: "1"},
+					{Name: "HF_HUB_CACHE", Value: r.Profile.CachePath},
+					{Name: "VLLM_USE_V2_MODEL_RUNNER", Value: "0"},
+				},
 				Ports:     []corev1.ContainerPort{{Name: "http", ContainerPort: 8000}},
 				Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")}},
 				VolumeMounts: []corev1.VolumeMount{
