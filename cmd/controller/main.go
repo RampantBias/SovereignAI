@@ -138,12 +138,6 @@ func main() {
 			Policy:         policyEvaluator,
 			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
 			UtilityImage:   env("SOVEREIGN_UTILITY_IMAGE", "sovereign-utility-runner:dev")},
-		&controllers.ApprovalRequestReconciler{
-			Client: mgr.GetClient(),
-			Audit:  recorder},
-		&controllers.ArtifactReconciler{
-			Client: mgr.GetClient(),
-			Audit:  recorder},
 		&controllers.HumanSessionReconciler{
 			Client:          mgr.GetClient(),
 			Scheme:          mgr.GetScheme(),
@@ -168,6 +162,12 @@ func main() {
 			Policy:               policyEvaluator,
 			Audit:                recorder,
 		},
+		&controllers.ApprovalRequestReconciler{
+			Client: mgr.GetClient(),
+			Audit:  recorder},
+		&controllers.ArtifactReconciler{
+			Client: mgr.GetClient(),
+			Audit:  recorder},
 	}
 	for _, reconciler := range reconcilers {
 		if err := reconciler.SetupWithManager(mgr); err != nil {
