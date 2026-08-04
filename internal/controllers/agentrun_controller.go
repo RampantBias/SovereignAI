@@ -352,6 +352,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		Role:              run.Spec.StepName,
 		Responsibility:    run.Spec.Responsibility,
 		Capabilities:      append([]string(nil), run.Spec.Capabilities...),
+		InferenceModel:    run.Spec.Inference.Model,
 		Inputs:            inputs,
 		Outputs:           outputs,
 		InferenceEndpoint: endpoint,
