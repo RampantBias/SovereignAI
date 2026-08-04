@@ -15,6 +15,8 @@ spec:
       labels:
         app.kubernetes.io/name: sovereign-controller
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
       serviceAccountName: sovereign-controller
       containers:
         - name: controller
@@ -45,6 +47,7 @@ spec:
             httpGet:
               path: /readyz
               port: health
+            initialDelaySeconds: 10
           livenessProbe:
             httpGet:
               path: /healthz
