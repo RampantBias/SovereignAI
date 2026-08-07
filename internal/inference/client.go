@@ -81,6 +81,9 @@ func NewClient(
 
 // Submits POST to inference endpoint with given chat request content
 func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, error) {
+	if !json.Valid(request.OutputSchema.Schema) {
+		return ChatResponse{}, fmt.Errorf("output schema is invalid JSON")
+	}
 	// Process chat request to request payload
 	payload := chatCompletionPayload{
 		Model:     request.Model,
@@ -139,5 +142,4 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		Content:      decoded.Choices[0].Message.Content,
 		FinishReason: decoded.Choices[0].FinishReason,
 	}, nil
-
 }
