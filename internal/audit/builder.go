@@ -27,6 +27,7 @@ type EventOptions struct {
 }
 
 // Lite-factory for building events
+// TODO: Align Workflow UID and Name to correlation set and List methodologies
 func NewEvent(options EventOptions) (Event, error) {
 	payload, err := marshalData(options.Data)
 	if err != nil {

@@ -190,7 +190,7 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 
 func (r *HumanSessionReconciler) ensureWorkspaceWriter(ctx context.Context, session *v1alpha1.HumanSession) (workspaceWriterGrant, workspaceWriterState, error) {
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, client.ObjectKey{Namespace: session.Namespace, Name: session.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: session.Namespace, Name: session.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return workspaceWriterGrant{}, workspaceWriterBlocked, err
 	}
 	if workflow.Status.WorkspaceWriterLeaseRef == "" {
@@ -312,7 +312,7 @@ func (r *HumanSessionReconciler) appendHumanSessionEvent(ctx context.Context, se
 		Type: eventType,
 		Subject: audit.Subject{
 			Namespace: session.Namespace,
-			Workflow:  session.Spec.WorkflowRef,
+			Workflow:  session.Spec.WorkflowRef.Name,
 		},
 		Action:  action,
 		Target:  session.Name,
@@ -345,7 +345,7 @@ func (r *HumanSessionReconciler) image() string {
 
 // Builds human session workload (pod, service, serviceAccount) primitives
 func buildHumanSessionWorkloads(session *v1alpha1.HumanSession, image string, grant workspaceWriterGrant) (*corev1.Pod, *corev1.Service, *corev1.ServiceAccount) {
-	labels := map[string]string{"app.kubernetes.io/name": "sovereign-human-session", "sovereign-ai.io/human-session": session.Name, LabelWorkflow: session.Spec.WorkflowRef}
+	labels := map[string]string{"app.kubernetes.io/name": "sovereign-human-session", "sovereign-ai.io/human-session": session.Name, LabelWorkflow: session.Spec.WorkflowRef.Name}
 	automount := false
 	nonRoot := true
 	allowPrivilegeEscalation := false
@@ -356,7 +356,7 @@ func buildHumanSessionWorkloads(session *v1alpha1.HumanSession, image string, gr
 			Containers: []corev1.Container{{Name: "code-server", Image: image, Args: []string{"--auth", "none", "--bind-addr", "0.0.0.0:8080", "/workspace"}, Env: workspaceWriterEnv(grant),
 				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 				Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
-			Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: session.Spec.WorkflowRef + "-workspace"}}}},
+			Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: session.Spec.WorkflowRef.Name + "-workspace"}}}},
 		},
 	}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "http", Port: 8080}}}}

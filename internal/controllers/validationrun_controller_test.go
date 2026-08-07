@@ -44,7 +44,7 @@ func TestValidationRunProviderRequestUsesCalculatorOverlay(t *testing.T) {
 	run := &v1alpha1.ValidationRun{}
 	run.Name = "calculator-validation"
 	run.Namespace = workflow.Namespace
-	run.Spec.WorkflowRef = workflow.Name
+	run.Spec.WorkflowRef = v1alpha1.UIDReference{Name: workflow.Name}
 	run.Spec.Commit = "candidate-commit"
 	run.Spec.ImageDigest = "registry.example.test/calculator@sha256:abc"
 

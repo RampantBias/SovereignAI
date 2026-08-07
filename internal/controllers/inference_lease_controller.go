@@ -349,7 +349,7 @@ func (r *InferenceLeaseReconciler) appendLeaseEvent(ctx context.Context, lease *
 		Subject: audit.Subject{
 			Project:   lease.Spec.ProjectRef,
 			Namespace: lease.Namespace,
-			Workflow:  lease.Spec.WorkflowRef,
+			Workflow:  lease.Spec.WorkflowRef.Name,
 			Attempt:   0,
 		},
 		Action:     action,

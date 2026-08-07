@@ -42,7 +42,7 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if approval.Status.Phase == v1alpha1.PhaseAwaitingApproval {
 		return ctrl.Result{}, nil
 	}
-	authorized, err := validateDomainAuthority(ctx, r.Client, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef.Name, approval.Spec.StepName, approval.Spec.Attempt)
+	authorized, err := validateDomainAuthority(ctx, r.Client, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt)
 	if err != nil {
 		return ctrl.Result{}, r.setFailed(ctx, &approval, "InvalidStepAttemptAuthority")
 	}

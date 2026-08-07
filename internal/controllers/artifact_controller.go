@@ -154,7 +154,7 @@ func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *
 		Type: eventType,
 		Subject: audit.Subject{
 			Namespace: artifact.Namespace,
-			Workflow:  artifact.Spec.WorkflowRef,
+			Workflow:  artifact.Spec.WorkflowRef.Name,
 		},
 		Action:  "validate",
 		Target:  artifact.Name,

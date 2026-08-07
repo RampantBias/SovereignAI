@@ -112,7 +112,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 		if err := r.Get(ctx, key, &approval); err != nil {
 			return "", "", false, err
 		}
-		if err := validateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef.Name, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
+		if err := validateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
 			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
 		}
 		return approval.Status.Phase, approval.Status.FailureReason, approval.Status.Retryable, nil
@@ -231,7 +231,7 @@ func (r *StepAttemptReconciler) appendPhaseEvent(ctx context.Context, attempt *v
 	}
 	return appendControllerEvent(ctx, r.Audit, "stepattempt-controller", r.Now, audit.EventOptions{
 		Type:    "StepAttempt" + string(phase),
-		Subject: audit.Subject{Namespace: attempt.Namespace, Workflow: attempt.Spec.WorkflowRef, Step: attempt.Spec.StepName, Attempt: attempt.Spec.Attempt},
+		Subject: audit.Subject{Namespace: attempt.Namespace, Workflow: attempt.Spec.WorkflowRef.Name, Step: attempt.Spec.StepName, Attempt: attempt.Spec.Attempt},
 		Action:  "observe", Target: attempt.Name, Outcome: string(phase), Reason: reason, References: references,
 	})
 }

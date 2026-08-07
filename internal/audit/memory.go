@@ -33,14 +33,14 @@ func (m *MemoryRecorder) Append(_ context.Context, event Event) error {
 	return nil
 }
 
-func (m *MemoryRecorder) ListWorkflow(_ context.Context, workflow string) ([]Event, error) {
+func (m *MemoryRecorder) ListWorkflow(_ context.Context, workflowName string) ([]Event, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	// Get events associated with the workflow
 	events := make([]Event, 0)
 	for _, event := range m.events {
-		if event.Subject.Workflow == workflow {
+		if event.Subject.Workflow == workflowName {
 			events = append(events, event)
 		}
 	}

@@ -78,7 +78,7 @@ type StepAttempt struct {
 // StepAttemptSpec is a workflow lifecycle envelope. Domain execution intent is
 // held by the owned AgentRun, UtilityOperation, ApprovalRequest, or ValidationRun.
 type StepAttemptSpec struct {
-	WorkflowRef string        `json:"workflowRef"`
+	WorkflowRef UIDReference  `json:"workflowRef"`
 	StepName    string        `json:"stepName"`
 	Attempt     int32         `json:"attempt"`
 	Kind        ExecutionKind `json:"kind"`
@@ -125,7 +125,7 @@ type AgentRun struct {
 
 type AgentRunSpec struct {
 	AttemptRef      string                `json:"attemptRef"`
-	WorkflowRef     string                `json:"workflowRef"`
+	WorkflowRef     UIDReference          `json:"workflowRef"`
 	StepName        string                `json:"stepName"`
 	Attempt         int32                 `json:"attempt"`
 	Responsibility  string                `json:"responsibility"`
@@ -175,7 +175,7 @@ type UtilityOperation struct {
 
 type UtilityOperationSpec struct {
 	AttemptRef      string                  `json:"attemptRef"`
-	WorkflowRef     string                  `json:"workflowRef"`
+	WorkflowRef     UIDReference            `json:"workflowRef"`
 	StepName        string                  `json:"stepName"`
 	Attempt         int32                   `json:"attempt"`
 	Operation       UtilityOperationRequest `json:"operation"`
@@ -292,8 +292,7 @@ type Artifact struct {
 }
 
 type ArtifactSpec struct {
-	WorkflowRef      string              `json:"workflowRef"`
-	WorkflowUID      types.UID           `json:"workflowUID"`
+	WorkflowRef      UIDReference        `json:"workflowRef"`
 	ProducerRef      TypedLocalReference `json:"producerRef"`
 	ProducerUID      types.UID           `json:"producerUID"`
 	ProducerGrantRef UIDReference        `json:"producerGrantRef"`
@@ -329,7 +328,7 @@ type HumanSession struct {
 }
 
 type HumanSessionSpec struct {
-	WorkflowRef      string           `json:"workflowRef"`
+	WorkflowRef      UIDReference     `json:"workflowRef"`
 	RequesterSubject string           `json:"requesterSubject"`
 	ToolProfile      string           `json:"toolProfile"`
 	Capabilities     []string         `json:"capabilities,omitempty"`
@@ -372,7 +371,7 @@ type ValidationRun struct {
 
 type ValidationRunSpec struct {
 	AttemptRef  string              `json:"attemptRef"`
-	WorkflowRef string              `json:"workflowRef"`
+	WorkflowRef UIDReference        `json:"workflowRef"`
 	StepName    string              `json:"stepName"`
 	Attempt     int32               `json:"attempt"`
 	Provider    string              `json:"provider"`

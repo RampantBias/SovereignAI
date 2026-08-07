@@ -149,7 +149,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 
 func (r *AgentRunReconciler) ensureWorkspaceWriter(ctx context.Context, run *v1alpha1.AgentRun) (workspaceWriterGrant, workspaceWriterState, error) {
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return workspaceWriterGrant{}, workspaceWriterBlocked, err
 	}
 	if workflow.Status.WorkspaceWriterLeaseRef == "" {
@@ -286,11 +286,12 @@ func (r *AgentRunReconciler) ensureLease(ctx context.Context, run *v1alpha1.Agen
 		return nil, err
 	}
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return nil, err
 	}
+	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID}
 	lease = v1alpha1.InferenceLease{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: run.Namespace}, Spec: v1alpha1.InferenceLeaseSpec{
-		WorkflowRef: workflow.Name, AttemptRef: run.Spec.AttemptRef, ProjectRef: workflow.Spec.Project.Name,
+		WorkflowRef: workflowRef, AttemptRef: run.Spec.AttemptRef, ProjectRef: workflow.Spec.Project.Name,
 		Tenant: workflow.Spec.Project.Name, Classification: workflow.Spec.Classification,
 		SharingScope: run.Spec.Inference.SharingScope, Model: run.Spec.Inference.Model,
 		ModelRevision: run.Spec.Inference.ModelRevision, EstimatedKVRAMMiB: run.Spec.Inference.EstimatedKVRAMMiB,
@@ -322,20 +323,24 @@ func (r *AgentRunReconciler) deletePod(ctx context.Context, run *v1alpha1.AgentR
 
 func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.AgentRun, endpoint string, grant workspaceWriterGrant) error {
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return err
 	}
 	outputs := make([]agentcontract.OutputObligation, 0, len(run.Spec.OutputContracts))
 	for _, output := range run.Spec.OutputContracts {
 		outputs = append(outputs, agentcontract.OutputObligation{Name: output.Name, Version: output.Version, Required: true})
 	}
-
+	inferenceModel := ""
+	if run.Spec.Inference != nil {
+		inferenceModel = run.Spec.Inference.Model
+	}
 	inputs := make([]agentcontract.ArtifactInput, 0, len(run.Spec.Inputs))
 	for _, input := range run.Spec.Inputs {
 		var artifact v1alpha1.Artifact
 		if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: input.Name}, &artifact); err != nil {
 			return err
 		}
+		//if artifact.Spec.WorkflowUID != types.UID(run.Spec.
 
 		inputs = append(inputs,
 			agentcontract.ArtifactInput{
@@ -352,7 +357,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		Role:              run.Spec.StepName,
 		Responsibility:    run.Spec.Responsibility,
 		Capabilities:      append([]string(nil), run.Spec.Capabilities...),
-		InferenceModel:    run.Spec.Inference.Model,
+		InferenceModel:    inferenceModel,
 		Inputs:            inputs,
 		Outputs:           outputs,
 		InferenceEndpoint: endpoint,
@@ -383,7 +388,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 
 func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant workspaceWriterGrant) *corev1.Pod {
 	if pvcName == "" {
-		pvcName = run.Spec.WorkflowRef + "-workspace"
+		pvcName = run.Spec.WorkflowRef.Name + "-workspace"
 	}
 	automount, nonRoot, readOnly, allowPrivilegeEscalation := false, true, true, false
 	runAsUser := int64(65532)
@@ -407,7 +412,7 @@ func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant 
 
 func (r *AgentRunReconciler) startCollection(ctx context.Context, run *v1alpha1.AgentRun) (ctrl.Result, error) {
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return ctrl.Result{}, err
 	}
 	grant, err := r.workspaceWriterGrant(run)
@@ -540,7 +545,7 @@ func (r *AgentRunReconciler) updateStatus(ctx context.Context, key types.Namespa
 
 func (r *AgentRunReconciler) appendEvent(ctx context.Context, run *v1alpha1.AgentRun, eventType, action, target, outcome, reason string) error {
 	return appendControllerEvent(ctx, r.Audit, "agentrun-controller", r.Now, audit.EventOptions{
-		Type: eventType, Subject: audit.Subject{Namespace: run.Namespace, Workflow: run.Spec.WorkflowRef, Step: run.Spec.StepName, Attempt: run.Spec.Attempt},
+		Type: eventType, Subject: audit.Subject{Namespace: run.Namespace, Workflow: run.Spec.WorkflowRef.Name, Step: run.Spec.StepName, Attempt: run.Spec.Attempt},
 		Action: action, Target: target, Outcome: outcome, Reason: reason,
 		References: map[string]string{"agentRun": run.Name, "stepAttempt": run.Spec.AttemptRef, "pod": run.Status.PodRef, "collector": run.Status.CollectorJobRef, "lease": run.Status.InferenceLeaseRef, "workspaceWriterLease": run.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(run.Status.WorkspaceWriterEpoch)},
 	})
@@ -558,19 +563,68 @@ func buildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWo
 	jobName := owner.GetName() + "-collect"
 	automount, backoff := true, int32(0)
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()}, AutomountServiceAccountToken: &automount}
-	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"artifacts"}, Verbs: []string{"create", "get"}}}}
-	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: name, Namespace: owner.GetNamespace()}}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}}
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: owner.GetNamespace(), Annotations: workspaceWriterAnnotations(grant)}, Spec: batchv1.JobSpec{BackoffLimit: &backoff, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: workspaceWriterAnnotations(grant)}, Spec: corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: name,
-		Containers: []corev1.Container{{Name: "collector", Image: image, Args: []string{
-			"--namespace", owner.GetNamespace(), "--workflow", workflow.Name, "--attempt", owner.GetName(),
-			"--producer-kind", producerKind(owner), "--producer-api-version", v1alpha1.GroupVersion.String(),
-			"--result", executionResultPath(owner.GetName()), "--staging", executionStagingPath(owner.GetName()),
-			"--artifact-store", "/workspace/.sovereign/artifacts", "--audit-events", executionAuditEventsPath(owner.GetName()),
-			"--source-revision", workflow.Spec.DefinitionRevision,
-		}, Env: append(collectorAuditEnv(), workspaceWriterEnv(grant)...), VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}}}},
-		Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: workflow.Status.PvcName}}}},
-	}}}}
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: owner.GetNamespace(),
+		},
+		Rules: []rbacv1.PolicyRule{{APIGroups: []string{v1alpha1.GroupVersion.Group}, Resources: []string{"artifacts"}, Verbs: []string{"create", "get"}}}}
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: owner.GetNamespace(),
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: name, Namespace: owner.GetNamespace()},
+		},
+		RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        jobName,
+			Namespace:   owner.GetNamespace(),
+			Annotations: workspaceWriterAnnotations(grant)},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoff,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: workspaceWriterAnnotations(grant),
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: name,
+					Containers: []corev1.Container{{
+						Name:  "collector",
+						Image: image,
+						Args: []string{
+							"--namespace", owner.GetNamespace(),
+							"--workflow", workflow.Name,
+							"--workflowuid", string(workflow.ObjectMeta.UID),
+							"--attempt", owner.GetName(),
+							"--producer-kind", producerKind(owner),
+							"--producer-api-version", v1alpha1.GroupVersion.String(),
+							"--result", executionResultPath(owner.GetName()),
+							"--staging", executionStagingPath(owner.GetName()),
+							"--artifact-store", "/workspace/.sovereign/artifacts",
+							"--audit-events", executionAuditEventsPath(owner.GetName()),
+							"--source-revision", workflow.Spec.DefinitionRevision,
+						},
+						Env: append(collectorAuditEnv(), workspaceWriterEnv(grant)...),
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "workspace",
+							MountPath: "/workspace"}}},
+					},
+					Volumes: []corev1.Volume{{
+						Name: "workspace",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: workflow.Status.PvcName,
+							},
+						},
+					},
+					},
+				},
+			},
+		},
+	}
 	_ = stepName
 	return []client.Object{serviceAccount, role, binding, job}
 }

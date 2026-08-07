@@ -7,11 +7,12 @@
 package pb
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -624,7 +625,7 @@ type AuditSubjectDTO struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Namespace     string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Workflow      string                 `protobuf:"bytes,3,opt,name=workflow,proto3" json:"workflow,omitempty"`
+	WorkflowName  string                 `protobuf:"bytes,3,opt,name=workflowName,proto3" json:"workflow,omitempty"`
 	Step          string                 `protobuf:"bytes,4,opt,name=step,proto3" json:"step,omitempty"`
 	Attempt       int32                  `protobuf:"varint,5,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -677,7 +678,7 @@ func (x *AuditSubjectDTO) GetNamespace() string {
 
 func (x *AuditSubjectDTO) GetWorkflow() string {
 	if x != nil {
-		return x.Workflow
+		return x.WorkflowName
 	}
 	return ""
 }

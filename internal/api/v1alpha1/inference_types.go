@@ -60,7 +60,7 @@ type InferenceLease struct {
 }
 
 type InferenceLeaseSpec struct {
-	WorkflowRef       string       `json:"workflowRef"`
+	WorkflowRef       UIDReference `json:"workflowRef"`
 	AttemptRef        string       `json:"attemptRef"`
 	ProjectRef        string       `json:"projectRef"`
 	Tenant            string       `json:"tenant"`

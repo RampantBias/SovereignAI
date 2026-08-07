@@ -25,7 +25,7 @@ func TestStepAttemptMirrorsOwnedAgentRunStatus(t *testing.T) {
 	attempt := authorizedAttempt("architect-001", "wf", "architect", v1alpha1.ExecutionKindAgent)
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace},
-		Spec:       v1alpha1.AgentRunSpec{AttemptRef: attempt.Name, WorkflowRef: "wf", StepName: "architect", Attempt: 1, Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
+		Spec:       v1alpha1.AgentRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRefFixture(), StepName: "architect", Attempt: 1, Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
 		Status:     v1alpha1.AgentRunStatus{Phase: v1alpha1.PhaseRunning},
 	}
 	ownByAttempt(run, attempt)
@@ -55,8 +55,13 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", UID: "architect-run-uid", Labels: map[string]string{LabelWorkflow: "wf"}},
 		Spec: v1alpha1.AgentRunSpec{
-			AttemptRef: "architect-001", WorkflowRef: "wf", StepName: "architect", Attempt: 1,
-			Responsibility: "plan", Image: "agent@sha256:test", Executable: []string{"/domain-agent", "--role", "architect"},
+			AttemptRef:      "architect-001",
+			WorkflowRef:     workflowRefFixture(),
+			StepName:        "architect",
+			Attempt:         1,
+			Responsibility:  "plan",
+			Image:           "agent@sha256:test",
+			Executable:      []string{"/domain-agent", "--role", "architect"},
 			OutputContracts: []v1alpha1.ContractReference{{Name: "implementation-plan", Version: "v1"}},
 		},
 		Status: v1alpha1.AgentRunStatus{Phase: v1alpha1.PhasePending},
@@ -110,7 +115,7 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "tests-001", Namespace: "wf", UID: "tests-operation-uid", Labels: map[string]string{LabelWorkflow: "wf"}},
 		Spec: v1alpha1.UtilityOperationSpec{
-			AttemptRef: "tests-001", WorkflowRef: "wf", StepName: "tests", Attempt: 1,
+			AttemptRef: "tests-001", WorkflowRef: workflowRefFixture(), StepName: "tests", Attempt: 1,
 			Operation:       v1alpha1.UtilityOperationRequest{Name: "test.run"},
 			OutputContracts: []v1alpha1.ContractReference{{Name: "test-report", Version: "v1"}},
 		},
@@ -164,7 +169,7 @@ func TestPrivilegedUtilityOperationFailsClosedWithoutPolicy(t *testing.T) {
 	attempt := authorizedAttempt("commit-001", "wf", "commit", v1alpha1.ExecutionKindUtility)
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "commit-001", Namespace: "wf"},
-		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "commit-001", WorkflowRef: "wf", StepName: "commit", Attempt: 1,
+		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "commit-001", WorkflowRef: workflowRefFixture(), StepName: "commit", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "git.commit", Parameters: map[string]string{"message": "change"}}},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
 	}
@@ -197,7 +202,7 @@ func TestUtilityOperationScopesRegistryCredentialToUtilityContainer(t *testing.T
 	attempt := authorizedAttempt("build-001", "wf", "build", v1alpha1.ExecutionKindUtility)
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-001", Namespace: "wf", UID: "operation-uid"},
-		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "build-001", WorkflowRef: "wf", StepName: "build", Attempt: 1,
+		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "build-001", WorkflowRef: workflowRefFixture(), StepName: "build", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "build.image"}},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
 	}
@@ -338,7 +343,7 @@ func TestUtilityOperationScopesRepositoryCredentialToHTTPSGit(t *testing.T) {
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "initialize-001", Namespace: "wf", UID: "initialize-operation-uid"},
 		Spec: v1alpha1.UtilityOperationSpec{
-			AttemptRef: "initialize-001", WorkflowRef: "wf", StepName: "initialize", Attempt: 1,
+			AttemptRef: "initialize-001", WorkflowRef: workflowRefFixture(), StepName: "initialize", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "repository.initialize"},
 		},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
@@ -399,7 +404,7 @@ func TestApprovalRequestOwnsAwaitingApprovalState(t *testing.T) {
 	attempt := authorizedAttempt("approval-001", "wf", "approval", v1alpha1.ExecutionKindHumanGate)
 	approval := &v1alpha1.ApprovalRequest{
 		ObjectMeta: metav1.ObjectMeta{Name: "approval-001", Namespace: "wf"},
-		Spec: v1alpha1.ApprovalRequestSpec{AttemptRef: v1alpha1.UIDReference{Name: "approval-001"}, WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, StepName: "approval", Attempt: 1,
+		Spec: v1alpha1.ApprovalRequestSpec{AttemptRef: v1alpha1.UIDReference{Name: "approval-001"}, WorkflowRef: workflowRefFixture(), StepName: "approval", Attempt: 1,
 			Approval: v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, RequiredGroups: []string{"maintainers"}, DenyBehavior: "Fail"}},
 	}
 	ownByAttempt(approval, attempt)
@@ -422,7 +427,7 @@ func TestUtilityOperationCannotActWithoutStepAttemptAuthority(t *testing.T) {
 	attempt := authorizedAttempt("push-001", "wf", "push", v1alpha1.ExecutionKindUtility)
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace, UID: "unowned-operation"},
-		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: attempt.Name, WorkflowRef: "wf", StepName: "push", Attempt: 1,
+		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRefFixture(), StepName: "push", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "git.push", Parameters: map[string]string{"branch": "main"}}},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
 	}
@@ -465,10 +470,17 @@ func attemptScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
+func workflowRefFixture() v1alpha1.UIDReference {
+	return v1alpha1.UIDReference{
+		Name: "wf",
+		UID:  types.UID("workflow-uid"),
+	}
+}
+
 func workflowFixture() *v1alpha1.SovereignWorkflow {
 	return &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf", Namespace: "wf", UID: "workflow-uid"},
-		Spec:       v1alpha1.SovereignWorkflowSpec{WorkflowID: "wf", Project: v1alpha1.UIDReference{Name: "project"}},
+		Spec:       v1alpha1.SovereignWorkflowSpec{WorkflowID: "wf", Project: v1alpha1.UIDReference{Name: "project", UID: "project-uid"}},
 		Status:     v1alpha1.SovereignWorkflowStatus{PvcName: "wf-workspace", WorkspaceWriterLeaseRef: "wf-workspace-writer"},
 	}
 }
@@ -503,7 +515,7 @@ func (allowPolicy) Evaluate(context.Context, any) (policyengine.Decision, error)
 func authorizedAttempt(name, namespace, step string, kind v1alpha1.ExecutionKind) *v1alpha1.StepAttempt {
 	return &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID("uid-" + name)},
-		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: "wf", StepName: step, Attempt: 1, Kind: kind},
+		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}, StepName: step, Attempt: 1, Kind: kind},
 		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending, ExecutionRef: &v1alpha1.TypedLocalReference{
 			APIVersion: v1alpha1.GroupVersion.String(), Kind: domainKind(kind), Name: name,
 		}},

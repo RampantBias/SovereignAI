@@ -64,7 +64,7 @@ func compatible(lease v1alpha1.InferenceLease, endpoint v1alpha1.InferenceEndpoi
 	case v1alpha1.SharingDedicated:
 		return false
 	case v1alpha1.SharingWithinWorkflow:
-		return endpoint.Labels["sovereign-ai.io/workflow-id"] == lease.Spec.WorkflowRef
+		return endpoint.Labels["sovereign-ai.io/workflow-id"] == lease.Spec.WorkflowRef.Name
 	case v1alpha1.SharingWithinProject:
 		return endpoint.Labels["sovereign-ai.io/project"] == lease.Spec.ProjectRef
 	case v1alpha1.SharingWithinTenant, v1alpha1.SharingWithinClassification:

@@ -117,7 +117,7 @@ func (r *ValidationRunReconciler) appendValidationEvent(ctx context.Context, run
 		Type: eventType,
 		Subject: audit.Subject{
 			Namespace: run.Namespace,
-			Workflow:  run.Spec.WorkflowRef,
+			Workflow:  run.Spec.WorkflowRef.Name,
 		},
 		Action:  action,
 		Target:  run.Name,
@@ -140,7 +140,7 @@ func (r *ValidationRunReconciler) appendValidationEvent(ctx context.Context, run
 
 func (r *ValidationRunReconciler) providerRequest(ctx context.Context, run *v1alpha1.ValidationRun) (validation.Request, error) {
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return validation.Request{}, err
 	}
 	var project v1alpha1.SovereignProject

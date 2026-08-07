@@ -56,6 +56,7 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 		},
 	}
 	controller := true
+	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID}
 	artifact := &v1alpha1.Artifact{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "change-request", Namespace: workflow.Namespace, UID: "artifact-uid",
@@ -65,7 +66,7 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 			}},
 		},
 		Spec: v1alpha1.ArtifactSpec{
-			WorkflowRef: workflow.Name,
+			WorkflowRef: workflowRef,
 			ProducerRef: v1alpha1.TypedLocalReference{
 				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: workflow.Name,
 			},

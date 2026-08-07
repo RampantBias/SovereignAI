@@ -102,7 +102,7 @@ func artifactFixture(t *testing.T, content []byte, digest string, contract v1alp
 	return &v1alpha1.Artifact{
 		ObjectMeta: metav1.ObjectMeta{Name: "artifact", Namespace: "workflow", Generation: 1},
 		Spec: v1alpha1.ArtifactSpec{
-			WorkflowRef: "workflow", ProducerRef: v1alpha1.TypedLocalReference{Kind: "AgentRun", Name: "architect"},
+			WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, ProducerRef: v1alpha1.TypedLocalReference{Kind: "AgentRun", Name: "architect"},
 			Contract: contract, Digest: digest, Path: path,
 		},
 	}

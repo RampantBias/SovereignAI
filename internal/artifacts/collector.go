@@ -15,7 +15,7 @@ type Collected struct {
 	Spec v1alpha1.ArtifactSpec
 }
 
-func Collect(stagingRoot, artifactRoot, workflow string, producer v1alpha1.TypedLocalReference, sourceRevision string, outputs []agentcontract.ArtifactOutput) ([]Collected, error) {
+func Collect(stagingRoot, artifactRoot string, workflow v1alpha1.UIDReference, producer v1alpha1.TypedLocalReference, sourceRevision string, outputs []agentcontract.ArtifactOutput) ([]Collected, error) {
 	collected := make([]Collected, 0, len(outputs))
 	for _, output := range outputs {
 		if output.MediaType != "" && output.MediaType != "application/json" {

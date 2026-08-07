@@ -38,7 +38,8 @@ func TestTypedArtifactPassesCollectorStoreAndReconciliation(t *testing.T) {
 	if err := os.WriteFile(source, content, 0o440); err != nil {
 		t.Fatal(err)
 	}
-	collected, err := artifacts.Collect(staging, store, "workflow", v1alpha1.TypedLocalReference{
+	workflowRef := v1alpha1.UIDReference{Name: "workflow", UID: "workflow-uid"}
+	collected, err := artifacts.Collect(staging, store, workflowRef, v1alpha1.TypedLocalReference{
 		APIVersion: v1alpha1.GroupVersion.String(), Kind: "AgentRun", Name: "fixture",
 	}, strings.Repeat("a", 40), []agentcontract.ArtifactOutput{{
 		Contract: artifactcontract.ChangeRequestContract, Path: source, MediaType: "application/json",

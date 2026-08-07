@@ -48,6 +48,6 @@ func endpointFixture() v1alpha1.InferenceEndpoint {
 func leaseFixture(name string, kv int64, priority int32, evictable bool) v1alpha1.InferenceLease {
 	return v1alpha1.InferenceLease{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       v1alpha1.InferenceLeaseSpec{WorkflowRef: "wf", ProjectRef: "project", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: kv, Priority: priority, Evictable: evictable},
+		Spec:       v1alpha1.InferenceLeaseSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, ProjectRef: "project", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: kv, Priority: priority, Evictable: evictable},
 	}
 }

@@ -24,7 +24,7 @@ func TestInferenceLeaseBindsCompatibleWarmEndpoint(t *testing.T) {
 	}
 	lease := &v1alpha1.InferenceLease{
 		ObjectMeta: metav1.ObjectMeta{Name: "lease", Namespace: "workflow"},
-		Spec:       v1alpha1.InferenceLeaseSpec{WorkflowRef: "wf", AttemptRef: "developer-001", ProjectRef: "project", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2000},
+		Spec:       v1alpha1.InferenceLeaseSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, AttemptRef: "developer-001", ProjectRef: "project", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2000},
 	}
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: InferenceNamespace}}
 	client := fake.NewClientBuilder().WithScheme(scheme).

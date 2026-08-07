@@ -173,7 +173,7 @@ func (r *WorkflowReconciler) reconcileBootstrap(ctx context.Context, workflow *v
 			},
 		},
 		Spec: v1alpha1.ArtifactSpec{
-			WorkflowRef: workflow.Name,
+			WorkflowRef: v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID},
 			ProducerRef: v1alpha1.TypedLocalReference{
 				APIVersion: v1alpha1.GroupVersion.String(),
 				Kind:       "SovereignWorkflow",
@@ -403,8 +403,9 @@ func validateBootstrapArtifactIdentity(workflow *v1alpha1.SovereignWorkflow, art
 	if !metav1.IsControlledBy(artifact, workflow) {
 		return fmt.Errorf("bootstrap Artifact is not controlled by workflow")
 	}
+	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID}
 	if artifact.Name != workflow.Spec.Bootstrap.ArtifactName ||
-		artifact.Spec.WorkflowRef != workflow.Name ||
+		artifact.Spec.WorkflowRef != workflowRef ||
 		artifact.Spec.Contract != workflow.Spec.Bootstrap.Contract ||
 		artifact.Spec.Digest != workflow.Spec.Bootstrap.ExpectedDigest ||
 		artifact.Spec.Path != bootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest) {

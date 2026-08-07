@@ -44,14 +44,14 @@ func (r *FileRecorder) Append(_ context.Context, event Event) error {
 	return nil
 }
 
-func (r *FileRecorder) ListWorkflow(_ context.Context, workflow string) ([]Event, error) {
+func (r *FileRecorder) ListWorkflow(_ context.Context, workflowName string) ([]Event, error) {
 	events, err := ReadEventFile(r.path)
 	if err != nil {
 		return nil, err
 	}
 	filtered := events[:0]
 	for _, event := range events {
-		if event.Subject.Workflow == workflow || event.CorrelationID == workflow {
+		if event.Subject.Workflow == workflowName || event.CorrelationID == workflowName {
 			filtered = append(filtered, event)
 		}
 	}

@@ -273,7 +273,7 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 			Labels:    map[string]string{LabelWorkflow: workflow.Spec.WorkflowID, LabelStep: step.Name},
 		},
 		Spec: v1alpha1.StepAttemptSpec{
-			WorkflowRef: workflow.Name,
+			WorkflowRef: v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.UID},
 			StepName:    step.Name,
 			Attempt:     number,
 			Kind:        step.Kind,
@@ -342,7 +342,7 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 			return nil, fmt.Errorf("human gate %s has no approval specification", step.Name)
 		}
 		object = &v1alpha1.ApprovalRequest{ObjectMeta: metadata, Spec: v1alpha1.ApprovalRequestSpec{
-			AttemptRef: v1alpha1.UIDReference{Name: attempt.Name}, WorkflowRef: v1alpha1.UIDReference{Name: attempt.Spec.WorkflowRef}, StepName: step.Name,
+			AttemptRef: v1alpha1.UIDReference{Name: attempt.Name}, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name,
 			Attempt: attempt.Spec.Attempt, Approval: copyApprovalSpec(*step.Approval),
 		}}
 		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ApprovalRequest", Name: attempt.Name}

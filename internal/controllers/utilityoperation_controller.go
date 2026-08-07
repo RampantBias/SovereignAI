@@ -149,7 +149,7 @@ func (r *UtilityOperationReconciler) Reconcile(ctx context.Context, request ctrl
 
 func (r *UtilityOperationReconciler) ensureWorkspaceWriter(ctx context.Context, operation *v1alpha1.UtilityOperation) (workspaceWriterGrant, workspaceWriterState, error) {
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return workspaceWriterGrant{}, workspaceWriterBlocked, err
 	}
 	if workflow.Status.WorkspaceWriterLeaseRef == "" {
@@ -329,7 +329,7 @@ func utilityCredentialReference(project *v1alpha1.SovereignProject, operation st
 
 func (r *UtilityOperationReconciler) resolveContext(ctx context.Context, operation *v1alpha1.UtilityOperation) (*v1alpha1.SovereignWorkflow, *v1alpha1.SovereignProject, error) {
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.WorkflowRef}, &workflow); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return nil, nil, err
 	}
 	if workflow.Spec.Project.Name == "" {
@@ -615,7 +615,7 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 	automount, allowPrivilegeEscalation := false, false
 	backoff, ttl := int32(0), int32(3600)
 	if pvcName == "" {
-		pvcName = operation.Spec.WorkflowRef + "-workspace"
+		pvcName = operation.Spec.WorkflowRef.Name + "-workspace"
 	}
 	runnerPath := "/utility-runner"
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: operation.Name, Namespace: operation.Namespace, Labels: map[string]string{
@@ -753,7 +753,7 @@ func (r *UtilityOperationReconciler) updateStatus(ctx context.Context, key types
 
 func (r *UtilityOperationReconciler) appendEvent(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType, action, target, outcome, reason string, data any) error {
 	return appendControllerEvent(ctx, r.Audit, "utilityoperation-controller", r.Now, audit.EventOptions{
-		Type: eventType, Subject: audit.Subject{Namespace: operation.Namespace, Workflow: operation.Spec.WorkflowRef, Step: operation.Spec.StepName, Attempt: operation.Spec.Attempt},
+		Type: eventType, Subject: audit.Subject{Namespace: operation.Namespace, Workflow: operation.Spec.WorkflowRef.Name, Step: operation.Spec.StepName, Attempt: operation.Spec.Attempt},
 		Action: action, Target: target, Outcome: outcome, Reason: reason, DecisionID: operation.Status.PolicyDecisionID,
 		References: map[string]string{"utilityOperation": operation.Name, "stepAttempt": operation.Spec.AttemptRef, "job": operation.Status.JobRef, "collector": operation.Status.CollectorJobRef, "workspaceWriterLease": operation.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(operation.Status.WorkspaceWriterEpoch)},
 		Data:       data,

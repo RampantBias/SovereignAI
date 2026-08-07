@@ -25,11 +25,12 @@ func TestCollectCreatesContentAddressedArtifactIdempotently(t *testing.T) {
 	}
 	output := []agentcontract.ArtifactOutput{{Contract: artifactcontract.ImplementationPlanContract, Path: file}}
 	producer := v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "AgentRun", Name: "architect-001"}
-	first, err := Collect(staging, store, "wf", producer, "abc", output)
+	workflowRef := v1alpha1.UIDReference{Name: "wf", UID: "wf-uid"}
+	first, err := Collect(staging, store, workflowRef, producer, "abc", output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Collect(staging, store, "wf", producer, "abc", output)
+	second, err := Collect(staging, store, workflowRef, producer, "abc", output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,9 +56,10 @@ func TestCollectRejectsInvalidAndUnregisteredContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	producer := v1alpha1.TypedLocalReference{Kind: "AgentRun", Name: "architect-001"}
+	workflowRef := v1alpha1.UIDReference{Name: "wf", UID: "wf-uid"}
 	for _, contract := range []string{artifactcontract.ImplementationPlanContract, "unknown/v1", "invalid/v1/extra"} {
 		t.Run(contract, func(t *testing.T) {
-			_, err := Collect(staging, store, "wf", producer, "abc", []agentcontract.ArtifactOutput{{Contract: contract, Path: file}})
+			_, err := Collect(staging, store, workflowRef, producer, "abc", []agentcontract.ArtifactOutput{{Contract: contract, Path: file}})
 			if err == nil {
 				t.Fatal("expected collection rejection")
 			}
@@ -67,7 +69,7 @@ func TestCollectRejectsInvalidAndUnregisteredContracts(t *testing.T) {
 	if err := os.WriteFile(file, validImplementationPlan(t), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Collect(staging, store, "wf", producer, "abc", []agentcontract.ArtifactOutput{{
+	_, err := Collect(staging, store, workflowRef, producer, "abc", []agentcontract.ArtifactOutput{{
 		Contract: artifactcontract.ImplementationPlanContract, Path: file, MediaType: "text/markdown",
 	}})
 	if err == nil || !strings.Contains(err.Error(), "requires application/json") {
@@ -87,8 +89,9 @@ func TestCollectRejectsTamperedExistingStoredContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(store, digest), []byte(`{"tampered":true}`), 0o440); err != nil {
 		t.Fatal(err)
 	}
+	workflowRef := v1alpha1.UIDReference{Name: "wf", UID: "wf-uid"}
 	producer := v1alpha1.TypedLocalReference{Kind: "AgentRun", Name: "architect-001"}
-	_, err := Collect(staging, store, "wf", producer, "abc", []agentcontract.ArtifactOutput{{
+	_, err := Collect(staging, store, workflowRef, producer, "abc", []agentcontract.ArtifactOutput{{
 		Contract: artifactcontract.ImplementationPlanContract, Path: file,
 	}})
 	if err == nil || !strings.Contains(err.Error(), "digest mismatch") {
