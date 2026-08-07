@@ -40,6 +40,7 @@ type Input struct {
 	Attempt           int32                   `json:"attempt"`
 	Role              string                  `json:"role"`
 	Responsibility    string                  `json:"responsibility"`
+	InferenceModel    string                  `json:"inferenceModel"`
 	Inputs            []ArtifactInput         `json:"inputs,omitempty"`
 	Outputs           []OutputObligation      `json:"outputs,omitempty"`
 	Capabilities      []string                `json:"capabilities,omitempty"`

@@ -94,36 +94,3 @@ These documents answer: **how is the system installed, configured, operated, and
 ### 6. Architecture decision records
 
 Use [`decisions`](../decisions) for one consequential choice, its alternatives, and consequences. An ADR records **why one option was selected**; the architecture document records the resulting system; a component document describes how that decision is implemented.
-
-Examples requiring an ADR include selecting a service mesh, choosing the audit store, changing CRD ownership, or adopting llm-d.
-
-## Example: service mesh documentation
-
-The service mesh should appear at several levels without duplicating content:
-
-- `architecture/security-model.md`: requirement for authenticated workload identity and isolated communication;
-- `decisions/ADR-....md`: why a specific mesh was selected over alternatives;
-- `components/service-mesh.md`: identities, certificate flow, policies, and integration behavior;
-- `interfaces/identity.md`: SPIFFE ID and authorization-claim formats;
-- `operations/service-mesh.md`: installation, rotation, debugging, and recovery.
-
-## Example: MCP documentation
-
-- `architecture/security-model.md`: capability-based, deny-by-default tool access;
-- an ADR if the protocol or server architecture is consequential;
-- `components/mcp-server.md`: server responsibilities, authorization flow, isolation, and auditing;
-- `interfaces/mcp-tools/<tool>.json`: exact input/output schemas;
-- `operations/mcp-server.md`: configuration and incident procedures.
-
-## Authoring rule
-
-Start at the highest level affected, then link downward:
-
-1. update product/MVP scope if user-visible commitments change;
-2. update architecture if a system boundary or invariant changes;
-3. update or create an ADR for a consequential choice;
-4. update the component design for implementation behavior;
-5. update interface schemas for contract changes; and
-6. update operations documentation for deployment or support impact.
-
-Do not copy the same explanation into every layer. State the rule once at its authoritative level and link to it.
