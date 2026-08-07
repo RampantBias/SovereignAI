@@ -100,8 +100,15 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		}
 	}
 	jsonBytes, err := json.Marshal(payload)
+	if err != nil {
+		return ChatResponse{}, fmt.Errorf("failed to marshal payload to json: %w", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(jsonBytes))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.endpoint+"/v1/chat/completions",
+		bytes.NewReader(jsonBytes))
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("error creating inference request: %w", err)
 	}
