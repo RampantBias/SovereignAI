@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -71,9 +73,18 @@ func NewClient(
 	maxResponseBytes int64,
 ) (*Client, error) {
 	// validate endpoint, timeout, maxresponsebytes
-
+	chatEndpoint, err := validateEndpoint(inferenceURL)
+	if err != nil {
+		return nil, fmt.Errorf("inference url format is invalid: %w", err)
+	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("timeout must be greater than 0")
+	}
+	if maxResponseBytes < 0 {
+		return nil, fmt.Errorf("maxResponseBytes must be greater than 0")
+	}
 	return &Client{
-		endpoint:         inferenceURL,
+		endpoint:         chatEndpoint.String(),
 		httpClient:       &http.Client{Timeout: timeout},
 		maxResponseBytes: maxResponseBytes,
 	}, nil
@@ -104,11 +115,7 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		return ChatResponse{}, fmt.Errorf("failed to marshal payload to json: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		c.endpoint+"/v1/chat/completions",
-		bytes.NewReader(jsonBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(jsonBytes))
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("error creating inference request: %w", err)
 	}
@@ -149,4 +156,36 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		Content:      decoded.Choices[0].Message.Content,
 		FinishReason: decoded.Choices[0].FinishReason,
 	}, nil
+}
+
+func validateEndpoint(inferenceURL string) (*url.URL, error) {
+	inferenceURL = strings.TrimSpace(inferenceURL)
+	if len(inferenceURL) == 0 {
+		return nil, fmt.Errorf("inference endpoint is empty")
+	}
+
+	endpoint, err := url.Parse(inferenceURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse inference endpoint: %w", err)
+	}
+	if endpoint.Scheme != "http" || endpoint.Scheme != "https" {
+		return nil, fmt.Errorf("inference url must be http or https")
+	}
+
+	if len(endpoint.Hostname()) == 0 {
+		return nil, fmt.Errorf("inference url requires a hostname")
+	}
+	if endpoint.User != nil {
+		return nil, fmt.Errorf("inference endpoint must not be credentialed")
+	}
+	if len(endpoint.RawQuery) > 0 || len(endpoint.Fragment) > 0 {
+		return nil, fmt.Errorf("inference endpoint cannot contain raw query or fragment")
+	}
+	if len(endpoint.Path) != 0 && endpoint.Path != "/" {
+		return nil, fmt.Errorf("inference endpoint must be the base url without a path")
+	}
+
+	// OpenAI standard
+	endpoint.Path = "/v1/chat/completions"
+	return endpoint, nil
 }
