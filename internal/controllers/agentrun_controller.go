@@ -356,16 +356,18 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		Attempt:           run.Spec.Attempt,
 		Role:              run.Spec.StepName,
 		Responsibility:    run.Spec.Responsibility,
-		Capabilities:      append([]string(nil), run.Spec.Capabilities...),
 		InferenceModel:    inferenceModel,
 		Inputs:            inputs,
 		Outputs:           outputs,
+		Capabilities:      append([]string(nil), run.Spec.Capabilities...),
 		InferenceEndpoint: endpoint,
 		MCPServer:         "https://sovereign-mcp.sovereign-orchestrator-system.svc",
 		WorkspacePath:     "/workspace",
-		StagingPath:       executionStagingPath(run.Name), ControlPath: executionControlPath(run.Name),
-		ResultPath: executionResultPath(run.Name), AuditEventsPath: executionAuditEventsPath(run.Name),
-		WorkspaceWrite: agentcontract.WorkspaceWriteAuthority{LeaseName: grant.LeaseName, HolderIdentity: grant.HolderIdentity, WriterEpoch: grant.Epoch},
+		StagingPath:       executionStagingPath(run.Name),
+		ControlPath:       executionControlPath(run.Name),
+		ResultPath:        executionResultPath(run.Name),
+		AuditEventsPath:   executionAuditEventsPath(run.Name),
+		WorkspaceWrite:    agentcontract.WorkspaceWriteAuthority{LeaseName: grant.LeaseName, HolderIdentity: grant.HolderIdentity, WriterEpoch: grant.Epoch},
 	}
 	data, err := json.Marshal(input)
 	if err != nil {

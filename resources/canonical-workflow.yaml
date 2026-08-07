@@ -26,9 +26,12 @@ spec:
       kind: Agent
       order: 2
       agent:
-        responsibility: architect
+        responsibility: >
+          Analyze the change-request input and repository-revision input and produce
+          an implementation plan output identifying affected files, planned changes,
+          risks, and testing requirements.
         image: sovereign-reference-agent:dev
-        executable: ["/reference-agent", "--role", "architect"]
+        executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
         inference:
           model: code-small
@@ -47,9 +50,13 @@ spec:
       kind: Agent
       order: 3
       agent:
-        responsibility: test-author
+        responsibility: >
+          Analyze the change request, implementation plan, and repository revision.
+          Produce a test-change-set containing the concrete test-code changes
+          required to verify the requested behavior, including relevant success,
+          failure, and edge cases. Do not modify production code.
         image: sovereign-reference-agent:dev
-        executable: ["/reference-agent", "--role", "test-author"]
+        executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
         inference:
           model: code-small
@@ -69,9 +76,13 @@ spec:
       kind: Agent
       order: 4
       agent:
-        responsibility: developer
+        responsibility: >
+          Analyze the change request, implementation plan, repository revision, and
+          test change set. Produce a change-set containing the concrete production
+          code changes required to satisfy the change request, follow the implementation
+          plan, and pass the proposed tests. Do not modify the test changes.
         image: sovereign-reference-agent:dev
-        executable: ["/reference-agent", "--role", "developer"]
+        executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
         inference:
           model: code-small
