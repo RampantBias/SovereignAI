@@ -98,7 +98,10 @@ func configuredCommand() ([]string, error) {
 func run(ctx context.Context, command []string, inputPath, resultPath string, grace time.Duration) error {
 	// Build and execute run command
 	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Env = append(os.Environ(), "SOVEREIGN_INPUT_PATH="+inputPath, "SOVEREIGN_RESULT_PATH="+resultPath)
+	cmd.Env = append(
+		os.Environ(),
+		"SOVEREIGN_INPUT_PATH="+inputPath,
+		"SOVEREIGN_RESULT_PATH="+resultPath)
 	cmd.Stdout = os.Stdout // pipe child to out+err
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {

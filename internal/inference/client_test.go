@@ -156,3 +156,14 @@ func validChatRequest() ChatRequest {
 		},
 	}
 }
+
+// Need tests for
+/*
+	- non-2xx rejection
+	- ctx cancellation/timeout
+	- response size check
+	- server connection failure
+	- incorporate trailing slash checks
+	-
+
+*/
