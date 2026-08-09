@@ -52,6 +52,14 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	scheme := attemptScheme(t)
 	workflow := workflowFixture()
 	attempt := authorizedAttempt("architect-001", "wf", "architect", v1alpha1.ExecutionKindAgent)
+	inputArtifact := acceptedAgentInputArtifact(
+		"initialize-repository-a1-repository-revision-v1-00",
+		"repository-revision",
+		"v1",
+		"sha256:repository-revision",
+		"/workspace/.sovereign/artifacts/repository-revision.json",
+		workflowRefFixture(),
+	)
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", UID: "architect-run-uid", Labels: map[string]string{LabelWorkflow: "wf"}},
 		Spec: v1alpha1.AgentRunSpec{
@@ -62,6 +70,7 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 			Responsibility:  "plan",
 			Image:           "agent@sha256:test",
 			Executable:      []string{"/domain-agent", "--role", "architect"},
+			Inputs:          []v1alpha1.ArtifactReference{{Name: "repository-revision", Digest: "sha256:repository-revision"}},
 			OutputContracts: []v1alpha1.ContractReference{{Name: "implementation-plan", Version: "v1"}},
 		},
 		Status: v1alpha1.AgentRunStatus{Phase: v1alpha1.PhasePending},
@@ -69,7 +78,7 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	ownByAttempt(run, attempt)
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.AgentRun{}).
-		WithObjects(workflow, workspaceLeaseFixture(), attempt, run).Build()
+		WithObjects(workflow, workspaceLeaseFixture(), attempt, run, inputArtifact).Build()
 	reconciler := &AgentRunReconciler{Client: client, Scheme: scheme}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(run)); err != nil {
 		t.Fatal(err)
@@ -99,8 +108,14 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	if err := json.Unmarshal([]byte(input.Data["input.json"]), &contract); err != nil {
 		t.Fatal(err)
 	}
-	if contract.Responsibility != "plan" || len(contract.Outputs) != 1 {
+	if contract.Responsibility != "plan" || len(contract.Outputs) != 1 || len(contract.Inputs) != 1 {
 		t.Fatalf("unexpected agent contract: %#v", contract)
+	}
+	if contract.Inputs[0].Name != "repository-revision" ||
+		contract.Inputs[0].Contract != "repository-revision/v1" ||
+		contract.Inputs[0].Digest != inputArtifact.Spec.Digest ||
+		contract.Inputs[0].Path != inputArtifact.Spec.Path {
+		t.Fatalf("agent contract did not resolve the logical artifact input: %#v", contract.Inputs[0])
 	}
 	if contract.WorkspaceWrite.WriterEpoch != 1 || contract.WorkspaceWrite.LeaseName != workflow.Status.WorkspaceWriterLeaseRef {
 		t.Fatalf("agent contract lost workspace writer authority: %#v", contract.WorkspaceWrite)

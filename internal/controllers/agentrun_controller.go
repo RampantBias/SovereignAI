@@ -75,6 +75,28 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
 
+	var resolvedInputs []agentcontract.ArtifactInput
+	if run.Status.PodRef == "" {
+		var ready bool
+		var invalidReason string
+		resolvedInputs, ready, invalidReason, err = r.resolveAgentInputs(ctx, &run)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if invalidReason != "" {
+			return ctrl.Result{}, r.fail(ctx, &run, "InvalidArtifactInputs", false)
+		}
+		if !ready {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, r.setPhase(
+				ctx,
+				&run,
+				v1alpha1.PhasePending,
+				"WaitingForArtifactInputs",
+				"waiting for all declared input artifacts to be accepted",
+			)
+		}
+	}
+
 	endpoint := ""
 	if run.Spec.Inference != nil {
 		lease, err := r.ensureLease(ctx, &run)
@@ -117,7 +139,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	}
 
 	if run.Status.PodRef == "" {
-		if err := r.ensureWorkload(ctx, &run, endpoint, grant); err != nil {
+		if err := r.ensureWorkload(ctx, &run, endpoint, grant, resolvedInputs); err != nil {
 			return ctrl.Result{}, err
 		}
 		run.Status.PodRef = run.Name
@@ -321,10 +343,13 @@ func (r *AgentRunReconciler) deletePod(ctx context.Context, run *v1alpha1.AgentR
 	return client.IgnoreNotFound(r.Delete(ctx, pod))
 }
 
-func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.AgentRun, endpoint string, grant workspaceWriterGrant) error {
+func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.AgentRun, endpoint string, grant workspaceWriterGrant, inputs []agentcontract.ArtifactInput) error {
 	var workflow v1alpha1.SovereignWorkflow
 	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
 		return err
+	}
+	if workflow.UID != run.Spec.WorkflowRef.UID {
+		return fmt.Errorf("workflow %q UID does not match AgentRun workflow reference", workflow.Name)
 	}
 	outputs := make([]agentcontract.OutputObligation, 0, len(run.Spec.OutputContracts))
 	for _, output := range run.Spec.OutputContracts {
@@ -333,21 +358,6 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 	inferenceModel := ""
 	if run.Spec.Inference != nil {
 		inferenceModel = run.Spec.Inference.Model
-	}
-	inputs := make([]agentcontract.ArtifactInput, 0, len(run.Spec.Inputs))
-	for _, input := range run.Spec.Inputs {
-		var artifact v1alpha1.Artifact
-		if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: input.Name}, &artifact); err != nil {
-			return err
-		}
-		//if artifact.Spec.WorkflowUID != types.UID(run.Spec.
-
-		inputs = append(inputs,
-			agentcontract.ArtifactInput{
-				Name:     artifact.Name,
-				Contract: artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version,
-				Digest:   artifact.Spec.Digest,
-				Path:     artifact.Spec.Path})
 	}
 	input := agentcontract.Input{
 		SchemaVersion:     agentcontract.Version,
@@ -386,6 +396,99 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		return err
 	}
 	return client.IgnoreAlreadyExists(r.Create(ctx, pod))
+}
+
+func (r *AgentRunReconciler) resolveAgentInputs(ctx context.Context, run *v1alpha1.AgentRun) ([]agentcontract.ArtifactInput, bool, string, error) {
+	if len(run.Spec.Inputs) == 0 {
+		return nil, true, "", nil
+	}
+
+	var artifacts v1alpha1.ArtifactList
+	if err := r.List(ctx, &artifacts, client.InNamespace(run.Namespace)); err != nil {
+		return nil, false, "", fmt.Errorf("list input artifacts: %w", err)
+	}
+
+	resolved := make([]agentcontract.ArtifactInput, 0, len(run.Spec.Inputs))
+	seen := make(map[string]struct{}, len(run.Spec.Inputs))
+	for _, requested := range run.Spec.Inputs {
+		if requested.Name == "" {
+			return nil, false, "input artifact name is empty", nil
+		}
+		if _, exists := seen[requested.Name]; exists {
+			return nil, false, fmt.Sprintf("input artifact %q is declared more than once", requested.Name), nil
+		}
+		seen[requested.Name] = struct{}{}
+
+		matchingContract := make([]v1alpha1.Artifact, 0)
+		matchingIdentity := make([]v1alpha1.Artifact, 0)
+		for index := range artifacts.Items {
+			artifact := artifacts.Items[index]
+			if artifact.Spec.WorkflowRef != run.Spec.WorkflowRef ||
+				artifact.Spec.Contract.Name != requested.Name {
+				continue
+			}
+			matchingContract = append(matchingContract, artifact)
+			if requested.Digest == "" || artifact.Spec.Digest == requested.Digest {
+				matchingIdentity = append(matchingIdentity, artifact)
+			}
+		}
+
+		accepted := make([]v1alpha1.Artifact, 0, len(matchingIdentity))
+		pending := false
+		rejected := false
+		for index := range matchingIdentity {
+			artifact := matchingIdentity[index]
+			switch {
+			case artifactAccepted(&artifact):
+				accepted = append(accepted, artifact)
+			case artifact.Status.Phase == v1alpha1.PhaseFailed:
+				rejected = true
+			default:
+				pending = true
+			}
+		}
+
+		if len(accepted) > 1 {
+			return nil, false, fmt.Sprintf("input artifact %q resolves to %d accepted artifacts", requested.Name, len(accepted)), nil
+		}
+		if len(accepted) == 0 {
+			if pending {
+				return nil, false, "", nil
+			}
+			if rejected {
+				return nil, false, fmt.Sprintf("input artifact %q was rejected", requested.Name), nil
+			}
+			if requested.Digest != "" {
+				for index := range matchingContract {
+					if artifactAccepted(&matchingContract[index]) {
+						return nil, false, fmt.Sprintf("input artifact %q has no accepted artifact with digest %q", requested.Name, requested.Digest), nil
+					}
+				}
+			}
+			return nil, false, "", nil
+		}
+
+		artifact := accepted[0]
+		resolved = append(resolved, agentcontract.ArtifactInput{
+			Name:     requested.Name,
+			Contract: artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version,
+			Digest:   artifact.Spec.Digest,
+			Path:     artifact.Spec.Path,
+		})
+	}
+
+	return resolved, true, "", nil
+}
+
+func artifactAccepted(artifact *v1alpha1.Artifact) bool {
+	if artifact.Status.Phase != v1alpha1.PhaseSucceeded ||
+		artifact.Status.ObservedGeneration != artifact.Generation {
+		return false
+	}
+	condition := apiMeta.FindStatusCondition(artifact.Status.Conditions, "Valid")
+	return condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.ObservedGeneration == artifact.Generation
 }
 
 func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant workspaceWriterGrant) *corev1.Pod {

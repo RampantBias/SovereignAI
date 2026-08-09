@@ -44,7 +44,7 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	// immutable Artifact spec and terminal status remain sufficient on later
 	// reconciliations; consumption performs its own identity/digest checks.
 	if artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" &&
-		bootstrapArtifactAccepted(&artifact) {
+		artifactAccepted(&artifact) {
 		return ctrl.Result{}, nil
 	}
 

@@ -57,7 +57,7 @@ func (r *WorkflowReconciler) reconcileBootstrap(ctx context.Context, workflow *v
 		}
 		switch artifact.Status.Phase {
 		case v1alpha1.PhaseSucceeded:
-			if !bootstrapArtifactAccepted(&artifact) {
+			if !artifactAccepted(&artifact) {
 				return false, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 			}
 			if err := r.completeBootstrap(ctx, workflow, &artifact); err != nil {
@@ -382,21 +382,10 @@ func (r *WorkflowReconciler) acceptedBootstrapArtifact(ctx context.Context, work
 	if err := validateBootstrapArtifactIdentity(workflow, &artifact); err != nil {
 		return nil, err
 	}
-	if !bootstrapArtifactAccepted(&artifact) {
+	if !artifactAccepted(&artifact) {
 		return nil, fmt.Errorf("bootstrap Artifact is not accepted")
 	}
 	return &artifact, nil
-}
-
-func bootstrapArtifactAccepted(artifact *v1alpha1.Artifact) bool {
-	if artifact.Status.Phase != v1alpha1.PhaseSucceeded ||
-		artifact.Status.ObservedGeneration != artifact.Generation {
-		return false
-	}
-	condition := apiMeta.FindStatusCondition(artifact.Status.Conditions, "Valid")
-	return condition != nil &&
-		condition.Status == metav1.ConditionTrue &&
-		condition.ObservedGeneration == artifact.Generation
 }
 
 func validateBootstrapArtifactIdentity(workflow *v1alpha1.SovereignWorkflow, artifact *v1alpha1.Artifact) error {
