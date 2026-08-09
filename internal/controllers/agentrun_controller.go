@@ -353,7 +353,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 	}
 	outputs := make([]agentcontract.OutputObligation, 0, len(run.Spec.OutputContracts))
 	for _, output := range run.Spec.OutputContracts {
-		outputs = append(outputs, agentcontract.OutputObligation{Name: output.Name, Version: output.Version, Required: true})
+		outputs = append(outputs, agentcontract.OutputObligation{Name: output.Name, Version: output.Version, Required: true, MediaType: "application/json"})
 	}
 	inferenceModel := ""
 	if run.Spec.Inference != nil {
