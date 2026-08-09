@@ -7,6 +7,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/controller ./cmd/controller
 RUN CGO_ENABLED=0 go build -trimpath -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 go build -trimpath -o /out/cli ./cmd/cli
 RUN CGO_ENABLED=0 go build -trimpath -o /out/agent-wrapper ./cmd/agent-wrapper
+RUN CGO_ENABLED=0 go build -trimpath -o /out/reference-agent ./cmd/reference-agent
 RUN CGO_ENABLED=0 go build -trimpath -o /out/utility-runner ./cmd/utility-runner
 RUN CGO_ENABLED=0 go build -trimpath -o /out/smoke-agent ./cmd/smoke-agent
 RUN CGO_ENABLED=0 go build -trimpath -o /out/mcp-server ./cmd/mcp-server
@@ -27,6 +28,11 @@ ENTRYPOINT ["/cli"]
 
 FROM gcr.io/distroless/static-debian12:nonroot AS agent-wrapper
 COPY --from=builder /out/agent-wrapper /agent-wrapper
+ENTRYPOINT ["/agent-wrapper"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS reference-agent
+COPY --from=builder /out/agent-wrapper /agent-wrapper
+COPY --from=builder /out/reference-agent /reference-agent
 ENTRYPOINT ["/agent-wrapper"]
 
 FROM alpine:3.23 AS utility-runner

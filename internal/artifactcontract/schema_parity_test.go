@@ -12,22 +12,9 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-var schemaFiles = map[string]string{
-	ChangeRequestContract:      "change-request.schema.json",
-	RepositoryRevisionContract: "repository-revision.schema.json",
-	ImplementationPlanContract: "implementation-plan.schema.json",
-	ChangeSetContract:          "change-set.schema.json",
-	PreparedCandidateContract:  "prepared-candidate.schema.json",
-	TestReportContract:         "test-report.schema.json",
-	CandidateRevisionContract:  "candidate-revision.schema.json",
-	ImageDigestContract:        "image-digest.schema.json",
-	ValidationResultContract:   "validation-result.schema.json",
-	MergeRevisionContract:      "merge-revision.schema.json",
-}
-
 func TestGoAndJSONSchemaFixtureParity(t *testing.T) {
-	if len(schemaFiles) != len(DefaultRegistry().Contracts()) {
-		t.Fatalf("schema count %d does not match registry count %d", len(schemaFiles), len(DefaultRegistry().Contracts()))
+	if len(contractSchemaFiles) != len(DefaultRegistry().Contracts()) {
+		t.Fatalf("schema count %d does not match registry count %d", len(contractSchemaFiles), len(DefaultRegistry().Contracts()))
 	}
 	for _, fixture := range loadFixtures(t) {
 		t.Run(fixture.Contract, func(t *testing.T) {
@@ -56,7 +43,7 @@ func assertParity(t *testing.T, contract string, data []byte, document map[strin
 
 func loadResolvedSchema(t *testing.T, contract string) *jsonschema.Resolved {
 	t.Helper()
-	filename, ok := schemaFiles[contract]
+	filename, ok := contractSchemaFiles[contract]
 	if !ok {
 		t.Fatalf("no schema file for %s", contract)
 	}

@@ -20,7 +20,7 @@ func TestChatRejectsMalformedJSON(t *testing.T) {
 
 	chatRequest := ChatRequest{
 		Model:           "ex",
-		Messages:        []Message{Message{Role: "tester", Content: "run something"}},
+		Messages:        []Message{Message{Role: "user", Content: "run something"}},
 		MaxOutputTokens: 100,
 		OutputSchema:    &JSONSchema{Name: "abc", Schema: json.RawMessage(`{"contract":true`)},
 	}

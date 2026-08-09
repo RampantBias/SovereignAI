@@ -80,18 +80,26 @@ func NewClient(
 	if timeout <= 0 {
 		return nil, fmt.Errorf("timeout must be greater than 0")
 	}
-	if maxResponseBytes < 0 {
+	if maxResponseBytes <= 0 {
 		return nil, fmt.Errorf("maxResponseBytes must be greater than 0")
 	}
 	return &Client{
-		endpoint:         chatEndpoint.String(),
-		httpClient:       &http.Client{Timeout: timeout},
+		endpoint: chatEndpoint.String(),
+		httpClient: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(request *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		maxResponseBytes: maxResponseBytes,
 	}, nil
 }
 
 // Submits POST to inference endpoint with given chat request content
 func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, error) {
+	if request.OutputSchema == nil {
+		return ChatResponse{}, fmt.Errorf("output schema is required")
+	}
 	if !json.Valid(request.OutputSchema.Schema) {
 		return ChatResponse{}, fmt.Errorf("output schema is invalid JSON")
 	}
@@ -168,7 +176,7 @@ func validateEndpoint(inferenceURL string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse inference endpoint: %w", err)
 	}
-	if endpoint.Scheme != "http" || endpoint.Scheme != "https" {
+	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
 		return nil, fmt.Errorf("inference url must be http or https")
 	}
 

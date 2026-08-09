@@ -37,13 +37,6 @@ var (
 	defaultRegistryOnce sync.Once
 )
 
-var schemaFiles = map[string]string{
-	"change-request/v1":      "change-request.schema.json",
-	"repository-revision/v1": "repository-revision.schema.json",
-	"implementation-plan/v1": "implementation-plan.schema.json",
-	"change-set/v1":          "change-set.schema.json",
-}
-
 func DefaultRegistry() *Registry {
 	defaultRegistryOnce.Do(func() {
 		defaultRegistry = NewRegistry()
@@ -84,14 +77,6 @@ func ValidateContract(contract string, data []byte) error {
 		return fmt.Errorf("artifact contract %q must use exact name/version form", contract)
 	}
 	return DefaultRegistry().Validate(name, version, data)
-}
-
-func (r *Registry) Schema(contract string) (json.RawMessage, error) {
-	filename, found := schemaFiles[contract]
-	if !found {
-		return nil, fmt.Errorf("unknown artifact contract %q", contract)
-	}
-
 }
 
 type validatable interface {

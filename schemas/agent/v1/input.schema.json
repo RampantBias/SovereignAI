@@ -3,7 +3,7 @@
   "$id": "https://sovereign.ai/schemas/agent/v1/input.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "workflowId", "stepName", "attempt", "role", "responsibility", "workspacePath", "stagingPath"],
+  "required": ["schemaVersion", "workflowId", "stepName", "attempt", "role", "responsibility", "workspacePath", "stagingPath", "inferenceModel", "workspaceWrite"],
   "properties": {
     "schemaVersion": { "const": "sovereign.ai/agent-contract/v1" },
     "workflowId": { "type": "string", "minLength": 1 },
@@ -11,6 +11,7 @@
     "attempt": { "type": "integer", "minimum": 1 },
     "role": { "type": "string", "minLength": 1 },
     "responsibility": { "type": "string", "minLength": 1 },
+    "inferenceModel": { "type": "string", "minLength": 1},
     "inputs": {
       "type": "array",
       "items": {
@@ -45,6 +46,16 @@
     "mcpServer": { "type": "string" },
     "workspacePath": { "type": "string", "minLength": 1 },
     "stagingPath": { "type": "string", "minLength": 1 },
+    "workspaceWrite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leaseName", "holderIdentity", "writerEpoch"],
+      "properties": {
+        "leaseName": { "type": "string", "minLength": 1 },
+        "holderIdentity": { "type": "string", "minLength": 1 },
+        "writerEpoch": { "type": "integer", "minimum": 1 }
+      }
+    },
     "controlPath": { "type": "string", "minLength": 1 },
     "resultPath": { "type": "string", "minLength": 1 },
     "auditEventsPath": { "type": "string", "minLength": 1 }
