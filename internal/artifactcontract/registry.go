@@ -22,6 +22,7 @@ func NewRegistry() *Registry {
 	register[ChangeRequest](registry, ChangeRequestContract)
 	register[RepositoryRevision](registry, RepositoryRevisionContract)
 	register[ImplementationPlan](registry, ImplementationPlanContract)
+	register[TestChangeSet](registry, TestChangeSetContract)
 	register[ChangeSet](registry, ChangeSetContract)
 	register[PreparedCandidate](registry, PreparedCandidateContract)
 	register[TestReport](registry, TestReportContract)

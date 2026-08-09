@@ -4,6 +4,7 @@ const (
 	ChangeRequestContract      = "change-request/v1"
 	RepositoryRevisionContract = "repository-revision/v1"
 	ImplementationPlanContract = "implementation-plan/v1"
+	TestChangeSetContract      = "test-change-set/v1"
 	ChangeSetContract          = "change-set/v1"
 	PreparedCandidateContract  = "prepared-candidate/v1"
 	TestReportContract         = "test-report/v1"
@@ -64,6 +65,19 @@ type ImplementationPlan struct {
 type LineCounts struct {
 	Added   int `json:"added"`
 	Deleted int `json:"deleted"`
+}
+
+type TestChangeSet struct {
+	Format                   string     `json:"format"`
+	Summary                  string     `json:"summary"`
+	BaseCommit               string     `json:"baseCommit"`
+	ChangeRequestDigest      string     `json:"changeRequestDigest"`
+	ImplementationPlanDigest string     `json:"implementationPlanDigest"`
+	Patch                    string     `json:"patch"`
+	PatchDigest              string     `json:"patchDigest"`
+	Files                    []string   `json:"files"`
+	ByteCount                int        `json:"byteCount"`
+	LineCounts               LineCounts `json:"lineCounts"`
 }
 
 type ChangeSet struct {

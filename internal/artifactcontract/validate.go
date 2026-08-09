@@ -118,6 +118,10 @@ func (v ImplementationPlan) Validate() error {
 	return validateStringList("assumptions", v.Assumptions, 0, 32, 4<<10, true)
 }
 
+func (v TestChangeSet) Validate() error {
+	return ChangeSet(v).Validate()
+}
+
 func (v ChangeSet) Validate() error {
 	if v.Format != "unified-diff" {
 		return fmt.Errorf("format must be unified-diff")

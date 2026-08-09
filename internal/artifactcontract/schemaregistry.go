@@ -13,6 +13,7 @@ var contractSchemaFiles = map[string]string{
 	ChangeRequestContract:      "change-request.schema.json",
 	RepositoryRevisionContract: "repository-revision.schema.json",
 	ImplementationPlanContract: "implementation-plan.schema.json",
+	TestChangeSetContract:      "test-change-set.schema.json",
 	ChangeSetContract:          "change-set.schema.json",
 	PreparedCandidateContract:  "prepared-candidate.schema.json",
 	TestReportContract:         "test-report.schema.json",

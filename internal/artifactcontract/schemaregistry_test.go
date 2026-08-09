@@ -50,3 +50,21 @@ func TestImplementationPlanSchemaIsStandalone(t *testing.T) {
 		)
 	}
 }
+
+func TestTestChangeSetSchemaIsAvailableToAgents(t *testing.T) {
+	registry, err := NewSchemaRegistry()
+	if err != nil {
+		t.Fatalf("NewSchemaRegistry: %v", err)
+	}
+
+	definition, err := registry.Lookup("test-change-set", "v1")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if definition.Contract != TestChangeSetContract {
+		t.Fatalf("contract = %q, want %q", definition.Contract, TestChangeSetContract)
+	}
+	if definition.Name != "test-change-set-v1" {
+		t.Fatalf("schema name = %q, want test-change-set-v1", definition.Name)
+	}
+}

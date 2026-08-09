@@ -35,21 +35,40 @@ func fixtureBytes(t *testing.T, document map[string]any) []byte {
 	return data
 }
 
+func fixtureForContract(t *testing.T, contract string) contractFixture {
+	t.Helper()
+	for _, fixture := range loadFixtures(t) {
+		if fixture.Contract == contract {
+			return fixture
+		}
+	}
+	t.Fatalf("no fixture for contract %q", contract)
+	return contractFixture{}
+}
+
 func TestRegistryContainsAndAcceptsEveryFrozenArtifactContract(t *testing.T) {
 	fixtures := loadFixtures(t)
 	registry := DefaultRegistry()
-	if len(fixtures) != 10 {
-		t.Fatalf("fixture count = %d, want 10", len(fixtures))
+	contracts := registry.Contracts()
+	if len(fixtures) != len(contracts) {
+		t.Fatalf("fixture count = %d, registered contract count = %d: %v", len(fixtures), len(contracts), contracts)
 	}
-	if len(registry.Contracts()) != 10 {
-		t.Fatalf("registered contract count = %d, want 10: %v", len(registry.Contracts()), registry.Contracts())
-	}
+	seen := make(map[string]struct{}, len(fixtures))
 	for _, fixture := range fixtures {
+		if _, duplicate := seen[fixture.Contract]; duplicate {
+			t.Fatalf("duplicate fixture for contract %q", fixture.Contract)
+		}
+		seen[fixture.Contract] = struct{}{}
 		t.Run(fixture.Contract, func(t *testing.T) {
 			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err != nil {
 				t.Fatalf("valid fixture rejected: %v", err)
 			}
 		})
+	}
+	for _, contract := range contracts {
+		if _, ok := seen[contract]; !ok {
+			t.Errorf("registered contract %q has no fixture", contract)
+		}
 	}
 }
 
@@ -96,27 +115,32 @@ func TestRegistryRejectsTrailingJSONAndOversizedContent(t *testing.T) {
 	}
 }
 
-func TestChangeSetRejectsDigestAndPatchLimitViolations(t *testing.T) {
-	fixture := loadFixtures(t)[3]
-	fixture.Document["patchDigest"] = "sha256:" + strings.Repeat("0", 64)
-	if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patchDigest") {
-		t.Fatalf("expected patch digest rejection, got %v", err)
-	}
-	fixture = loadFixtures(t)[3]
-	fixture.Document["patch"] = strings.Repeat("x", MaxPatchBytes+1)
-	if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patch must contain") {
-		t.Fatalf("expected patch size rejection, got %v", err)
+func TestChangeSetsRejectDigestAndPatchLimitViolations(t *testing.T) {
+	for _, contract := range []string{TestChangeSetContract, ChangeSetContract} {
+		t.Run(contract, func(t *testing.T) {
+			fixture := fixtureForContract(t, contract)
+			fixture.Document["patchDigest"] = "sha256:" + strings.Repeat("0", 64)
+			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patchDigest") {
+				t.Fatalf("expected patch digest rejection, got %v", err)
+			}
+
+			fixture = fixtureForContract(t, contract)
+			fixture.Document["patch"] = strings.Repeat("x", MaxPatchBytes+1)
+			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patch must contain") {
+				t.Fatalf("expected patch size rejection, got %v", err)
+			}
+		})
 	}
 }
 
 func TestTestReportAndValidationSuccessPredicates(t *testing.T) {
-	testReport := loadFixtures(t)[5]
+	testReport := fixtureForContract(t, TestReportContract)
 	testReport.Document["workspaceClean"] = false
 	if err := ValidateContract(testReport.Contract, fixtureBytes(t, testReport.Document)); err == nil || !strings.Contains(err.Error(), "passed outcome") {
 		t.Fatalf("expected passing test predicate rejection, got %v", err)
 	}
 
-	validationResult := loadFixtures(t)[8]
+	validationResult := fixtureForContract(t, ValidationResultContract)
 	validationResult.Document["observedSourceRevision"] = strings.Repeat("f", 40)
 	if err := ValidateContract(validationResult.Contract, fixtureBytes(t, validationResult.Document)); err == nil || !strings.Contains(err.Error(), "passed outcome") {
 		t.Fatalf("expected passing validation predicate rejection, got %v", err)

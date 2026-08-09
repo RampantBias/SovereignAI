@@ -40,6 +40,21 @@
     }
   },
   {
+    "contract": "test-change-set/v1",
+    "document": {
+      "format": "unified-diff",
+      "summary": "Replace the operation implementation",
+      "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "changeRequestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "implementationPlanDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "patch": "diff --git a/main_test.go b/main_test.go\n--- a/main_test.go\n+++ b/main_test.go\n@@ -1 +1 @@\n-old\n+new\n",
+      "patchDigest": "sha256:ebaa0dab43a920fa258bd4315a32415f7b51548df7b78c0787def4395206f9da",
+      "files": ["main_test.go"],
+      "byteCount": 101,
+      "lineCounts": {"added": 1, "deleted": 1}
+    }
+  },
+  {
     "contract": "change-set/v1",
     "document": {
       "format": "unified-diff",

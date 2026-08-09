@@ -12,7 +12,7 @@ SovereignAI is designed first for sovereign, air-gapped, and regulated environme
 
 I conceived, architected, and built the initial implementation of this software by hand. The original control plane binaries, controller code, inference, & all decision documents were written by me and were refined by me with AI review. I built up to basic handoffs and state transitions of generic task/result/artifact contracts between steps. 
 
-As this project is only worked in my free time and I needed to both represent the thesis I synthesized and reach an MVP stage by the first week of September I needed to re-accelerate. I begain using AI much more heavily in July 2026 to handle refactoring, implementation, testing, deployment, and documentation while working towards a September MVP. An informal estimate would place about half of the implementation as being AI written or substantially refined with AI.
+As this project is only worked in my free time and I needed to both represent the thesis I synthesized and reach an MVP stage by the first week of September I needed to re-accelerate. I begain using AI much more heavily in July 2026 to handle refactoring, implementation, testing, deployment, and documentation while working towards a September MVP.
 
 I have still remained responsible for the goals, architectural decisions, and accepted behaviors. Going forward, I'm aiming to simplify as much as I can for the MVP to ensure that what's built from here on is my own while using AI only for review, refinement, and trivial implementation work.
 
