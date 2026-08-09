@@ -111,6 +111,9 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	if contract.Responsibility != "plan" || len(contract.Outputs) != 1 || len(contract.Inputs) != 1 {
 		t.Fatalf("unexpected agent contract: %#v", contract)
 	}
+	if !contract.Outputs[0].Required || contract.Outputs[0].MediaType != "application/json" {
+		t.Fatalf("agent output obligation is not required JSON: %#v", contract.Outputs[0])
+	}
 	if contract.Inputs[0].Name != "repository-revision" ||
 		contract.Inputs[0].Contract != "repository-revision/v1" ||
 		contract.Inputs[0].Digest != inputArtifact.Spec.Digest ||
