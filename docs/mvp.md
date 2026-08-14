@@ -75,8 +75,8 @@ The workflow graph is fixed and sequential. Repository initialization remains an
 | --- | --- | --- | --- |
 | 1 | Initialize repository | Utility: `repository.initialize` | accepted `repository-revision/v1` containing the immutable source commit |
 | 2 | Architect | AgentRun | accepted `implementation-plan/v1` |
-| 3 | Developer | AgentRun | accepted unified-diff `change-set/v1` |
-| 4 | Test Writer | AgentRun | accepted `change-set/v1` |
+| 3 | Test Writer | AgentRun | accepted unified-diff `test-change-set/v1` |
+| 4 | Developer | AgentRun | accepted unified-diff `change-set/v1` |
 | 5 | Prepare candidate | Utility: `candidate.prepare` | accepted `prepared-candidate/v1` containing deterministic branch, base commit, change-set digest, and Git tree |
 | 6 | Commit candidate | Utility: `git.commit` | accepted `candidate-revision/v1` bound to the tested tree |
 | 7 | Push candidate | Utility: `git.push` | evidence that the remote candidate branch resolves to the exact candidate commit |
@@ -110,7 +110,7 @@ The submitted change request is an immutable workflow input. Every later input i
 - Give agent and MCP containers no Kubernetes service-account token and no Git or registry credential.
 - Validate `result.json`, all declared artifacts, and every required output obligation before accepting the producer.
 
-The Architect consumes the immutable change request and bounded repository context and produces `implementation-plan/v1`. The Developer consumes that exact change request and accepted implementation plan, retrieves bounded context through MCP, and produces `change-set/v1` as a unified diff based on the admitted source commit. The Test Writer consumes both the `implementation-plan/v1` from the Architect and modifies the test repository.
+The Architect consumes the immutable change request and bounded repository context and produces `implementation-plan/v1`. The Test Writer consumes that change request, accepted implementation plan, and admitted repository revision and produces `test-change-set/v1` as a unified diff containing only test-code changes. The Developer consumes those same inputs plus the accepted test change set and produces `change-set/v1` as a unified diff containing the production-code changes.
 
 ### Artifact contracts and provenance
 
@@ -252,7 +252,7 @@ The demonstration succeeds only when all of the following are true:
 - Candidate branch creation belongs to `candidate.prepare`.
 - The calculator repository is external and uses HTTPS Git credentials.
 - The calculator produces one candidate image digest.
-- The reference agent is a small generic reference-agent Go executable which operates a single inference call given the input contract information (role/responsibility/output requirements).
+- The reference agent is a small generic Go executable which makes one inference call using a model-facing generation schema, then deterministically adds authoritative provenance and integrity fields before validating and publishing the canonical artifact contract.
 - Repository context is served by an authenticated MCP sidecar in the Agent Pod.
 - Artifact runtime authority is implemented with typed Go contracts and mirrored JSON Schemas.
 - Approval uses one `AnyOf` maintainers rule.

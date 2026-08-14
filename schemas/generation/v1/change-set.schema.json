@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sovereign.ai/schemas/artifacts/v1/change-set.generation.schema.json",
+  "$id": "https://sovereign.ai/schemas/generation/v1/change-set.schema.json",
   "title": "change-set model generation",
   "type": "object",
   "additionalProperties": false,
