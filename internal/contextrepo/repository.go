@@ -2,6 +2,7 @@ package contextrepo
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 type Repository struct {
@@ -35,6 +37,100 @@ type Bundle struct {
 type BundleFile struct {
 	Path   string `json:"path"`
 	Digest string `json:"digest"`
+}
+
+type SnapshotLimits struct {
+	MaxFiles      int
+	MaxFileBytes  int64
+	MaxTotalBytes int64
+}
+
+type Snapshot struct {
+	Revision   string
+	Files      []SnapshotFile
+	TotalBytes int64
+}
+
+type SnapshotFile struct {
+	Path    string
+	Digest  string
+	Bytes   int64
+	Content string
+}
+
+// Snapshot returns bounded, deterministic source context for one inference request.
+func (r Repository) Snapshot(limits SnapshotLimits) (Snapshot, error) {
+	if limits.MaxFiles <= 0 || limits.MaxFileBytes <= 0 || limits.MaxTotalBytes <= 0 {
+		return Snapshot{}, fmt.Errorf("snapshot limits must be positive")
+	}
+	root, err := r.resolve(".")
+	if err != nil {
+		return Snapshot{}, err
+	}
+	excluded := map[string]bool{
+		".git": true, ".sovereign": true, "node_modules": true, "vendor": true,
+		".venv": true, "venv": true, "__pycache__": true,
+	}
+	snapshot := Snapshot{Revision: r.Revision}
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if excluded[entry.Name()] || relative == "attempts" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("repository path %q is a symbolic link", filepath.ToSlash(relative))
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("repository path %q is not a regular file", filepath.ToSlash(relative))
+		}
+		if info.Size() > limits.MaxFileBytes {
+			return fmt.Errorf("repository file %q exceeds %d-byte limit", filepath.ToSlash(relative), limits.MaxFileBytes)
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if int64(len(content)) > limits.MaxFileBytes {
+			return fmt.Errorf("repository file %q exceeds %d-byte limit", filepath.ToSlash(relative), limits.MaxFileBytes)
+		}
+		if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+			return fmt.Errorf("repository file %q is not UTF-8 text", filepath.ToSlash(relative))
+		}
+		if len(snapshot.Files) == limits.MaxFiles {
+			return fmt.Errorf("repository exceeds %d-file limit", limits.MaxFiles)
+		}
+		if snapshot.TotalBytes+int64(len(content)) > limits.MaxTotalBytes {
+			return fmt.Errorf("repository exceeds %d-byte total limit", limits.MaxTotalBytes)
+		}
+		hash := sha256.Sum256(content)
+		snapshot.Files = append(snapshot.Files, SnapshotFile{
+			Path: filepath.ToSlash(relative), Digest: "sha256:" + hex.EncodeToString(hash[:]),
+			Bytes: int64(len(content)), Content: string(content),
+		})
+		snapshot.TotalBytes += int64(len(content))
+		return nil
+	})
+	if err != nil {
+		return Snapshot{}, err
+	}
+	sort.Slice(snapshot.Files, func(i, j int) bool { return snapshot.Files[i].Path < snapshot.Files[j].Path })
+	return snapshot, nil
 }
 
 func (r Repository) Tree(path string, limit int) ([]string, error) {
