@@ -1,21 +1,23 @@
 package artifactcontract
 
 const (
-	ChangeRequestContract      = "change-request/v1"
-	RepositoryRevisionContract = "repository-revision/v1"
-	ImplementationPlanContract = "implementation-plan/v1"
-	TestChangeSetContract      = "test-change-set/v1"
-	ChangeSetContract          = "change-set/v1"
-	PreparedCandidateContract  = "prepared-candidate/v1"
-	TestReportContract         = "test-report/v1"
-	CandidateRevisionContract  = "candidate-revision/v1"
-	ImageDigestContract        = "image-digest/v1"
-	ValidationResultContract   = "validation-result/v1"
-	MergeRevisionContract      = "merge-revision/v1"
-	MaxArtifactBytes           = 1 << 20
-	MaxPatchBytes              = 256 << 10
-	MaxCapturedTestOutputBytes = 1 << 20
-	MaxTestOutputExcerptBytes  = 16 << 10
+	ChangeRequestContract        = "change-request/v1"
+	RepositoryRevisionContract   = "repository-revision/v1"
+	BranchReferenceContract      = "branch-reference/v1"
+	ImplementationPlanContract   = "implementation-plan/v1"
+	TestChangeSetContract        = "test-change-set/v1"
+	ChangeSetContract            = "change-set/v1"
+	PreparedCandidateContract    = "prepared-candidate/v1"
+	TestReportContract           = "test-report/v1"
+	CandidateRevisionContract    = "candidate-revision/v1"
+	CandidateRemoteProofContract = "candidate-remote-proof/v1"
+	ImageDigestContract          = "image-digest/v1"
+	ValidationResultContract     = "validation-result/v1"
+	MergeRevisionContract        = "merge-revision/v1"
+	MaxArtifactBytes             = 1 << 20
+	MaxPatchBytes                = 256 << 10
+	MaxCapturedTestOutputBytes   = 1 << 20
+	MaxTestOutputExcerptBytes    = 16 << 10
 )
 
 type ObjectIdentity struct {
@@ -37,6 +39,15 @@ type RepositoryRevision struct {
 	RequestedRevision string         `json:"requestedRevision"`
 	ResolvedCommit    string         `json:"resolvedCommit"`
 	UtilityOperation  ObjectIdentity `json:"utilityOperation"`
+}
+
+type BranchReference struct {
+	RepositoryURL    string         `json:"repositoryURL"`
+	Branch           string         `json:"branch"`
+	BaseCommit       string         `json:"baseCommit"`
+	Commit           string         `json:"commit"`
+	UtilityOperation ObjectIdentity `json:"utilityOperation"`
+	IdempotencyKey   string         `json:"idempotencyKey"`
 }
 
 type AffectedPath struct {
@@ -191,6 +202,14 @@ type RemoteProof struct {
 	Ref            string `json:"ref"`
 	ObservedCommit string `json:"observedCommit"`
 	VerifiedAt     string `json:"verifiedAt"`
+}
+
+type CandidateRemoteProof struct {
+	CandidateRevisionDigest string `json:"candidateRevisionDigest"`
+	RepositoryURL           string `json:"repositoryURL"`
+	Ref                     string `json:"ref"`
+	ObservedCommit          string `json:"observedCommit"`
+	VerifiedAt              string `json:"verifiedAt"`
 }
 
 type MergeRevision struct {

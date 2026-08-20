@@ -19,6 +19,17 @@
     }
   },
   {
+    "contract": "branch-reference/v1",
+    "document": {
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "branch": "sovereign/workflow-uid",
+      "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "utilityOperation": {"namespace": "workflow", "name": "branch-001", "uid": "utility-operation-uid"},
+      "idempotencyKey": "workflow/workflow-uid/create-branch"
+    }
+  },
+  {
     "contract": "implementation-plan/v1",
     "document": {
       "summary": "Implement division and its tests",
@@ -121,6 +132,16 @@
       "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "tree": "cccccccccccccccccccccccccccccccccccccccc",
       "commitMessageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  {
+    "contract": "candidate-remote-proof/v1",
+    "document": {
+      "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "ref": "refs/heads/sovereign/workflow-uid",
+      "observedCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verifiedAt": "2026-07-24T12:00:00Z"
     }
   },
   {

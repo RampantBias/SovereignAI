@@ -4,13 +4,17 @@
 
     subgraph Controllers
         direction TB
+        projectController[Project Controller]
         workflowController[Workflow Controller]    
         stepAttemptController[StepAttempt Controller]
         inferenceLeaseController[InferenceLease Controller]
         inferenceEndpointController[InferenceEndpoint Controller]
+        agentRunController[AgentRun Controller]
+        utilityOperationController[UtilityOperation Controller]
         humanSessionController[HumanSession Controller]
         validationRunController[ValidationRun Controller]
         artifactController[Artifact Controller]
+        approvalRequestController[ApprovalRequest Controller]
     end
 
     subgraph Sovereign AI CRDs

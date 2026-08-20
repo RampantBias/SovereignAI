@@ -56,6 +56,24 @@ func (v RepositoryRevision) Validate() error {
 	return validateObjectIdentity("utilityOperation", v.UtilityOperation)
 }
 
+func (v BranchReference) Validate() error {
+	if err := validateRepositoryURL(v.RepositoryURL); err != nil {
+		return fieldError("repositoryURL", err)
+	}
+	if err := validateBranch(v.Branch); err != nil {
+		return fieldError("branch", err)
+	}
+	for field, value := range map[string]string{"baseCommit": v.BaseCommit, "commit": v.Commit} {
+		if err := validateGitOIDField(field, value); err != nil {
+			return err
+		}
+	}
+	if err := validateObjectIdentity("utilityOperation", v.UtilityOperation); err != nil {
+		return err
+	}
+	return boundedText("idempotencyKey", v.IdempotencyKey, 512)
+}
+
 func (v ImplementationPlan) Validate() error {
 	if err := boundedText("summary", v.Summary, 1024); err != nil {
 		return err
@@ -430,6 +448,27 @@ func (v RemoteProof) Validate(targetBranch, mergeCommit string) error {
 	}
 	if v.ObservedCommit != mergeCommit {
 		return fmt.Errorf("observedCommit must equal mergeCommit")
+	}
+	_, err := parseTimestamp(v.VerifiedAt)
+	return fieldError("verifiedAt", err)
+}
+
+func (v CandidateRemoteProof) Validate() error {
+	if err := validateDigestField("candidateRevisionDigest", v.CandidateRevisionDigest); err != nil {
+		return err
+	}
+	if err := validateRepositoryURL(v.RepositoryURL); err != nil {
+		return fieldError("repositoryURL", err)
+	}
+	branch, ok := strings.CutPrefix(v.Ref, "refs/heads/")
+	if !ok {
+		return fmt.Errorf("ref must identify a branch")
+	}
+	if err := validateBranch(branch); err != nil {
+		return fieldError("ref", err)
+	}
+	if err := validateGitOIDField("observedCommit", v.ObservedCommit); err != nil {
+		return err
 	}
 	_, err := parseTimestamp(v.VerifiedAt)
 	return fieldError("verifiedAt", err)
