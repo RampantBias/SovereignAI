@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/branch-reference.schema.json",
+  "title": "branch-reference/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repositoryURL", "branch", "baseCommit", "commit", "utilityOperation", "idempotencyKey"],
+  "properties": {
+    "repositoryURL": {"$ref": "common.schema.json#/$defs/RepositoryURL"},
+    "branch": {"$ref": "common.schema.json#/$defs/Branch"},
+    "baseCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "commit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "utilityOperation": {"$ref": "common.schema.json#/$defs/ObjectIdentity"},
+    "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 512}
+  }
+}
