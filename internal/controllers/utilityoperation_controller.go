@@ -618,19 +618,39 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 		pvcName = operation.Spec.WorkflowRef.Name + "-workspace"
 	}
 	runnerPath := "/utility-runner"
-	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: operation.Name, Namespace: operation.Namespace, Labels: map[string]string{
-		LabelWorkflow: operation.Labels[LabelWorkflow], LabelStep: operation.Spec.StepName, "sovereign-ai.io/utility-operation": operation.Name,
-	}, Annotations: workspaceWriterAnnotations(grant)}, Spec: batchv1.JobSpec{BackoffLimit: &backoff, TTLSecondsAfterFinished: &ttl, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: workspaceWriterAnnotations(grant)}, Spec: corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount, SecurityContext: workspaceWorkloadSecurityContext(),
-		Containers: []corev1.Container{{Name: "utility", Image: workload.executionImage, Command: []string{runnerPath},
-			Args:            []string{"--input", "/control/input.json", "--result", executionResultPath(operation.Name)},
-			SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-			VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
-		}}, Volumes: []corev1.Volume{
-			{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}},
-			{Name: "input", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
-		},
-	}}}}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      operation.Name,
+			Namespace: operation.Namespace,
+			Labels: map[string]string{
+				LabelWorkflow:                       operation.Labels[LabelWorkflow],
+				LabelStep:                           operation.Spec.StepName,
+				"sovereign-ai.io/utility-operation": operation.Name,
+			},
+			Annotations: workspaceWriterAnnotations(grant)},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:            &backoff,
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Annotations: workspaceWriterAnnotations(grant)},
+				Spec: corev1.PodSpec{
+					RestartPolicy:                corev1.RestartPolicyNever,
+					AutomountServiceAccountToken: &automount,
+					SecurityContext:              workspaceWorkloadSecurityContext(),
+					Containers: []corev1.Container{
+						{
+							Name:            "utility",
+							Image:           workload.executionImage,
+							Command:         []string{runnerPath},
+							Args:            []string{"--input", "/control/input.json", "--result", executionResultPath(operation.Name)},
+							SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+							VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
+						}},
+					Volumes: []corev1.Volume{
+						{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}},
+						{Name: "input", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
+					},
+				}}}}
 	if operation.Spec.Timeout != nil && operation.Spec.Timeout.Duration > 0 {
 		seconds := int64(operation.Spec.Timeout.Duration.Seconds())
 		job.Spec.ActiveDeadlineSeconds = &seconds
@@ -641,12 +661,16 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 		runnerPath = "/sovereign-bin/utility-runner"
 		container.Command = []string{runnerPath}
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "utility-runtime", MountPath: "/sovereign-bin"})
-		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{Name: "utility-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
-		job.Spec.Template.Spec.InitContainers = []corev1.Container{{Name: "install-utility-runtime", Image: runtimeImage,
-			Command:         []string{"/bin/cp", "/utility-runner", runnerPath},
-			SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-			VolumeMounts:    []corev1.VolumeMount{{Name: "utility-runtime", MountPath: "/sovereign-bin"}},
-		}}
+		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes,
+			corev1.Volume{Name: "utility-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+		job.Spec.Template.Spec.InitContainers = []corev1.Container{
+			{
+				Name:            "install-utility-runtime",
+				Image:           runtimeImage,
+				Command:         []string{"/bin/cp", "/utility-runner", runnerPath},
+				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+				VolumeMounts:    []corev1.VolumeMount{{Name: "utility-runtime", MountPath: "/sovereign-bin"}},
+			}}
 	}
 	// Add secret to container environment
 	if workload.credentialSecret != "" {

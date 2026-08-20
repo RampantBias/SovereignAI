@@ -70,7 +70,13 @@ func runCommand(ctx context.Context, workspace string, name string, args ...stri
 }
 
 func runGit(ctx context.Context, workspace string, args ...string) (commandOutput, error) {
-	return runCommand(ctx, workspace, "git", args...)
+	return runCommand(ctx, workspace, "git", gitCommandArgs(workspace, args...)...)
+}
+
+func gitCommandArgs(workspace string, args ...string) []string {
+	commandArgs := make([]string, 0, len(args)+2)
+	commandArgs = append(commandArgs, "-c", "safe.directory="+workspace)
+	return append(commandArgs, args...)
 }
 
 // gitOutput is the query-oriented Git adapter. It preserves runGit's exit-code
