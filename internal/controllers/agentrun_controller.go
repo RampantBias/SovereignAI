@@ -495,24 +495,35 @@ func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant 
 	if pvcName == "" {
 		pvcName = run.Spec.WorkflowRef.Name + "-workspace"
 	}
-	automount, nonRoot, readOnly, allowPrivilegeEscalation := false, true, true, false
-	runAsUser := int64(65532)
+	automount, readOnly, allowPrivilegeEscalation := false, true, false
 	executable, _ := json.Marshal(run.Spec.Executable)
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: run.Name, Namespace: run.Namespace, Labels: map[string]string{
-		LabelWorkflow: run.Labels[LabelWorkflow], LabelStep: run.Spec.StepName, "sovereign-ai.io/agent-run": run.Name,
-	}, Annotations: workspaceWriterAnnotations(grant)}, Spec: corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
-		SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &runAsUser, FSGroup: &runAsUser},
-		Containers: []corev1.Container{{Name: "agent", Image: run.Spec.Image, Command: []string{"/agent-wrapper"},
-			Args:            []string{"--input", "/control/input.json", "--result", executionResultPath(run.Name)},
-			Env:             append([]corev1.EnvVar{{Name: "SOVEREIGN_AGENT_EXECUTABLE", Value: string(executable)}}, workspaceWriterEnv(grant)...),
-			SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-			VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
-		}}, Volumes: []corev1.Volume{
-			{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}},
-			{Name: "input", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
-		},
-	}}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      run.Name,
+			Namespace: run.Namespace,
+			Labels: map[string]string{
+				LabelWorkflow:               run.Labels[LabelWorkflow],
+				LabelStep:                   run.Spec.StepName,
+				"sovereign-ai.io/agent-run": run.Name,
+			},
+			Annotations: workspaceWriterAnnotations(grant)},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
+			SecurityContext: workspaceWorkloadSecurityContext(),
+			Containers: []corev1.Container{
+				{
+					Name:            "agent",
+					Image:           run.Spec.Image,
+					Command:         []string{"/agent-wrapper"},
+					Args:            []string{"--input", "/control/input.json", "--result", executionResultPath(run.Name)},
+					Env:             append([]corev1.EnvVar{{Name: "SOVEREIGN_AGENT_EXECUTABLE", Value: string(executable)}}, workspaceWriterEnv(grant)...),
+					SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+					VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
+				}}, Volumes: []corev1.Volume{
+				{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}},
+				{Name: "input", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
+			},
+		}}
 }
 
 func (r *AgentRunReconciler) startCollection(ctx context.Context, run *v1alpha1.AgentRun) (ctrl.Result, error) {
@@ -696,6 +707,7 @@ func buildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWo
 				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: name,
+					SecurityContext: workspaceWorkloadSecurityContext(),
 					Containers: []corev1.Container{{
 						Name:  "collector",
 						Image: image,

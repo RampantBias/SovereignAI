@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	WorkspaceWriterFinalizer        = "sovereign-ai.io/workspace-writer-release"
-	AnnotationWorkspaceWriterLease  = "sovereign-ai.io/workspace-writer-lease"
-	AnnotationWorkspaceWriterHolder = "sovereign-ai.io/workspace-writer-holder"
-	AnnotationWorkspaceWriterEpoch  = "sovereign-ai.io/workspace-writer-epoch"
+	WorkspaceWriterFinalizer              = "sovereign-ai.io/workspace-writer-release"
+	AnnotationWorkspaceWriterLease        = "sovereign-ai.io/workspace-writer-lease"
+	AnnotationWorkspaceWriterHolder       = "sovereign-ai.io/workspace-writer-holder"
+	AnnotationWorkspaceWriterEpoch        = "sovereign-ai.io/workspace-writer-epoch"
+	workspaceWorkloadID             int64 = 65532
 )
 
 type workspaceWriterState string
@@ -37,6 +38,16 @@ type workspaceWriterGrant struct {
 	LeaseName      string
 	HolderIdentity string
 	Epoch          int32
+}
+
+func workspaceWorkloadSecurityContext() *corev1.PodSecurityContext {
+	nonRoot, identity := true, workspaceWorkloadID
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot: &nonRoot,
+		RunAsUser:    &identity,
+		RunAsGroup:   &identity,
+		FSGroup:      &identity,
+	}
 }
 
 // acquireWorkspaceWriter uses the Lease resourceVersion as the compare-and-

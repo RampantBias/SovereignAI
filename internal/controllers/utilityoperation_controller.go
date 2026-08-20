@@ -621,7 +621,7 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: operation.Name, Namespace: operation.Namespace, Labels: map[string]string{
 		LabelWorkflow: operation.Labels[LabelWorkflow], LabelStep: operation.Spec.StepName, "sovereign-ai.io/utility-operation": operation.Name,
 	}, Annotations: workspaceWriterAnnotations(grant)}, Spec: batchv1.JobSpec{BackoffLimit: &backoff, TTLSecondsAfterFinished: &ttl, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: workspaceWriterAnnotations(grant)}, Spec: corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
+		RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount, SecurityContext: workspaceWorkloadSecurityContext(),
 		Containers: []corev1.Container{{Name: "utility", Image: workload.executionImage, Command: []string{runnerPath},
 			Args:            []string{"--input", "/control/input.json", "--result", executionResultPath(operation.Name)},
 			SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},

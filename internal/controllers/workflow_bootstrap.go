@@ -275,6 +275,7 @@ func buildBootstrapJob(workflow *v1alpha1.SovereignWorkflow, image string, grant
 					RestartPolicy:                 corev1.RestartPolicyNever,
 					AutomountServiceAccountToken:  &automount,
 					TerminationGracePeriodSeconds: int64Pointer(10),
+					SecurityContext:               workspaceWorkloadSecurityContext(),
 					Containers: []corev1.Container{{
 						Name:  "bootstrap",
 						Image: image,
