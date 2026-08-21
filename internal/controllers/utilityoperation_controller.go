@@ -372,6 +372,10 @@ func (r *UtilityOperationReconciler) ensureWorkload(ctx context.Context, operati
 	if err != nil {
 		return err
 	}
+	workload.input.Inputs, err = r.resolveUtilityInputs(ctx, operation)
+	if err != nil {
+		return err
+	}
 	if workload.credentialRef.Name != "" {
 		workload.credentialSecret, err = r.ensureCredential(ctx, operation, workload.credentialRef, workload.credentialClass)
 		if err != nil {
@@ -395,6 +399,37 @@ func (r *UtilityOperationReconciler) ensureWorkload(ctx context.Context, operati
 		return err
 	}
 	return client.IgnoreAlreadyExists(r.Create(ctx, job))
+}
+
+func (r *UtilityOperationReconciler) resolveUtilityInputs(ctx context.Context, operation *v1alpha1.UtilityOperation) ([]utilitycontract.ArtifactInput, error) {
+	if len(operation.Spec.Inputs) == 0 {
+		return nil, nil
+	}
+	var artifacts v1alpha1.ArtifactList
+	if err := r.List(ctx, &artifacts, client.InNamespace(operation.Namespace)); err != nil {
+		return nil, fmt.Errorf("list utility input artifacts: %w", err)
+	}
+	resolved := make([]utilitycontract.ArtifactInput, 0, len(operation.Spec.Inputs))
+	for _, requested := range operation.Spec.Inputs {
+		matches := make([]v1alpha1.Artifact, 0, 1)
+		for index := range artifacts.Items {
+			artifact := artifacts.Items[index]
+			if artifact.Spec.WorkflowRef == operation.Spec.WorkflowRef &&
+				artifact.Spec.Contract.Name == requested.Name &&
+				(requested.Digest == "" || artifact.Spec.Digest == requested.Digest) && artifactAccepted(&artifact) {
+				matches = append(matches, artifact)
+			}
+		}
+		if len(matches) != 1 {
+			return nil, fmt.Errorf("utility input artifact %q resolves to %d accepted artifacts", requested.Name, len(matches))
+		}
+		artifact := matches[0]
+		resolved = append(resolved, utilitycontract.ArtifactInput{
+			Name: requested.Name, Contract: artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version,
+			Digest: artifact.Spec.Digest, Path: artifact.Spec.Path,
+		})
+	}
+	return resolved, nil
 }
 
 func (r *UtilityOperationReconciler) ensureCredential(ctx context.Context, operation *v1alpha1.UtilityOperation, ref v1alpha1.NamespacedReference, credentialClass string) (string, error) {
@@ -560,14 +595,23 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 	result := utilityWorkloadConfig{
 		executionImage: runtimeImage, credentialClass: utility.ExpectedCredentialClass(operation.Spec.Operation.Name),
 		input: utilitycontract.Input{
-			SchemaVersion: utilitycontract.Version, WorkflowID: workflow.Spec.WorkflowID, StepName: operation.Spec.StepName,
+			SchemaVersion:    utilitycontract.Version,
+			WorkflowID:       workflow.Spec.WorkflowID,
+			StepName:         operation.Spec.StepName,
 			Attempt:          operation.Spec.Attempt,
 			Authority:        utilitycontract.AuthorityReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "UtilityOperation", Namespace: operation.Namespace, Name: operation.Name, UID: string(operation.UID)},
-			PolicyDecisionID: operation.Status.PolicyDecisionID, Operation: operation.Spec.Operation.Name,
-			IdempotencyKey: utilityIdempotencyKey(operation, workflow), CredentialClass: utility.ExpectedCredentialClass(operation.Spec.Operation.Name),
-			Parameters: parameters, Outputs: outputs, WorkspacePath: "/workspace", StagingPath: executionStagingPath(operation.Name),
-			ControlPath: executionControlPath(operation.Name), ResultPath: executionResultPath(operation.Name), AuditEventsPath: executionAuditEventsPath(operation.Name),
-			WorkspaceWrite: utilitycontract.WorkspaceWriteAuthority{LeaseName: grant.LeaseName, HolderIdentity: grant.HolderIdentity, WriterEpoch: grant.Epoch},
+			PolicyDecisionID: operation.Status.PolicyDecisionID,
+			Operation:        operation.Spec.Operation.Name,
+			IdempotencyKey:   utilityIdempotencyKey(operation, workflow),
+			CredentialClass:  utility.ExpectedCredentialClass(operation.Spec.Operation.Name),
+			Parameters:       parameters,
+			Outputs:          outputs,
+			WorkspacePath:    "/workspace",
+			StagingPath:      executionStagingPath(operation.Name),
+			ControlPath:      executionControlPath(operation.Name),
+			ResultPath:       executionResultPath(operation.Name),
+			AuditEventsPath:  executionAuditEventsPath(operation.Name),
+			WorkspaceWrite:   utilitycontract.WorkspaceWriteAuthority{LeaseName: grant.LeaseName, HolderIdentity: grant.HolderIdentity, WriterEpoch: grant.Epoch},
 		},
 	}
 	switch operation.Spec.Operation.Name {
