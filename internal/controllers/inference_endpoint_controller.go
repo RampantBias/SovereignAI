@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -106,6 +107,7 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 	automount := false
 	runtimeClass := "nvidia"
 	shmSizeLimit := resource.MustParse("1Gi")
+	allowPrivilegeEscalation := false
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: endpoint.Name, Namespace: endpoint.Namespace, Labels: labels},
@@ -145,7 +147,7 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 					"--dtype", "bfloat16",
 					"--tensor-parallel-size", "1",
 					"--gpu-memory-utilization", "0.80",
-					"--max-model-len", "8192",
+					"--max-model-len", "16384",
 					"--max-num-seqs", "1",
 					"--generation-config", "vllm",
 					"--enforce-eager",
@@ -154,6 +156,12 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 					{Name: "HF_HUB_OFFLINE", Value: "1"},
 					{Name: "HF_HUB_CACHE", Value: r.Profile.CachePath},
 					{Name: "VLLM_USE_V2_MODEL_RUNNER", Value: "0"},
+				},
+				SecurityContext: &corev1.SecurityContext{
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+					Privileged:               ptr.To(false),
+					AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+					SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 				},
 				Ports:     []corev1.ContainerPort{{Name: "http", ContainerPort: 8000}},
 				Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("1")}},
