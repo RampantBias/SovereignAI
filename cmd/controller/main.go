@@ -118,6 +118,7 @@ func main() {
 			Audit:  recorder},
 		&controllers.WorkflowReconciler{
 			Client:         mgr.GetClient(),
+			Reader:         mgr.GetAPIReader(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,
 			StorageClass:   storageClass,

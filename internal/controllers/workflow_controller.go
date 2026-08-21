@@ -32,6 +32,7 @@ const (
 
 type WorkflowReconciler struct {
 	client.Client
+	client.Reader
 	Scheme         *runtime.Scheme
 	Audit          audit.Recorder
 	Now            func() time.Time
@@ -52,7 +53,7 @@ func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	// Get workflow record
 	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, request.NamespacedName, &workflow); err != nil {
+	if err := r.Client.Get(ctx, request.NamespacedName, &workflow); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -117,14 +118,14 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	// Get current step attempt based on current step in workflow
 	var attempt v1alpha1.StepAttempt
 	key := types.NamespacedName{Namespace: workflow.Namespace, Name: workflow.Status.ActiveAttemptRef}
-	if err := r.Get(ctx, key, &attempt); err != nil {
+	if err := r.stepAttemptReader().Get(ctx, key, &attempt); err != nil {
 		if apierrors.IsNotFound(err) {
 			step, found := findStep(workflow.Spec.Steps, workflow.Status.ActiveStepName)
 			if !found {
 				return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepMissing", workflow.Status.ActiveStepName)
 			}
 			var attempts v1alpha1.StepAttemptList
-			if listErr := r.List(ctx, &attempts, client.InNamespace(workflow.Namespace), client.MatchingLabels{LabelWorkflow: workflow.Spec.WorkflowID, LabelStep: step.Name}); listErr != nil {
+			if listErr := r.stepAttemptReader().List(ctx, &attempts, client.InNamespace(workflow.Namespace), client.MatchingLabels{LabelWorkflow: workflow.Spec.WorkflowID, LabelStep: step.Name}); listErr != nil {
 				return ctrl.Result{}, listErr
 			}
 			return ctrl.Result{}, r.createAttempt(ctx, &workflow, step, state.NextAttemptNumber(attempts.Items, step.Name))
@@ -180,7 +181,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 func (r *WorkflowReconciler) ensureWorkspaceWriterLease(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) error {
 	name := workspaceWriterLeaseName(workflow.Name)
 	var lease coordinationv1.Lease
-	err := r.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: name}, &lease)
+	err := r.Client.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: name}, &lease)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
@@ -216,7 +217,7 @@ func (r *WorkflowReconciler) ensureWorkspaceWriterLease(ctx context.Context, wor
 func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) error {
 	name := workflow.Name + "-workspace"
 	var existing corev1.PersistentVolumeClaim
-	err := r.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: name}, &existing)
+	err := r.Client.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: name}, &existing)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
@@ -285,7 +286,7 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 	if err := r.Create(ctx, attempt); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Name}, attempt); err != nil {
+	if err := r.stepAttemptReader().Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Name}, attempt); err != nil {
 		return err
 	}
 	executionRef, err := r.ensureDomainExecution(ctx, attempt, step)
@@ -396,7 +397,7 @@ func copyApprovalSpec(source v1alpha1.ApprovalSpec) v1alpha1.ApprovalSpec {
 func (r *WorkflowReconciler) recordAttemptExecutionRef(ctx context.Context, attempt *v1alpha1.StepAttempt, reference *v1alpha1.TypedLocalReference) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var latest v1alpha1.StepAttempt
-		if err := r.Get(ctx, client.ObjectKeyFromObject(attempt), &latest); err != nil {
+		if err := r.stepAttemptReader().Get(ctx, client.ObjectKeyFromObject(attempt), &latest); err != nil {
 			return err
 		}
 		if latest.Status.ExecutionRef != nil && *latest.Status.ExecutionRef == *reference {
@@ -406,6 +407,13 @@ func (r *WorkflowReconciler) recordAttemptExecutionRef(ctx context.Context, atte
 		latest.Status.ObservedGeneration = latest.Generation
 		return r.Status().Update(ctx, &latest)
 	})
+}
+
+func (r *WorkflowReconciler) stepAttemptReader() client.Reader {
+	if r.Reader != nil {
+		return r.Reader
+	}
+	return r.Client
 }
 
 // Update Workflow status to failed
@@ -427,7 +435,7 @@ func (r *WorkflowReconciler) updateWorkflow(ctx context.Context, key types.Names
 	logger := ctrl.LoggerFrom(ctx).WithValues("workflow", key.String())
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var latest v1alpha1.SovereignWorkflow
-		if err := r.Get(ctx, key, &latest); err != nil {
+		if err := r.Client.Get(ctx, key, &latest); err != nil {
 			return err
 		}
 		mutate(&latest)
@@ -446,7 +454,7 @@ func (r *WorkflowReconciler) updateWorkflowStatus(ctx context.Context, key types
 	var updated v1alpha1.SovereignWorkflow
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var latest v1alpha1.SovereignWorkflow
-		if err := r.Get(ctx, key, &latest); err != nil {
+		if err := r.Client.Get(ctx, key, &latest); err != nil {
 			return err
 		}
 		mutate(&latest)

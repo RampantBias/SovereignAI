@@ -44,7 +44,7 @@ func (r *WorkflowReconciler) reconcileBootstrap(ctx context.Context, workflow *v
 
 	var artifact v1alpha1.Artifact
 	artifactKey := types.NamespacedName{Namespace: workflow.Namespace, Name: workflow.Spec.Bootstrap.ArtifactName}
-	artifactErr := r.Get(ctx, artifactKey, &artifact)
+	artifactErr := r.Client.Get(ctx, artifactKey, &artifact)
 	if artifactErr != nil && !apierrors.IsNotFound(artifactErr) {
 		return false, ctrl.Result{}, artifactErr
 	}
@@ -105,7 +105,7 @@ func (r *WorkflowReconciler) reconcileBootstrap(ctx context.Context, workflow *v
 	jobName := bootstrapJobName(workflow.Name)
 	var job batchv1.Job
 	jobKey := types.NamespacedName{Namespace: workflow.Namespace, Name: jobName}
-	err = r.Get(ctx, jobKey, &job)
+	err = r.Client.Get(ctx, jobKey, &job)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return false, ctrl.Result{}, err
 	}
@@ -374,7 +374,7 @@ func (r *WorkflowReconciler) acceptedBootstrapArtifact(ctx context.Context, work
 	}
 	var artifact v1alpha1.Artifact
 	key := types.NamespacedName{Namespace: workflow.Namespace, Name: workflow.Status.BootstrapArtifactRef.Name}
-	if err := r.Get(ctx, key, &artifact); err != nil {
+	if err := r.Client.Get(ctx, key, &artifact); err != nil {
 		return nil, err
 	}
 	if artifact.UID != workflow.Status.BootstrapArtifactRef.UID {
@@ -412,7 +412,7 @@ func validateBootstrapArtifactIdentity(workflow *v1alpha1.SovereignWorkflow, art
 func (r *WorkflowReconciler) cleanupBootstrapResources(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) error {
 	var source corev1.ConfigMap
 	sourceKey := types.NamespacedName{Namespace: workflow.Namespace, Name: workflow.Spec.Bootstrap.SourceRef.Name}
-	if err := r.Get(ctx, sourceKey, &source); err == nil {
+	if err := r.Client.Get(ctx, sourceKey, &source); err == nil {
 		if source.UID != workflow.Spec.Bootstrap.SourceRef.UID {
 			return fmt.Errorf("refusing to delete recreated bootstrap ConfigMap")
 		}
@@ -424,7 +424,7 @@ func (r *WorkflowReconciler) cleanupBootstrapResources(ctx context.Context, work
 	}
 	var job batchv1.Job
 	jobKey := types.NamespacedName{Namespace: workflow.Namespace, Name: bootstrapJobName(workflow.Name)}
-	if err := r.Get(ctx, jobKey, &job); err == nil {
+	if err := r.Client.Get(ctx, jobKey, &job); err == nil {
 		if !metav1.IsControlledBy(&job, workflow) {
 			return fmt.Errorf("refusing to delete bootstrap Job not controlled by workflow")
 		}
