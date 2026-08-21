@@ -84,7 +84,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 			return ctrl.Result{}, err
 		}
 		if invalidReason != "" {
-			return ctrl.Result{}, r.fail(ctx, &run, invalidReason, false)
+			return ctrl.Result{}, r.fail(ctx, &run, "InvalidArtifactInputs", false)
 		}
 		if !ready {
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, r.setPhase(
