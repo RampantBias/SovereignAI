@@ -23,22 +23,26 @@ type JSONSchema struct {
 }
 
 type ChatRequest struct {
-	Model           string
-	Messages        []Message
-	MaxOutputTokens int
-	OutputSchema    *JSONSchema
+	Model             string
+	Messages          []Message
+	MaxOutputTokens   int
+	RepetitionPenalty float64
+	OutputSchema      *JSONSchema
 }
 
 type ChatResponse struct {
-	Content      string
-	FinishReason string
+	Content          string
+	FinishReason     string
+	PromptTokens     int
+	CompletionTokens int
 }
 
 type chatCompletionPayload struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	MaxTokens      int             `json:"max_tokens"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Model             string          `json:"model"`
+	Messages          []Message       `json:"messages"`
+	MaxTokens         int             `json:"max_tokens"`
+	RepetitionPenalty float64         `json:"repetition_penalty,omitempty"`
+	ResponseFormat    *responseFormat `json:"response_format,omitempty"`
 }
 
 // OpenAI response format
@@ -49,11 +53,17 @@ type chatCompletionResponse struct {
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 type responseJSONSchema struct {
 	Name   string          `json:"name"`
 	Schema json.RawMessage `json:"schema"`
+	Strict bool            `json:"strict"`
 }
 
 type responseFormat struct {
@@ -105,9 +115,10 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 	}
 	// Process chat request to request payload
 	payload := chatCompletionPayload{
-		Model:     request.Model,
-		Messages:  request.Messages,
-		MaxTokens: request.MaxOutputTokens,
+		Model:             request.Model,
+		Messages:          request.Messages,
+		MaxTokens:         request.MaxOutputTokens,
+		RepetitionPenalty: request.RepetitionPenalty,
 	}
 	if request.OutputSchema != nil {
 		payload.ResponseFormat = &responseFormat{
@@ -115,6 +126,7 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 			JSONSchema: responseJSONSchema{
 				Name:   request.OutputSchema.Name,
 				Schema: request.OutputSchema.Schema,
+				Strict: true,
 			},
 		}
 	}
@@ -160,9 +172,12 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 	if len(decoded.Choices[0].Message.Content) == 0 {
 		return ChatResponse{}, fmt.Errorf("inference response has no content")
 	}
+
 	return ChatResponse{
-		Content:      decoded.Choices[0].Message.Content,
-		FinishReason: decoded.Choices[0].FinishReason,
+		Content:          decoded.Choices[0].Message.Content,
+		FinishReason:     decoded.Choices[0].FinishReason,
+		PromptTokens:     decoded.Usage.PromptTokens,
+		CompletionTokens: decoded.Usage.CompletionTokens,
 	}, nil
 }
 

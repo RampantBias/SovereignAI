@@ -63,6 +63,9 @@ func TestChatSendsWellFormedRequestAndDecodesSuccessfulResponse(t *testing.T) {
 			if payload.MaxTokens != 128 {
 				t.Errorf("max tokens = %d, want 128", payload.MaxTokens)
 			}
+			if payload.RepetitionPenalty != 1.1 {
+				t.Errorf("repetition penalty = %v, want 1.1", payload.RepetitionPenalty)
+			}
 			if len(payload.Messages) != 2 {
 				t.Errorf("message count = %d, expected 2", len(payload.Messages))
 			}
@@ -149,7 +152,8 @@ func validChatRequest() ChatRequest {
 			{Role: "system", Content: "return structured json"},
 			{Role: "architect", Content: "produce implementation plan"},
 		},
-		MaxOutputTokens: 128,
+		MaxOutputTokens:   128,
+		RepetitionPenalty: 1.1,
 		OutputSchema: &JSONSchema{
 			Name:   "implementation-plan-v1",
 			Schema: json.RawMessage(`{"type":"object"}`),

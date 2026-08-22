@@ -20,13 +20,14 @@ import (
 )
 
 const (
-	maxResponseBytes = 65792
-	maxPromptBytes   = 4 << 20 // 4 MB
-	maxRepoFiles     = 256
-	maxRepoFileBytes = 128 << 10
-	maxRepoBytes     = 512 << 10
-	timeout          = 60 * time.Second
-	jsonMediaType    = "application/json"
+	maxResponseBytes  = 65792
+	maxPromptBytes    = 4 << 20 // 4 MB
+	maxRepoFiles      = 256
+	maxRepoFileBytes  = 128 << 10
+	maxRepoBytes      = 512 << 10
+	timeout           = 600 * time.Second
+	repetitionPenalty = 1.1
+	jsonMediaType     = "application/json"
 )
 
 type loadedArtifact struct {
@@ -126,12 +127,19 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 			{Role: "system", Content: systemContext},
 			{Role: "user", Content: taskContext},
 		},
-		MaxOutputTokens: 2048,
+		MaxOutputTokens:   4096,
+		RepetitionPenalty: repetitionPenalty,
 		OutputSchema: &inference.JSONSchema{
 			Name:   binding.Schema.Name,
 			Schema: binding.Schema.JSON,
 		},
 	})
+	log.Printf(
+		"inference completed finishReason=%s promptTokens=%d completionTokens=%d",
+		response.FinishReason,
+		response.PromptTokens,
+		response.CompletionTokens,
+	)
 	if err != nil {
 		return fmt.Errorf("inference chat request: %v", err)
 	}
@@ -142,6 +150,10 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 
 	content, err := binding.Finalize([]byte(response.Content), artifactSources(artifactContents))
 	if err != nil {
+		log.Printf(
+			"rejected generation content=%q",
+			response.Content,
+		)
 		return fmt.Errorf("finalize generated artifact: %w", err)
 	}
 	artifact, err := writeArtifact(input.StagingPath, output, content)

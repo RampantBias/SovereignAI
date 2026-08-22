@@ -60,8 +60,9 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		}
 
 		var payload struct {
-			Model    string `json:"model"`
-			Messages []struct {
+			Model             string  `json:"model"`
+			RepetitionPenalty float64 `json:"repetition_penalty"`
+			Messages          []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
@@ -78,6 +79,9 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		}
 		if payload.Model != "code-small" {
 			t.Errorf("model = %q, want code-small", payload.Model)
+		}
+		if payload.RepetitionPenalty != repetitionPenalty {
+			t.Errorf("repetition penalty = %v, want %v", payload.RepetitionPenalty, repetitionPenalty)
 		}
 		if len(payload.Messages) != 2 {
 			t.Errorf("message count = %d, want 2", len(payload.Messages))
@@ -111,6 +115,9 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		}
 		if !json.Valid(payload.ResponseFormat.JSONSchema.Schema) {
 			t.Error("response schema is not valid JSON")
+		}
+		if bytes.Contains(payload.ResponseFormat.JSONSchema.Schema, []byte(`"uniqueItems"`)) {
+			t.Error("response schema contains unsupported uniqueItems keyword")
 		}
 		if strings.Contains(string(payload.ResponseFormat.JSONSchema.Schema), "changeRequestDigest") {
 			t.Error("generation schema exposes runtime-derived fields")

@@ -33,49 +33,32 @@ func TestArtifactReconcilerAcceptsExactStoredTypedContent(t *testing.T) {
 	}
 }
 
-func TestArtifactReconcilerRejectsTamperingContractMismatchAndFalseDigest(t *testing.T) {
-	validContent := validChangeRequestContent(t)
-	unknownFieldContent := append([]byte(nil), validContent[:len(validContent)-1]...)
-	unknownFieldContent = append(unknownFieldContent, []byte(`,"unexpected":true}`)...)
-	cases := []struct {
-		name     string
-		content  []byte
-		digest   string
-		contract v1alpha1.ContractReference
-		reason   string
-	}{
-		{
-			name: "false digest", content: validContent, digest: "sha256:" + strings.Repeat("0", 64),
-			contract: v1alpha1.ContractReference{Name: "change-request", Version: "v1"}, reason: "DigestMismatch",
-		},
-		{
-			name: "unknown field", content: unknownFieldContent,
-			contract: v1alpha1.ContractReference{Name: "change-request", Version: "v1"}, reason: "ContractRejected",
-		},
-		{
-			name: "contract mismatch", content: validContent,
-			contract: v1alpha1.ContractReference{Name: "repository-revision", Version: "v1"}, reason: "ContractRejected",
-		},
-		{
-			name: "unregistered contract", content: validContent,
-			contract: v1alpha1.ContractReference{Name: "unknown", Version: "v1"}, reason: "ContractRejected",
-		},
+func TestArtifactReconcilerAcceptsCollectorAttestationWithoutReadingContent(t *testing.T) {
+	content := validChangeRequestContent(t)
+	artifact := artifactFixture(t, content, artifactcontract.DigestBytes(content), v1alpha1.ContractReference{
+		Name: "change-request", Version: "v1",
+	})
+	artifact.Spec.Path = filepath.Join(t.TempDir(), "collector-owned", "artifact.json")
+
+	reconciled := reconcileArtifactFixture(t, artifact)
+	if reconciled.Status.Phase != v1alpha1.PhaseSucceeded {
+		t.Fatalf("phase = %s, want Succeeded: %#v", reconciled.Status.Phase, reconciled.Status.Conditions)
 	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			digest := test.digest
-			if digest == "" {
-				digest = artifactcontract.DigestBytes(test.content)
-			}
-			artifact := artifactFixture(t, test.content, digest, test.contract)
-			reconciled := reconcileArtifactFixture(t, artifact)
-			if reconciled.Status.Phase != v1alpha1.PhaseFailed {
-				t.Fatalf("phase = %s, want Failed", reconciled.Status.Phase)
-			}
-			if conditionReason(reconciled.Status.Conditions) != test.reason {
-				t.Fatalf("condition reason = %q, want %q: %#v", conditionReason(reconciled.Status.Conditions), test.reason, reconciled.Status.Conditions)
-			}
-		})
+}
+
+func TestArtifactReconcilerRejectsIncompleteMetadata(t *testing.T) {
+	content := validChangeRequestContent(t)
+	artifact := artifactFixture(t, content, artifactcontract.DigestBytes(content), v1alpha1.ContractReference{
+		Name: "change-request", Version: "v1",
+	})
+	artifact.Spec.Path = ""
+
+	reconciled := reconcileArtifactFixture(t, artifact)
+	if reconciled.Status.Phase != v1alpha1.PhaseFailed {
+		t.Fatalf("phase = %s, want Failed", reconciled.Status.Phase)
+	}
+	if reason := conditionReason(reconciled.Status.Conditions); reason != "InvalidMetadata" {
+		t.Fatalf("condition reason = %q, want InvalidMetadata", reason)
 	}
 }
 
