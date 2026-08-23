@@ -137,7 +137,15 @@ func (v ImplementationPlan) Validate() error {
 }
 
 func (v TestChangeSet) Validate() error {
-	return ChangeSet(v).Validate()
+	if err := ChangeSet(v).Validate(); err != nil {
+		return err
+	}
+	for _, file := range v.Files {
+		if !isTestPath(file) {
+			return fmt.Errorf("test change set file %q is not a recognized test path", file)
+		}
+	}
+	return nil
 }
 
 func (v ChangeSet) Validate() error {
@@ -654,6 +662,31 @@ func validateRepositoryPath(value string) error {
 		}
 	}
 	return nil
+}
+
+func isTestPath(value string) bool {
+	segments := strings.Split(value, "/")
+	for _, segment := range segments[:len(segments)-1] {
+		directory := strings.ToLower(segment)
+		if directory == "test" || directory == "tests" || directory == "testdata" || directory == "test_data" ||
+			directory == "__tests__" || strings.HasSuffix(directory, ".tests") {
+			return true
+		}
+	}
+
+	base := segments[len(segments)-1]
+	lowerBase := strings.ToLower(base)
+	if strings.HasPrefix(lowerBase, "test_") || lowerBase == "conftest.py" {
+		return true
+	}
+	extension := strings.LastIndexByte(base, '.')
+	if extension <= 0 {
+		return false
+	}
+	stem := base[:extension]
+	lowerStem := strings.ToLower(stem)
+	return strings.HasSuffix(lowerStem, "_test") || strings.HasSuffix(lowerStem, ".test") ||
+		strings.HasSuffix(lowerStem, ".spec") || strings.HasSuffix(stem, "Test") || strings.HasSuffix(stem, "Tests")
 }
 
 func validateBranch(value string) error {

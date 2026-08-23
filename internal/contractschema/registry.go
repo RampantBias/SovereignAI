@@ -47,6 +47,20 @@ func Load(schemaFS, commonFS fs.FS, files map[string]string, nameSuffix string) 
 	return loaded, nil
 }
 
+// LoadStandalone loads schemas without merging shared definitions. It is
+// intended for provider-facing contracts that must already be self-contained.
+func LoadStandalone(schemaFS fs.FS, files map[string]string, nameSuffix string) (Registry, error) {
+	loaded := registry{}
+	for contract, filename := range files {
+		definition, err := loadDefinition(schemaFS, nil, contract, filename, nameSuffix)
+		if err != nil {
+			return nil, fmt.Errorf("load %s: %w", contract, err)
+		}
+		loaded[contract] = definition
+	}
+	return loaded, nil
+}
+
 func (r registry) Lookup(name, version string) (Definition, error) {
 	key := name + "/" + version
 	definition, ok := r[key]
@@ -66,23 +80,25 @@ func loadDefinition(schemaFS fs.FS, commonDefs map[string]any, contract, filenam
 	if err := json.Unmarshal(data, &root); err != nil {
 		return Definition{}, fmt.Errorf("decode schema: %w", err)
 	}
-	definitions, err := clone(commonDefs)
-	if err != nil {
-		return Definition{}, err
-	}
-	if existing, ok := root["$defs"]; ok {
-		rootDefs, ok := existing.(map[string]any)
-		if !ok {
-			return Definition{}, fmt.Errorf("schema has non-object $defs")
+	if commonDefs != nil {
+		definitions, err := clone(commonDefs)
+		if err != nil {
+			return Definition{}, err
 		}
-		for name, definition := range definitions {
-			if _, exists := rootDefs[name]; exists {
-				return Definition{}, fmt.Errorf("schema redefines $defs/%s", name)
+		if existing, ok := root["$defs"]; ok {
+			rootDefs, ok := existing.(map[string]any)
+			if !ok {
+				return Definition{}, fmt.Errorf("schema has non-object $defs")
 			}
-			rootDefs[name] = definition
+			for name, definition := range definitions {
+				if _, exists := rootDefs[name]; exists {
+					return Definition{}, fmt.Errorf("schema redefines $defs/%s", name)
+				}
+				rootDefs[name] = definition
+			}
+		} else {
+			root["$defs"] = definitions
 		}
-	} else {
-		root["$defs"] = definitions
 	}
 	if err := normalizeReferences(root); err != nil {
 		return Definition{}, err

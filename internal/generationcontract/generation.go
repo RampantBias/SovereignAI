@@ -7,11 +7,18 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/contractschema"
-	artifactschemas "github.com/SovereignAI/schemas/artifacts/v1"
 	generationschemas "github.com/SovereignAI/schemas/generation/v1"
+)
+
+const (
+	minimumPatchLines     = 5
+	maximumPatchLines     = 8192
+	maximumPatchLineBytes = 16 << 10
 )
 
 var schemaFiles = map[string]string{
@@ -33,7 +40,7 @@ type Binding struct {
 type Catalog struct{ schemas contractschema.Registry }
 
 func NewCatalog() (*Catalog, error) {
-	schemas, err := contractschema.Load(generationschemas.Files, artifactschemas.Files, schemaFiles, "-generation")
+	schemas, err := contractschema.LoadStandalone(generationschemas.Files, schemaFiles, "-generation")
 	if err != nil {
 		return nil, err
 	}
@@ -94,10 +101,14 @@ func finalizePlan(candidate []byte, sources []SourceArtifact) ([]byte, error) {
 
 func finalizeChangeSet(contract string, candidate []byte, sources []SourceArtifact) ([]byte, error) {
 	var generated struct {
-		Summary string `json:"summary"`
-		Patch   string `json:"patch"`
+		Summary    string   `json:"summary"`
+		PatchLines []string `json:"patchLines"`
 	}
 	if err := decode(candidate, &generated); err != nil {
+		return nil, err
+	}
+	patch, err := joinPatchLines(generated.PatchLines)
+	if err != nil {
 		return nil, err
 	}
 	changeRequest, err := requiredSource(sources, artifactcontract.ChangeRequestContract)
@@ -112,17 +123,39 @@ func finalizeChangeSet(contract string, candidate []byte, sources []SourceArtifa
 	if err != nil {
 		return nil, err
 	}
-	files, lineCounts, err := artifactcontract.DerivePatchMetadata(generated.Patch)
+	files, lineCounts, err := artifactcontract.DerivePatchMetadata(patch)
 	if err != nil {
 		return nil, err
 	}
-	patchBytes := []byte(generated.Patch)
+	patchBytes := []byte(patch)
 	return marshalArtifact(contract, artifactcontract.ChangeSet{
 		Format: "unified-diff", Summary: generated.Summary, BaseCommit: revision.ResolvedCommit,
 		ChangeRequestDigest: changeRequest.Digest, ImplementationPlanDigest: plan.Digest,
-		Patch: generated.Patch, PatchDigest: artifactcontract.DigestBytes(patchBytes),
+		Patch: patch, PatchDigest: artifactcontract.DigestBytes(patchBytes),
 		Files: files, ByteCount: len(patchBytes), LineCounts: lineCounts,
 	})
+}
+
+func joinPatchLines(lines []string) (string, error) {
+	if len(lines) < minimumPatchLines || len(lines) > maximumPatchLines {
+		return "", fmt.Errorf("patchLines must contain %d through %d entries", minimumPatchLines, maximumPatchLines)
+	}
+	for index, line := range lines {
+		if line == "" {
+			return "", fmt.Errorf("patchLines[%d] must not be empty", index)
+		}
+		if len([]byte(line)) > maximumPatchLineBytes {
+			return "", fmt.Errorf("patchLines[%d] exceeds %d bytes", index, maximumPatchLineBytes)
+		}
+		if !utf8.ValidString(line) || strings.ContainsAny(line, "\r\n\x00") {
+			return "", fmt.Errorf("patchLines[%d] must be one UTF-8 line with no CR, LF, or NUL", index)
+		}
+	}
+	patch := strings.Join(lines, "\n") + "\n"
+	if len([]byte(patch)) > artifactcontract.MaxPatchBytes {
+		return "", fmt.Errorf("joined patch exceeds %d bytes", artifactcontract.MaxPatchBytes)
+	}
+	return patch, nil
 }
 
 func repositoryRevision(sources []SourceArtifact) (SourceArtifact, artifactcontract.RepositoryRevision, error) {
@@ -165,7 +198,7 @@ func marshalArtifact(contract string, value any) ([]byte, error) {
 }
 
 func decode(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder := json.NewDecoder(bytes.NewReader(normalizeJSONControlCharacters(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("decode generation: %w", err)
@@ -175,4 +208,56 @@ func decode(data []byte, target any) error {
 		return fmt.Errorf("decode generation trailing data")
 	}
 	return nil
+}
+
+func normalizeJSONControlCharacters(data []byte) []byte {
+	const hexadecimal = "0123456789abcdef"
+	var normalized []byte
+	inString := false
+	escaped := false
+	for index, current := range data {
+		if !inString {
+			if current == '"' {
+				inString = true
+			}
+		} else if escaped {
+			escaped = false
+		} else {
+			switch current {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			default:
+				if current < 0x20 {
+					if normalized == nil {
+						normalized = make([]byte, 0, len(data)+8)
+						normalized = append(normalized, data[:index]...)
+					}
+					switch current {
+					case '\b':
+						normalized = append(normalized, '\\', 'b')
+					case '\t':
+						normalized = append(normalized, '\\', 't')
+					case '\n':
+						normalized = append(normalized, '\\', 'n')
+					case '\f':
+						normalized = append(normalized, '\\', 'f')
+					case '\r':
+						normalized = append(normalized, '\\', 'r')
+					default:
+						normalized = append(normalized, '\\', 'u', '0', '0', hexadecimal[current>>4], hexadecimal[current&0x0f])
+					}
+					continue
+				}
+			}
+		}
+		if normalized != nil {
+			normalized = append(normalized, current)
+		}
+	}
+	if normalized == nil {
+		return data
+	}
+	return normalized
 }

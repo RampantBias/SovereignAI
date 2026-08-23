@@ -70,6 +70,17 @@ func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
 			t.Fatal("controller manually selected a GPU device")
 		}
 	}
+	wantStructuredOutputsConfig := `{"backend":"xgrammar","disable_any_whitespace":true}`
+	gotStructuredOutputsConfig := ""
+	for index, argument := range pod.Spec.Containers[0].Args {
+		if argument == "--structured-outputs-config" && index+1 < len(pod.Spec.Containers[0].Args) {
+			gotStructuredOutputsConfig = pod.Spec.Containers[0].Args[index+1]
+			break
+		}
+	}
+	if gotStructuredOutputsConfig != wantStructuredOutputsConfig {
+		t.Fatalf("structured outputs config = %q, want %q", gotStructuredOutputsConfig, wantStructuredOutputsConfig)
+	}
 	if got := pod.Spec.Containers[0].Resources.Limits["nvidia.com/gpu"]; got.String() != "1" {
 		t.Fatalf("GPU request = %s, want 1", got.String())
 	}

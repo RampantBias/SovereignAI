@@ -151,6 +151,7 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 					"--max-num-seqs", "1",
 					"--generation-config", "vllm",
 					"--enforce-eager",
+					"--structured-outputs-config", `{"backend":"xgrammar","disable_any_whitespace":true}`,
 				},
 				Env: []corev1.EnvVar{
 					{Name: "HF_HUB_OFFLINE", Value: "1"},

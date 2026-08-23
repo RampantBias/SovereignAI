@@ -1,0 +1,132 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: agent-runtime-smoke
+  namespace: __NAMESPACE__
+  labels:
+    sovereign-ai.io/project: __PROJECT_NAME__
+    sovereign-ai.io/workflow-id: agent-runtime-smoke
+spec:
+  projectRef:
+    name: __PROJECT_NAME__
+    uid: __PROJECT_UID__
+  workflowId: agent-runtime-smoke
+  requesterSubject: smoke/runtime-proof
+  bootstrap:
+    sourceRef:
+      name: agent-runtime-smoke-input
+      uid: __SOURCE_UID__
+    key: change-request.json
+    expectedDigest: __EXPECTED_DIGEST__
+    contract:
+      name: change-request
+      version: v1
+    artifactName: change-request
+  definitionRevision: agent-runtime-smoke-v1
+  classification: internal
+  requestedVolumeSize: 1Gi
+  steps:
+    - name: initialize-repository
+      kind: Utility
+      order: 1
+      utility:
+        name: repository.initialize
+      inputs:
+        - name: change-request
+      outputs:
+        - name: repository-revision
+          version: v1
+      timeout: 10m
+      maxAttempts: 1
+    - name: architect
+      kind: Agent
+      order: 2
+      agent:
+        responsibility: >
+          Analyze the change request and checked-out repository and produce an
+          implementation plan identifying affected files, changes, risks, and tests.
+          List every planned file change in affectedPaths using the exact
+          repository-relative path with / separators. Do not use a leading ./, an
+          absolute path, or any empty, ., .., or .git path segment. Each affectedPaths
+          path and action must correspond directly to an implementation step, and no
+          unrelated file may be listed.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+          estimatedKVRAMMiB: 2048
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: repository-revision
+      outputs:
+        - name: implementation-plan
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: test-author
+      kind: Agent
+      order: 3
+      agent:
+        responsibility: >
+          Use the change request, implementation plan, and repository to produce
+          a unified-diff test change set. Return a short summary and patchLines, an
+          array containing exactly one physical Git unified-diff line per item with
+          no embedded CR, LF, or NUL. For every file, emit diff --git, ---, +++, one
+          or more @@ hunks, then exact context and changed lines. Use exact repository
+          paths and contents, include at least one added or deleted line, and do not
+          use timestamps, Markdown fences, placeholders, ellipses, prose, or invented
+          metadata in patchLines. Modify only recognized test paths and never modify
+          production code.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+          estimatedKVRAMMiB: 2048
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+      outputs:
+        - name: test-change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: developer
+      kind: Agent
+      order: 4
+      agent:
+        responsibility: >
+          Use the change request, implementation plan, proposed tests, and repository
+          to produce a unified-diff production change set. Return a short summary and
+          patchLines, an array containing exactly one physical Git unified-diff line
+          per item with no embedded CR, LF, or NUL. For every file, emit diff --git,
+          ---, +++, one or more @@ hunks, then exact context and changed lines. Use
+          exact repository paths and contents, include at least one added or deleted
+          line, and do not use timestamps, Markdown fences, placeholders, ellipses,
+          prose, or invented metadata in patchLines. Implement only the requested
+          production-code changes and do not repeat or modify the accepted test change
+          set.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["context.read", "artifact.publish"]
+        inference:
+          model: code-small
+          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+          estimatedKVRAMMiB: 2048
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+        - name: test-change-set
+      outputs:
+        - name: change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
