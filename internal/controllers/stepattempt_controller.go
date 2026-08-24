@@ -62,7 +62,7 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 	if attempt.Status.ExecutionRef.APIVersion != v1alpha1.GroupVersion.String() || attempt.Status.ExecutionRef.Kind != domainKind(attempt.Spec.Kind) {
 		return ctrl.Result{}, r.fail(ctx, &attempt, "InvalidExecutionReference", false)
 	}
-	phase, reason, retryable, err := r.domainStatus(ctx, &attempt)
+	phase, reason, failureMessage, retryable, err := r.domainStatus(ctx, &attempt)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, r.interrupt(ctx, &attempt, "ExecutionPrimitiveLost", true)
@@ -73,63 +73,64 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
 	attempt.Status.FailureReason = reason
+	attempt.Status.FailureMessage = failureMessage
 	attempt.Status.Retryable = retryable
-	return ctrl.Result{}, r.setPhase(ctx, &attempt, phase, domainPhaseReason(phase, reason), domainPhaseMessage(attempt.Status.ExecutionRef.Kind, phase))
+	return ctrl.Result{}, r.setPhase(ctx, &attempt, phase, domainPhaseReason(phase, reason), domainPhaseMessage(attempt.Status.ExecutionRef.Kind, phase, failureMessage))
 }
 
-func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alpha1.StepAttempt) (v1alpha1.ResourcePhase, string, bool, error) {
+func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alpha1.StepAttempt) (v1alpha1.ResourcePhase, string, string, bool, error) {
 	key := types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Status.ExecutionRef.Name}
 	switch attempt.Spec.Kind {
 	case v1alpha1.ExecutionKindAgent:
 		if attempt.Status.ExecutionRef.Kind != "AgentRun" {
-			return "", "", false, fmt.Errorf("agent attempt references %s", attempt.Status.ExecutionRef.Kind)
+			return "", "", "", false, fmt.Errorf("agent attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var run v1alpha1.AgentRun
 		if err := r.Get(ctx, key, &run); err != nil {
-			return "", "", false, err
+			return "", "", "", false, err
 		}
 		if err := validateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindAgent, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
-			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
-		return run.Status.Phase, run.Status.FailureReason, run.Status.Retryable, nil
+		return run.Status.Phase, run.Status.FailureReason, run.Status.FailureMessage, run.Status.Retryable, nil
 	case v1alpha1.ExecutionKindUtility:
 		if attempt.Status.ExecutionRef.Kind != "UtilityOperation" {
-			return "", "", false, fmt.Errorf("utility attempt references %s", attempt.Status.ExecutionRef.Kind)
+			return "", "", "", false, fmt.Errorf("utility attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var operation v1alpha1.UtilityOperation
 		if err := r.Get(ctx, key, &operation); err != nil {
-			return "", "", false, err
+			return "", "", "", false, err
 		}
 		if err := validateDomainBinding(attempt, &operation, operation.Spec.AttemptRef, v1alpha1.ExecutionKindUtility, operation.Spec.WorkflowRef, operation.Spec.StepName, operation.Spec.Attempt); err != nil {
-			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
-		return operation.Status.Phase, operation.Status.FailureReason, operation.Status.Retryable, nil
+		return operation.Status.Phase, operation.Status.FailureReason, "", operation.Status.Retryable, nil
 	case v1alpha1.ExecutionKindHumanGate:
 		if attempt.Status.ExecutionRef.Kind != "ApprovalRequest" {
-			return "", "", false, fmt.Errorf("human gate attempt references %s", attempt.Status.ExecutionRef.Kind)
+			return "", "", "", false, fmt.Errorf("human gate attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var approval v1alpha1.ApprovalRequest
 		if err := r.Get(ctx, key, &approval); err != nil {
-			return "", "", false, err
+			return "", "", "", false, err
 		}
 		if err := validateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
-			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
-		return approval.Status.Phase, approval.Status.FailureReason, approval.Status.Retryable, nil
+		return approval.Status.Phase, approval.Status.FailureReason, "", approval.Status.Retryable, nil
 	case v1alpha1.ExecutionKindValidation:
 		if attempt.Status.ExecutionRef.Kind != "ValidationRun" {
-			return "", "", false, fmt.Errorf("validation attempt references %s", attempt.Status.ExecutionRef.Kind)
+			return "", "", "", false, fmt.Errorf("validation attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var run v1alpha1.ValidationRun
 		if err := r.Get(ctx, key, &run); err != nil {
-			return "", "", false, err
+			return "", "", "", false, err
 		}
 		if err := validateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
-			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", false, nil
+			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
-		return run.Status.Phase, run.Status.FailureReason, run.Status.Retryable, nil
+		return run.Status.Phase, run.Status.FailureReason, "", run.Status.Retryable, nil
 	default:
-		return v1alpha1.PhaseFailed, "UnsupportedKind", false, nil
+		return v1alpha1.PhaseFailed, "UnsupportedKind", "", false, nil
 	}
 }
 
@@ -151,7 +152,10 @@ func domainPhaseReason(phase v1alpha1.ResourcePhase, failureReason string) strin
 	}
 }
 
-func domainPhaseMessage(kind string, phase v1alpha1.ResourcePhase) string {
+func domainPhaseMessage(kind string, phase v1alpha1.ResourcePhase, failureMessage string) string {
+	if failureMessage != "" && (phase == v1alpha1.PhaseFailed || phase == v1alpha1.PhaseInterrupted) {
+		return failureMessage
+	}
 	return fmt.Sprintf("%s is %s", kind, phase)
 }
 
@@ -170,6 +174,7 @@ func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.
 		}
 		latest.Status.Phase = phase
 		latest.Status.FailureReason = attempt.Status.FailureReason
+		latest.Status.FailureMessage = attempt.Status.FailureMessage
 		latest.Status.Retryable = attempt.Status.Retryable
 		latest.Status.ObservedGeneration = latest.Generation
 		if phase == v1alpha1.PhaseRunning && latest.Status.StartedAt == nil {

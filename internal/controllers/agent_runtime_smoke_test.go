@@ -29,7 +29,7 @@ func TestAgentRuntimeSmokeStopsAfterThreeSingleOutputAgents(t *testing.T) {
 	for index, output := range want {
 		step := workflow.Spec.Steps[index+1]
 		if step.Kind != v1alpha1.ExecutionKindAgent || step.Agent == nil || step.Agent.Inference == nil ||
-			step.Agent.Image != "sovereign-reference-agent:dev" || step.MaxAttempts != 1 ||
+			step.Agent.Image != "sovereign-reference-agent:dev" || step.MaxAttempts != 5 ||
 			len(step.Outputs) != 1 || step.Outputs[0] != output {
 			t.Fatalf("step %q is not a single-attempt reference-agent producing %#v", step.Name, output)
 		}

@@ -63,6 +63,9 @@ func TestChatSendsWellFormedRequestAndDecodesSuccessfulResponse(t *testing.T) {
 			if payload.MaxTokens != 128 {
 				t.Errorf("max tokens = %d, want 128", payload.MaxTokens)
 			}
+			if payload.Temperature != 0.2 {
+				t.Errorf("temperature = %v, want 0.2", payload.Temperature)
+			}
 			if payload.RepetitionPenalty != 1.1 {
 				t.Errorf("repetition penalty = %v, want 1.1", payload.RepetitionPenalty)
 			}
@@ -153,6 +156,7 @@ func validChatRequest() ChatRequest {
 			{Role: "architect", Content: "produce implementation plan"},
 		},
 		MaxOutputTokens:   128,
+		Temperature:       0.2,
 		RepetitionPenalty: 1.1,
 		OutputSchema: &JSONSchema{
 			Name:   "implementation-plan-v1",

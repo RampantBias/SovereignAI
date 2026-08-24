@@ -177,6 +177,37 @@ func TestNormalizeJSONControlCharactersLeavesValidJSONUnchanged(t *testing.T) {
 	}
 }
 
+func TestDiagnoseRejectionReturnsStableSpecificCodes(t *testing.T) {
+	tests := []struct {
+		message string
+		code    string
+	}{
+		{message: `decode generation: json: unknown field "tests"`, code: "GenerationSchemaViolation"},
+		{message: `final artifact: test-change-set/v1: test change set file "src/main.go" is not a recognized test path`, code: "TestPathNotRecognized"},
+		{message: `final artifact: implementation-plan/v1: affectedPaths[0].path: contains a forbidden path segment`, code: "InvalidRepositoryPath"},
+		{message: `patchLines[2] must not be empty`, code: "InvalidPatchLines"},
+		{message: `patch is missing an @@ hunk header`, code: "InvalidUnifiedDiff"},
+	}
+	for _, test := range tests {
+		diagnostic := DiagnoseRejection(fmt.Errorf("%s", test.message))
+		if diagnostic.Code != test.code || diagnostic.Message != test.message {
+			t.Errorf("diagnostic for %q = %#v, want code %q", test.message, diagnostic, test.code)
+		}
+	}
+}
+
+func TestMalformedUnifiedDiffReportsMissingStandaloneHeader(t *testing.T) {
+	patch := strings.Join([]string{
+		"diff --git a/main_test.go b/main_test.go",
+		"--- a/main_test.go+++ b/main_test.go@@ -1 +1 @@",
+		"-old",
+		"+new",
+	}, "\n") + "\n"
+	if _, _, err := artifactcontract.DerivePatchMetadata(patch); err == nil || !strings.Contains(err.Error(), "standalone +++ new-file header") {
+		t.Fatalf("unexpected malformed patch diagnostic: %v", err)
+	}
+}
+
 func splitContract(contract string) (string, string) {
 	for index, char := range contract {
 		if char == '/' {

@@ -133,6 +133,42 @@ func TestChangeSetsRejectDigestAndPatchLimitViolations(t *testing.T) {
 	}
 }
 
+func TestTestChangeSetRejectsProductionPaths(t *testing.T) {
+	fixture := fixtureForContract(t, TestChangeSetContract)
+	patch := "diff --git a/src/main.go b/src/main.go\n--- a/src/main.go\n+++ b/src/main.go\n@@ -1 +1 @@\n-old\n+new\n"
+	fixture.Document["patch"] = patch
+	fixture.Document["patchDigest"] = DigestBytes([]byte(patch))
+	fixture.Document["files"] = []string{"src/main.go"}
+	fixture.Document["byteCount"] = len([]byte(patch))
+	fixture.Document["lineCounts"] = map[string]any{"added": 1, "deleted": 1}
+	if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "recognized test path") {
+		t.Fatalf("expected production-path rejection, got %v", err)
+	}
+}
+
+func TestTestPathClassification(t *testing.T) {
+	for _, path := range []string{
+		"src/main_test.go",
+		"tests/calculator.go",
+		"src/test_data/divide.json",
+		"web/__tests__/calculator.ts",
+		"python/test_calculator.py",
+		"web/calculator.test.ts",
+		"web/calculator.spec.js",
+		"java/CalculatorTest.java",
+		"dotnet/Calculator.Tests/Divide.cs",
+	} {
+		if !isTestPath(path) {
+			t.Errorf("test path %q was not recognized", path)
+		}
+	}
+	for _, path := range []string{"src/main.go", "web/calculator.ts", "python/calculator.py", "docs/latest.md"} {
+		if isTestPath(path) {
+			t.Errorf("production path %q was recognized as a test", path)
+		}
+	}
+}
+
 func TestTestReportAndValidationSuccessPredicates(t *testing.T) {
 	testReport := fixtureForContract(t, TestReportContract)
 	testReport.Document["workspaceClean"] = false

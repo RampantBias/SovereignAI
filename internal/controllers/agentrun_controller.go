@@ -49,6 +49,13 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !run.DeletionTimestamp.IsZero() {
+		released, err := r.reconcileInferenceLeaseRelease(ctx, &run)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !released {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		return r.finalizeWorkspaceWriter(ctx, &run)
 	}
 	if !controllerutil.ContainsFinalizer(&run, WorkspaceWriterFinalizer) {
@@ -65,6 +72,13 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, r.setPhase(ctx, &run, v1alpha1.PhasePending, "Initialized", "agent run initialized")
 	}
 	if terminalAttempt(run.Status.Phase) {
+		released, err := r.reconcileInferenceLeaseRelease(ctx, &run)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !released {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		return r.reconcileWorkspaceWriterRelease(ctx, &run)
 	}
 	authorized, err := validateDomainAuthority(ctx, r.Client, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindAgent, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt)
@@ -159,7 +173,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	case corev1.PodSucceeded:
 		return r.startCollection(ctx, &run)
 	case corev1.PodFailed:
-		run.Status.FailureReason = "AgentPodFailed"
+		run.Status.FailureReason, run.Status.FailureMessage = agentPodFailure(&pod)
 		run.Status.Retryable = true
 		return r.startCollection(ctx, &run)
 	case corev1.PodRunning:
@@ -335,6 +349,57 @@ func (r *AgentRunReconciler) ensureLease(ctx context.Context, run *v1alpha1.Agen
 	return &lease, nil
 }
 
+func (r *AgentRunReconciler) reconcileInferenceLeaseRelease(ctx context.Context, run *v1alpha1.AgentRun) (bool, error) {
+	if run.Status.InferenceLeaseRef == "" {
+		return true, nil
+	}
+	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.InferenceLeaseRef}
+	var lease v1alpha1.InferenceLease
+	if err := r.Get(ctx, key, &lease); err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	if terminalAttempt(lease.Status.Phase) {
+		return true, nil
+	}
+	reason := "AgentRun" + string(run.Status.Phase)
+	if !run.DeletionTimestamp.IsZero() {
+		reason = "AgentRunDeleted"
+	}
+	requested := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.InferenceLease
+		if err := r.Get(ctx, key, &latest); err != nil {
+			return err
+		}
+		if latest.Annotations != nil && latest.Annotations[InferenceLeaseReleaseRequestAnnotation] != "" {
+			return nil
+		}
+		annotations := make(map[string]string, len(latest.Annotations)+1)
+		for name, value := range latest.Annotations {
+			annotations[name] = value
+		}
+		annotations[InferenceLeaseReleaseRequestAnnotation] = reason
+		latest.Annotations = annotations
+		if err := r.Update(ctx, &latest); err != nil {
+			return err
+		}
+		requested = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if requested {
+		if err := r.appendEvent(ctx, run, "InferenceLeaseReleaseRequested", "release", lease.Name, "requested", reason); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
 func (r *AgentRunReconciler) deletePod(ctx context.Context, run *v1alpha1.AgentRun) error {
 	if run.Status.PodRef == "" {
 		return nil
@@ -378,6 +443,13 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		ResultPath:        executionResultPath(run.Name),
 		AuditEventsPath:   executionAuditEventsPath(run.Name),
 		WorkspaceWrite:    agentcontract.WorkspaceWriteAuthority{LeaseName: grant.LeaseName, HolderIdentity: grant.HolderIdentity, WriterEpoch: grant.Epoch},
+	}
+	if run.Spec.PriorAttemptRef != nil {
+		input.RetryFeedback = &agentcontract.RetryFeedback{
+			PreviousAttemptRef: run.Spec.PriorAttemptRef.PreviousAttemptRef,
+			Code:               run.Spec.PriorAttemptRef.Code,
+			Message:            run.Spec.PriorAttemptRef.Message,
+		}
 	}
 	data, err := json.Marshal(input)
 	if err != nil {
@@ -593,6 +665,7 @@ func (r *AgentRunReconciler) setPhase(ctx context.Context, run *v1alpha1.AgentRu
 		latest.Status.WorkspaceWriterEpoch = run.Status.WorkspaceWriterEpoch
 		latest.Status.WorkspaceWriterReleased = run.Status.WorkspaceWriterReleased
 		latest.Status.FailureReason = run.Status.FailureReason
+		latest.Status.FailureMessage = run.Status.FailureMessage
 		latest.Status.Retryable = run.Status.Retryable
 		latest.Status.ObservedGeneration = latest.Generation
 		if phase == v1alpha1.PhaseRunning && latest.Status.StartedAt == nil {
@@ -612,7 +685,11 @@ func (r *AgentRunReconciler) setPhase(ctx context.Context, run *v1alpha1.AgentRu
 
 func (r *AgentRunReconciler) fail(ctx context.Context, run *v1alpha1.AgentRun, reason string, retryable bool) error {
 	run.Status.FailureReason, run.Status.Retryable = reason, retryable
-	return r.setPhase(ctx, run, v1alpha1.PhaseFailed, reason, "agent run failed")
+	message := run.Status.FailureMessage
+	if message == "" {
+		message = "agent run failed"
+	}
+	return r.setPhase(ctx, run, v1alpha1.PhaseFailed, reason, message)
 }
 
 func (r *AgentRunReconciler) interrupt(ctx context.Context, run *v1alpha1.AgentRun, reason string, retryable bool) error {
@@ -672,6 +749,28 @@ func executionStagingPath(name string) string { return "/workspace/attempts/" + 
 func executionResultPath(name string) string  { return executionControlPath(name) + "/result.json" }
 func executionAuditEventsPath(name string) string {
 	return executionControlPath(name) + "/events.jsonl"
+}
+
+func agentPodFailure(pod *corev1.Pod) (string, string) {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != "agent" || status.State.Terminated == nil || status.State.Terminated.Message == "" {
+			continue
+		}
+		var detail agentcontract.ResultError
+		if err := json.Unmarshal([]byte(status.State.Terminated.Message), &detail); err != nil {
+			break
+		}
+		feedback := agentcontract.RetryFeedback{
+			PreviousAttemptRef: pod.Name,
+			Code:               detail.Code,
+			Message:            agentcontract.SanitizeRetryFeedbackMessage(detail.Message),
+		}
+		if err := feedback.Validate(); err == nil {
+			return feedback.Code, feedback.Message
+		}
+		break
+	}
+	return "AgentPodFailed", "agent pod failed without a valid structured diagnostic"
 }
 
 func buildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWorkflow, stepName, image string, grant workspaceWriterGrant) []client.Object {

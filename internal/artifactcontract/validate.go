@@ -529,14 +529,17 @@ func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
 	}
 	lines := strings.Split(patch, "\n")
 	files := make([]string, 0)
+	diffHeaders := 0
+	oldHeaders := 0
+	newHeaders := 0
 	hunks := 0
 	added := 0
 	deleted := 0
-	for _, line := range lines {
+	for index, line := range lines {
 		if strings.HasPrefix(line, "diff --git ") {
 			fields := strings.Fields(line)
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") {
-				return nil, 0, 0, fmt.Errorf("patch has malformed diff header")
+				return nil, 0, 0, fmt.Errorf("patch line %d has a malformed diff --git header", index)
 			}
 			oldPath := strings.TrimPrefix(fields[2], "a/")
 			newPath := strings.TrimPrefix(fields[3], "b/")
@@ -546,7 +549,14 @@ func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
 			if err := validateRepositoryPath(newPath); err != nil {
 				return nil, 0, 0, fieldError("new patch path", err)
 			}
+			diffHeaders++
 			files = append(files, oldPath, newPath)
+		}
+		if strings.HasPrefix(line, "--- ") {
+			oldHeaders++
+		}
+		if strings.HasPrefix(line, "+++ ") {
+			newHeaders++
 		}
 		if strings.HasPrefix(line, "@@ ") {
 			hunks++
@@ -558,8 +568,20 @@ func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
 			deleted++
 		}
 	}
-	if len(files) == 0 || hunks == 0 || added+deleted == 0 {
-		return nil, 0, 0, fmt.Errorf("patch must contain a non-empty unified diff")
+	if diffHeaders == 0 {
+		return nil, 0, 0, fmt.Errorf("patch line 0 must be a diff --git a/<path> b/<path> header")
+	}
+	if oldHeaders < diffHeaders {
+		return nil, 0, 0, fmt.Errorf("patch is missing a standalone --- old-file header; each patchLines entry must contain exactly one diff line")
+	}
+	if newHeaders < diffHeaders {
+		return nil, 0, 0, fmt.Errorf("patch is missing a standalone +++ new-file header; each patchLines entry must contain exactly one diff line")
+	}
+	if hunks == 0 {
+		return nil, 0, 0, fmt.Errorf("patch is missing an @@ -old,count +new,count @@ hunk header")
+	}
+	if added+deleted == 0 {
+		return nil, 0, 0, fmt.Errorf("patch must include at least one added or deleted hunk line")
 	}
 	sort.Strings(files)
 	files = slices.Compact(files)

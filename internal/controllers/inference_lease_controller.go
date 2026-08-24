@@ -21,7 +21,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const InferenceNamespace = "sovereign-inference"
+const (
+	InferenceNamespace                     = "sovereign-inference"
+	InferenceLeaseReleaseRequestAnnotation = "sovereign-ai.io/inference-lease-release-request"
+)
 
 type InferenceLeaseReconciler struct {
 	client.Client
@@ -46,7 +49,10 @@ func (r *InferenceLeaseReconciler) Reconcile(ctx context.Context, request ctrl.R
 	if err := r.Get(ctx, request.NamespacedName, &lease); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if lease.Status.Phase == v1alpha1.PhaseRunning || lease.Status.Phase == v1alpha1.PhaseFailed {
+	if reason := lease.Annotations[InferenceLeaseReleaseRequestAnnotation]; reason != "" && !terminalAttempt(lease.Status.Phase) {
+		return ctrl.Result{}, r.releaseLease(ctx, &lease, reason)
+	}
+	if lease.Status.Phase == v1alpha1.PhaseRunning || terminalAttempt(lease.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
 
@@ -310,32 +316,51 @@ func (r *InferenceLeaseReconciler) interruptLease(ctx context.Context, ref v1alp
 	if err := r.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &lease); err != nil {
 		return client.IgnoreNotFound(err)
 	}
-	if lease.Status.EndpointRef.Name != "" {
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			var endpoint v1alpha1.InferenceEndpoint
-			key := types.NamespacedName{Namespace: lease.Status.EndpointRef.Namespace, Name: lease.Status.EndpointRef.Name}
-			if err := r.Get(ctx, key, &endpoint); err != nil {
-				return client.IgnoreNotFound(err)
-			}
-			leaseRef := v1alpha1.NamespacedReference{Namespace: lease.Namespace, Name: lease.Name}
-			index := slices.Index(endpoint.Status.ActiveLeases, leaseRef)
-			if index < 0 {
-				return nil
-			}
-			endpoint.Status.ActiveLeases = slices.Delete(endpoint.Status.ActiveLeases, index, index+1)
-			endpoint.Status.ActiveLeaseCount = int32(len(endpoint.Status.ActiveLeases))
-			endpoint.Status.AllocatedKVRAMMiB = max(0, endpoint.Status.AllocatedKVRAMMiB-lease.Spec.EstimatedKVRAMMiB)
-			return r.Status().Update(ctx, &endpoint)
-		}); err != nil {
-			return err
-		}
+	if err := r.removeEndpointReservation(ctx, &lease); err != nil {
+		return err
 	}
 	lease.Status.Phase = v1alpha1.PhaseInterrupted
 	lease.Status.Reason = reason
+	lease.Status.ObservedGeneration = lease.Generation
 	if err := r.Status().Update(ctx, &lease); err != nil {
 		return err
 	}
 	return r.appendLeaseEvent(ctx, &lease, "InferenceLeaseInterrupted", "interrupt", lease.Name, "interrupted", reason, map[string]string{"endpoint": lease.Status.EndpointRef.Name})
+}
+
+func (r *InferenceLeaseReconciler) releaseLease(ctx context.Context, lease *v1alpha1.InferenceLease, reason string) error {
+	if err := r.removeEndpointReservation(ctx, lease); err != nil {
+		return err
+	}
+	lease.Status.Phase = v1alpha1.PhaseSucceeded
+	lease.Status.Reason = reason
+	lease.Status.ObservedGeneration = lease.Generation
+	if err := r.Status().Update(ctx, lease); err != nil {
+		return err
+	}
+	return r.appendLeaseEvent(ctx, lease, "InferenceLeaseReleased", "release", lease.Name, "released", reason, map[string]string{"endpoint": lease.Status.EndpointRef.Name})
+}
+
+func (r *InferenceLeaseReconciler) removeEndpointReservation(ctx context.Context, lease *v1alpha1.InferenceLease) error {
+	if lease.Status.EndpointRef.Name == "" {
+		return nil
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var endpoint v1alpha1.InferenceEndpoint
+		key := types.NamespacedName{Namespace: lease.Status.EndpointRef.Namespace, Name: lease.Status.EndpointRef.Name}
+		if err := r.Get(ctx, key, &endpoint); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		leaseRef := v1alpha1.NamespacedReference{Namespace: lease.Namespace, Name: lease.Name}
+		index := slices.Index(endpoint.Status.ActiveLeases, leaseRef)
+		if index < 0 {
+			return nil
+		}
+		endpoint.Status.ActiveLeases = slices.Delete(endpoint.Status.ActiveLeases, index, index+1)
+		endpoint.Status.ActiveLeaseCount = int32(len(endpoint.Status.ActiveLeases))
+		endpoint.Status.AllocatedKVRAMMiB = max(0, endpoint.Status.AllocatedKVRAMMiB-lease.Spec.EstimatedKVRAMMiB)
+		return r.Status().Update(ctx, &endpoint)
+	})
 }
 
 func (r *InferenceLeaseReconciler) appendLeaseEvent(ctx context.Context, lease *v1alpha1.InferenceLease, eventType, action, target, outcome, reason string, references map[string]string) error {

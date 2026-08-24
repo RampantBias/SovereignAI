@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
@@ -109,9 +110,61 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 			agent.Inference.SharingScope != v1alpha1.SharingWithinWorkflow {
 			t.Fatalf("step %q has a different model request", workflow.Spec.Steps[index].Name)
 		}
+		if index >= 2 {
+			for _, expected := range []string{"patchLines", "one physical Git unified-diff line per item", "diff --git", "exact repository paths and contents"} {
+				if !strings.Contains(agent.Responsibility, expected) {
+					t.Errorf("step %q responsibility does not contain %q", workflow.Spec.Steps[index].Name, expected)
+				}
+			}
+		}
+	}
+	architectResponsibility := workflow.Spec.Steps[1].Agent.Responsibility
+	for _, expected := range []string{"affectedPaths", "exact repository-relative path", "Do not use a leading ./", "must correspond directly to an implementation step", "no unrelated file"} {
+		if !strings.Contains(architectResponsibility, expected) {
+			t.Errorf("architect responsibility does not contain %q", expected)
+		}
+	}
+	if responsibility := workflow.Spec.Steps[2].Agent.Responsibility; !strings.Contains(responsibility, "recognized test paths") || !strings.Contains(responsibility, "never modify production code") {
+		t.Errorf("test-author responsibility does not carry test-only authority: %q", responsibility)
+	}
+	if responsibility := workflow.Spec.Steps[3].Agent.Responsibility; !strings.Contains(responsibility, "production-code changes") || !strings.Contains(responsibility, "accepted test change set") {
+		t.Errorf("developer responsibility does not carry production-only authority: %q", responsibility)
 	}
 	if provider := workflow.Spec.Steps[9].Validation; provider == nil || provider.Provider != supportedProjectValidationProvider {
 		t.Fatalf("validation must use %q", supportedProjectValidationProvider)
+	}
+}
+
+func TestRuntimeSmokeWorkflowCarriesChangeSetResponsibilities(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "smoke-agent-runtime-workflow.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow v1alpha1.SovereignWorkflow
+	if err := yaml.UnmarshalStrict(data, &workflow); err != nil {
+		t.Fatalf("decode runtime smoke workflow: %v", err)
+	}
+	architectIndex := slices.IndexFunc(workflow.Spec.Steps, func(step v1alpha1.StepConfig) bool { return step.Name == "architect" })
+	if architectIndex < 0 || workflow.Spec.Steps[architectIndex].Agent == nil {
+		t.Fatal("runtime smoke workflow is missing agent step \"architect\"")
+	}
+	architectResponsibility := workflow.Spec.Steps[architectIndex].Agent.Responsibility
+	for _, expected := range []string{"affectedPaths", "exact repository-relative path", "Do not use a leading ./", "must correspond directly to an implementation step", "no unrelated file"} {
+		if !strings.Contains(architectResponsibility, expected) {
+			t.Errorf("architect responsibility does not contain %q", expected)
+		}
+	}
+	for _, stepName := range []string{"test-author", "developer"} {
+		index := slices.IndexFunc(workflow.Spec.Steps, func(step v1alpha1.StepConfig) bool { return step.Name == stepName })
+		if index < 0 || workflow.Spec.Steps[index].Agent == nil {
+			t.Fatalf("runtime smoke workflow is missing agent step %q", stepName)
+		}
+		responsibility := workflow.Spec.Steps[index].Agent.Responsibility
+		for _, expected := range []string{"patchLines", "one physical Git unified-diff line per item", "diff --git", "exact repository paths and contents"} {
+			if !strings.Contains(responsibility, expected) {
+				t.Errorf("step %q responsibility does not contain %q", stepName, expected)
+			}
+		}
 	}
 }
 

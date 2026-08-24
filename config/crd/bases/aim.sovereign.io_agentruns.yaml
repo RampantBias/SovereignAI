@@ -99,6 +99,24 @@ spec:
                   - version
                   type: object
                 type: array
+              priorAttemptRef:
+                properties:
+                  code:
+                    pattern: ^[A-Za-z][A-Za-z0-9]{0,127}$
+                    type: string
+                  message:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  previousAttemptRef:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - code
+                - message
+                - previousAttemptRef
+                type: object
               responsibility:
                 type: string
               stepName:
@@ -191,6 +209,9 @@ spec:
                   - type
                   type: object
                 type: array
+              failureMessage:
+                maxLength: 1024
+                type: string
               failureReason:
                 type: string
               inferenceLeaseRef:

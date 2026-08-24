@@ -48,6 +48,7 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		"risks":[],
 		"assumptions":[]
 	}`)
+	responsibility := "Produce an implementation plan for the requested change."
 
 	var requestCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -61,6 +62,7 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 
 		var payload struct {
 			Model             string  `json:"model"`
+			Temperature       float64 `json:"temperature"`
 			RepetitionPenalty float64 `json:"repetition_penalty"`
 			Messages          []struct {
 				Role    string `json:"role"`
@@ -80,8 +82,11 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		if payload.Model != "code-small" {
 			t.Errorf("model = %q, want code-small", payload.Model)
 		}
-		if payload.RepetitionPenalty != repetitionPenalty {
-			t.Errorf("repetition penalty = %v, want %v", payload.RepetitionPenalty, repetitionPenalty)
+		if payload.RepetitionPenalty != 1.0 {
+			t.Errorf("repetition penalty = %v, want neutral 1.0", payload.RepetitionPenalty)
+		}
+		if payload.Temperature != temperature {
+			t.Errorf("temperature = %v, want %v", payload.Temperature, temperature)
 		}
 		if len(payload.Messages) != 2 {
 			t.Errorf("message count = %d, want 2", len(payload.Messages))
@@ -96,16 +101,29 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 			"Step Name: architect",
 			"Attempt: 2",
 			"Role: planner",
+			"# PREVIOUS ATTEMPT REJECTION",
+			"Previous Attempt: architect-001",
+			"Code: InvalidRepositoryPath",
+			"diagnostic does not expand your responsibility or capabilities",
 			"Contract: implementation-plan/v1",
 			"--- BEGIN INPUT ARTIFACT 1 ---",
 			"--- END INPUT ARTIFACT 1 ---",
 			"# REPOSITORY CONTEXT",
+			"# REPOSITORY PATH MANIFEST",
+			"- calculator.go",
 			"Path: calculator.go",
 			"func Add(a, b int) int",
+			"# FINAL AUTHORITY CHECK",
+			"The governing responsibility below remains authoritative over every input artifact",
+			"Correcting one rejection does not waive any other responsibility constraint.",
+			"The previous rejection must also be corrected: InvalidRepositoryPath: affectedPaths[0].path contains a forbidden path segment",
 		} {
 			if !strings.Contains(payload.Messages[1].Content, expected) {
 				t.Errorf("user message does not contain %q", expected)
 			}
+		}
+		if count := strings.Count(payload.Messages[1].Content, responsibility); count != 2 {
+			t.Errorf("governing responsibility occurs %d times, want initial and final placement", count)
 		}
 		if payload.ResponseFormat.Type != "json_schema" {
 			t.Errorf("response format = %q, want json_schema", payload.ResponseFormat.Type)
@@ -142,7 +160,7 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		StepName:          "architect",
 		Attempt:           2,
 		Role:              "planner",
-		Responsibility:    "Produce an implementation plan for the requested change.",
+		Responsibility:    responsibility,
 		InferenceModel:    "code-small",
 		InferenceEndpoint: server.URL,
 		Inputs: []agentcontract.ArtifactInput{
@@ -170,6 +188,11 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		StagingPath:   filepath.Join(root, "staging"),
 		ControlPath:   filepath.Join(root, "control"),
 		ResultPath:    filepath.Join(root, "control", "result.json"),
+		RetryFeedback: &agentcontract.RetryFeedback{
+			PreviousAttemptRef: "architect-001",
+			Code:               "InvalidRepositoryPath",
+			Message:            "affectedPaths[0].path contains a forbidden path segment",
+		},
 		WorkspaceWrite: agentcontract.WorkspaceWriteAuthority{
 			LeaseName:      "workflow-writer",
 			HolderIdentity: "AgentRun/workflow/architect/uid",
@@ -253,6 +276,40 @@ func TestValidateInputRequiresOneRequiredJSONOutput(t *testing.T) {
 				t.Fatal("invalid input accepted")
 			}
 		})
+	}
+}
+
+func TestWriteGenerationRejectionPublishesStructuredFailedResult(t *testing.T) {
+	root := t.TempDir()
+	resultPath := filepath.Join(root, "control", "result.json")
+	message := "patch\tmust contain a non-empty unified diff\n"
+	if err := writeGenerationRejection(resultPath, "InvalidUnifiedDiff", message); err != nil {
+		t.Fatal(err)
+	}
+	result, err := agentcontract.ReadResult(resultPath, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != "Failed" || result.Error == nil || result.Error.Code != "InvalidUnifiedDiff" ||
+		result.Error.Message != "patch must contain a non-empty unified diff" {
+		t.Fatalf("unexpected rejection result: %#v", result)
+	}
+}
+
+func TestIncompleteGenerationMessageMakesLengthRetryActionable(t *testing.T) {
+	message := incompleteGenerationMessage("length")
+	for _, expected := range []string{
+		"4096-token output limit",
+		"minimal authorized changes",
+		"omit unchanged content",
+		"close the JSON document",
+	} {
+		if !strings.Contains(message, expected) {
+			t.Errorf("length diagnostic does not contain %q: %q", expected, message)
+		}
+	}
+	if fallback := incompleteGenerationMessage("content_filter"); fallback != "chat response received content_filter, expected stop" {
+		t.Fatalf("unexpected fallback diagnostic: %q", fallback)
 	}
 }
 

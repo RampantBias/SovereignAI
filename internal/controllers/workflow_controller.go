@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/domain/state"
@@ -167,7 +168,7 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 			if err := r.appendRecoveryEvents(ctx, &workflow, &attempt, step, attempt.Spec.Attempt+1); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{}, r.createAttempt(ctx, &workflow, step, attempt.Spec.Attempt+1)
+			return ctrl.Result{}, r.createAttemptWithFeedback(ctx, &workflow, step, attempt.Spec.Attempt+1, retryFeedbackForAttempt(&attempt))
 		}
 		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepFailed", attempt.Status.FailureReason)
 	}
@@ -266,6 +267,10 @@ func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1al
 
 // CreateAttempt generates a new StepAttempt CRD
 func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, step v1alpha1.StepConfig, number int32) error {
+	return r.createAttemptWithFeedback(ctx, workflow, step, number, nil)
+}
+
+func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, step v1alpha1.StepConfig, number int32, feedback *v1alpha1.FailedAgentAttempt) error {
 	name := attemptName(step.Name, number)
 	attempt := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{
@@ -289,7 +294,7 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 	if err := r.stepAttemptReader().Get(ctx, types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Name}, attempt); err != nil {
 		return err
 	}
-	executionRef, err := r.ensureDomainExecution(ctx, attempt, step)
+	executionRef, err := r.ensureDomainExecution(ctx, attempt, step, feedback)
 	if err != nil {
 		return err
 	}
@@ -308,7 +313,7 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 	return r.appendWorkflowEvent(ctx, updated, "StepAttemptCreated", step.Name, number, "create", name, "created", "", map[string]string{"attempt": name}, nil)
 }
 
-func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig) (*v1alpha1.TypedLocalReference, error) {
+func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig, feedback *v1alpha1.FailedAgentAttempt) (*v1alpha1.TypedLocalReference, error) {
 	metadata := metav1.ObjectMeta{
 		Name: attempt.Name, Namespace: attempt.Namespace,
 		Labels: map[string]string{LabelWorkflow: attempt.Labels[LabelWorkflow], LabelStep: step.Name},
@@ -322,7 +327,8 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 		}
 		object = &v1alpha1.AgentRun{ObjectMeta: metadata, Spec: v1alpha1.AgentRunSpec{
 			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.Attempt,
-			Responsibility: step.Agent.Responsibility, Image: step.Agent.Image,
+			PriorAttemptRef: copyFailedAgentAttempt(feedback),
+			Responsibility:  step.Agent.Responsibility, Image: step.Agent.Image,
 			Executable: append([]string(nil), step.Agent.Executable...), Capabilities: append([]string(nil), step.Agent.Capabilities...),
 			Inputs: append([]v1alpha1.ArtifactReference(nil), step.Inputs...), OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...),
 			Inference: copyInferenceRequest(step.Agent.Inference), Timeout: step.Timeout,
@@ -367,6 +373,33 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 		return nil, err
 	}
 	return &reference, nil
+}
+
+func retryFeedbackForAttempt(attempt *v1alpha1.StepAttempt) *v1alpha1.FailedAgentAttempt {
+	if attempt.Spec.Kind != v1alpha1.ExecutionKindAgent || attempt.Status.FailureReason == "" || attempt.Status.FailureMessage == "" {
+		return nil
+	}
+	feedback := agentcontract.RetryFeedback{
+		PreviousAttemptRef: attempt.Name,
+		Code:               attempt.Status.FailureReason,
+		Message:            agentcontract.SanitizeRetryFeedbackMessage(attempt.Status.FailureMessage),
+	}
+	if err := feedback.Validate(); err != nil {
+		return nil
+	}
+	return &v1alpha1.FailedAgentAttempt{
+		PreviousAttemptRef: feedback.PreviousAttemptRef,
+		Code:               feedback.Code,
+		Message:            feedback.Message,
+	}
+}
+
+func copyFailedAgentAttempt(source *v1alpha1.FailedAgentAttempt) *v1alpha1.FailedAgentAttempt {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	return &result
 }
 
 func copyUtilityOperation(source v1alpha1.UtilityOperationRequest) v1alpha1.UtilityOperationRequest {

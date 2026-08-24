@@ -26,6 +26,7 @@ type ChatRequest struct {
 	Model             string
 	Messages          []Message
 	MaxOutputTokens   int
+	Temperature       float64
 	RepetitionPenalty float64
 	OutputSchema      *JSONSchema
 }
@@ -41,6 +42,7 @@ type chatCompletionPayload struct {
 	Model             string          `json:"model"`
 	Messages          []Message       `json:"messages"`
 	MaxTokens         int             `json:"max_tokens"`
+	Temperature       float64         `json:"temperature,omitempty"`
 	RepetitionPenalty float64         `json:"repetition_penalty,omitempty"`
 	ResponseFormat    *responseFormat `json:"response_format,omitempty"`
 }
@@ -118,6 +120,7 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		Model:             request.Model,
 		Messages:          request.Messages,
 		MaxTokens:         request.MaxOutputTokens,
+		Temperature:       request.Temperature,
 		RepetitionPenalty: request.RepetitionPenalty,
 	}
 	if request.OutputSchema != nil {

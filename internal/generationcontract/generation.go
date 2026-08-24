@@ -37,6 +37,11 @@ type Binding struct {
 	Schema contractschema.Definition
 }
 
+type RejectionDiagnostic struct {
+	Code    string
+	Message string
+}
+
 type Catalog struct{ schemas contractschema.Registry }
 
 func NewCatalog() (*Catalog, error) {
@@ -64,6 +69,29 @@ func (b Binding) Finalize(candidate []byte, sources []SourceArtifact) ([]byte, e
 	default:
 		return nil, fmt.Errorf("contract %q has no finalizer", b.Schema.Contract)
 	}
+}
+
+// DiagnoseRejection converts a finalizer error into a stable code while
+// retaining the validator's bounded, actionable message. The rejected model
+// response is deliberately not part of the diagnostic.
+func DiagnoseRejection(err error) RejectionDiagnostic {
+	message := err.Error()
+	code := "GeneratedArtifactRejected"
+	switch {
+	case strings.Contains(message, "recognized test path"):
+		code = "TestPathNotRecognized"
+	case strings.Contains(message, "affectedPaths") &&
+		(strings.Contains(message, "forbidden path segment") || strings.Contains(message, "repository-relative path")):
+		code = "InvalidRepositoryPath"
+	case strings.Contains(message, "decode generation"):
+		code = "GenerationSchemaViolation"
+	case strings.Contains(message, "patchLines"):
+		code = "InvalidPatchLines"
+	case strings.Contains(message, "patch line") || strings.Contains(message, "unified diff") || strings.Contains(message, "patch has") ||
+		strings.Contains(message, "patch contains") || strings.Contains(message, "patch is missing") || strings.Contains(message, "patch must"):
+		code = "InvalidUnifiedDiff"
+	}
+	return RejectionDiagnostic{Code: code, Message: message}
 }
 
 func finalizePlan(candidate []byte, sources []SourceArtifact) ([]byte, error) {

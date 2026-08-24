@@ -65,21 +65,29 @@ spec:
         - name: implementation-plan
           version: v1
       timeout: 15m
-      maxAttempts: 2
+      maxAttempts: 5
     - name: test-author
       kind: Agent
       order: 3
       agent:
         responsibility: >
-          Use the change request, implementation plan, and repository to produce
-          a unified-diff test change set. Return a short summary and patchLines, an
-          array containing exactly one physical Git unified-diff line per item with
-          no embedded CR, LF, or NUL. For every file, emit diff --git, ---, +++, one
-          or more @@ hunks, then exact context and changed lines. Use exact repository
-          paths and contents, include at least one added or deleted line, and do not
-          use timestamps, Markdown fences, placeholders, ellipses, prose, or invented
-          metadata in patchLines. Modify only recognized test paths and never modify
-          production code.
+          Use the change request, implementation plan, and repository to produce the
+          smallest unified-diff test change set that verifies divide success, divide
+          by zero, and preservation of the existing calculator behavior. Modify exactly
+          one existing file: src/main_test.go. Never include src/main.go or any other
+          path, and do not implement production behavior. Extend the existing tests;
+          do not rewrite package declarations, production types, handlers, or the
+          complete source file. Return a short summary and patchLines, an array
+          containing exactly one physical Git unified-diff line per item with no
+          embedded CR, LF, or NUL. The first three patchLines must be exactly
+          `diff --git a/src/main_test.go b/src/main_test.go`,
+          `--- a/src/main_test.go`, and `+++ b/src/main_test.go`. Follow them with one
+          or more valid @@ hunks and exact context and changed lines from the repository.
+          Use exact repository paths and contents and include at least one added or
+          deleted line. Do not use timestamps, Markdown fences, placeholders, ellipses,
+          prose, invented metadata, or production paths in patchLines. Before responding,
+          verify every diff header names only src/main_test.go and every changed line is
+          test code.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
@@ -96,22 +104,30 @@ spec:
         - name: test-change-set
           version: v1
       timeout: 15m
-      maxAttempts: 2
+      maxAttempts: 5
     - name: developer
       kind: Agent
       order: 4
       agent:
         responsibility: >
           Use the change request, implementation plan, proposed tests, and repository
-          to produce a unified-diff production change set. Return a short summary and
-          patchLines, an array containing exactly one physical Git unified-diff line
-          per item with no embedded CR, LF, or NUL. For every file, emit diff --git,
-          ---, +++, one or more @@ hunks, then exact context and changed lines. Use
-          exact repository paths and contents, include at least one added or deleted
-          line, and do not use timestamps, Markdown fences, placeholders, ellipses,
-          prose, or invented metadata in patchLines. Implement only the requested
-          production-code changes and do not repeat or modify the accepted test change
-          set.
+          to produce the smallest unified-diff production change set that implements
+          divide success and the division-by-zero response while preserving existing
+          calculator behavior. Modify exactly one existing file: src/main.go. Never
+          include src/main_test.go or any other path. Treat the accepted test change set
+          as read-only requirements; never repeat or modify its patchLines. Extend the
+          existing operation constants and calculation handler without rewriting the
+          package declaration, imports, unrelated handlers, or the complete source file.
+          Return a short summary and patchLines, an array containing exactly one physical
+          Git unified-diff line per item with no embedded CR, LF, or NUL. The first three
+          patchLines must be exactly `diff --git a/src/main.go b/src/main.go`,
+          `--- a/src/main.go`, and `+++ b/src/main.go`. Follow them with the smallest
+          valid @@ hunks and exact context and changed lines from the repository. Use
+          exact repository paths and contents and include at least one added or deleted
+          line. Do not use timestamps, Markdown fences, placeholders, ellipses, prose,
+          invented metadata, test paths, or unchanged full-file content in patchLines.
+          Before responding, verify every diff header names only src/main.go and every
+          changed line is required production code.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
@@ -129,4 +145,4 @@ spec:
         - name: change-set
           version: v1
       timeout: 15m
-      maxAttempts: 2
+      maxAttempts: 5

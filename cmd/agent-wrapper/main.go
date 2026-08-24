@@ -19,6 +19,13 @@ import (
 	"github.com/SovereignAI/internal/audit"
 )
 
+const terminationMessagePath = "/dev/termination-log"
+
+type agentFailureDetail struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 func main() {
 	inputPath := flag.String("input", "/workspace/control/input.json", "agent input contract")
 	resultPath := flag.String("result", "", "agent result contract")
@@ -77,10 +84,37 @@ func main() {
 	events.resultAccepted(ctx, *resultPath, result)
 	if result.Outcome != "Succeeded" {
 		events.completedWithAgentFailure(ctx, result)
+		if err := writeAgentFailureTerminationMessage(terminationMessagePath, result); err != nil {
+			log.Printf("write agent failure termination message: %v", err)
+		}
 		log.Printf("agent completed with outcome %s: %s", result.Outcome, result.Message)
 		os.Exit(1)
 	}
 	events.completed(ctx)
+}
+
+func writeAgentFailureTerminationMessage(path string, result agentcontract.Result) error {
+	detail := agentFailureDetail{Code: "AgentReportedFailure", Message: result.Message}
+	if result.Error != nil {
+		detail.Code = result.Error.Code
+		detail.Message = result.Error.Message
+	}
+	detail.Message = agentcontract.SanitizeRetryFeedbackMessage(detail.Message)
+	if detail.Message == "" {
+		detail.Message = "agent reported a failed outcome"
+	}
+	feedback := agentcontract.RetryFeedback{PreviousAttemptRef: "current-attempt", Code: detail.Code, Message: detail.Message}
+	if err := feedback.Validate(); err != nil {
+		detail.Code = "AgentReportedFailure"
+	}
+	data, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("encode termination message: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write termination message: %w", err)
+	}
+	return nil
 }
 
 func configuredCommand() ([]string, error) {
@@ -211,7 +245,11 @@ func (e wrapperEvents) resultAccepted(ctx context.Context, resultPath string, re
 }
 
 func (e wrapperEvents) completedWithAgentFailure(ctx context.Context, result agentcontract.Result) {
-	e.append(ctx, "AgentWrapperCompleted", "complete", "agent-wrapper", "failed", result.Outcome, nil, map[string]string{"message": result.Message})
+	reason := result.Outcome
+	if result.Error != nil {
+		reason = result.Error.Code
+	}
+	e.append(ctx, "AgentWrapperCompleted", "complete", "agent-wrapper", "failed", reason, nil, map[string]string{"message": result.Message})
 }
 
 func (e wrapperEvents) completed(ctx context.Context) {

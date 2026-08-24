@@ -63,6 +63,17 @@ type TypedLocalReference struct {
 	Name       string `json:"name"`
 }
 
+type FailedAgentAttempt struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	PreviousAttemptRef string `json:"previousAttemptRef"`
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9]{0,127}$`
+	Code string `json:"code"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Message string `json:"message"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=attempt
@@ -98,10 +109,12 @@ type StepAttemptStatus struct {
 	Phase              ResourcePhase        `json:"phase,omitempty"`
 	ExecutionRef       *TypedLocalReference `json:"executionRef,omitempty"`
 	FailureReason      string               `json:"failureReason,omitempty"`
-	Retryable          bool                 `json:"retryable,omitempty"`
-	StartedAt          *metav1.Time         `json:"startedAt,omitempty"`
-	CompletedAt        *metav1.Time         `json:"completedAt,omitempty"`
-	Conditions         []metav1.Condition   `json:"conditions,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	FailureMessage string             `json:"failureMessage,omitempty"`
+	Retryable      bool               `json:"retryable,omitempty"`
+	StartedAt      *metav1.Time       `json:"startedAt,omitempty"`
+	CompletedAt    *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions     []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -125,6 +138,7 @@ type AgentRun struct {
 
 type AgentRunSpec struct {
 	AttemptRef      string                `json:"attemptRef"`
+	PriorAttemptRef *FailedAgentAttempt   `json:"priorAttemptRef,omitempty"`
 	WorkflowRef     UIDReference          `json:"workflowRef"`
 	StepName        string                `json:"stepName"`
 	Attempt         int32                 `json:"attempt"`
@@ -139,19 +153,21 @@ type AgentRunSpec struct {
 }
 
 type AgentRunStatus struct {
-	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
-	Phase                   ResourcePhase      `json:"phase,omitempty"`
-	PodRef                  string             `json:"podRef,omitempty"`
-	CollectorJobRef         string             `json:"collectorJobRef,omitempty"`
-	InferenceLeaseRef       string             `json:"inferenceLeaseRef,omitempty"`
-	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"`
-	WorkspaceWriterEpoch    int32              `json:"workspaceWriterEpoch,omitempty"`
-	WorkspaceWriterReleased bool               `json:"workspaceWriterReleased,omitempty"`
-	FailureReason           string             `json:"failureReason,omitempty"`
-	Retryable               bool               `json:"retryable,omitempty"`
-	StartedAt               *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt             *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions              []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration      int64         `json:"observedGeneration,omitempty"`
+	Phase                   ResourcePhase `json:"phase,omitempty"`
+	PodRef                  string        `json:"podRef,omitempty"`
+	CollectorJobRef         string        `json:"collectorJobRef,omitempty"`
+	InferenceLeaseRef       string        `json:"inferenceLeaseRef,omitempty"`
+	WorkspaceWriterLeaseRef string        `json:"workspaceWriterLeaseRef,omitempty"`
+	WorkspaceWriterEpoch    int32         `json:"workspaceWriterEpoch,omitempty"`
+	WorkspaceWriterReleased bool          `json:"workspaceWriterReleased,omitempty"`
+	FailureReason           string        `json:"failureReason,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	FailureMessage string             `json:"failureMessage,omitempty"`
+	Retryable      bool               `json:"retryable,omitempty"`
+	StartedAt      *metav1.Time       `json:"startedAt,omitempty"`
+	CompletedAt    *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions     []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

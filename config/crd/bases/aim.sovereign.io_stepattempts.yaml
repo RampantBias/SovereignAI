@@ -145,6 +145,9 @@ spec:
                 - kind
                 - name
                 type: object
+              failureMessage:
+                maxLength: 1024
+                type: string
               failureReason:
                 type: string
               observedGeneration:
