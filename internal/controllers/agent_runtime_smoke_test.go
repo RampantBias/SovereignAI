@@ -3,6 +3,7 @@ package controllers
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
@@ -31,7 +32,30 @@ func TestAgentRuntimeSmokeStopsAfterThreeSingleOutputAgents(t *testing.T) {
 		if step.Kind != v1alpha1.ExecutionKindAgent || step.Agent == nil || step.Agent.Inference == nil ||
 			step.Agent.Image != "sovereign-reference-agent:dev" || step.MaxAttempts != 5 ||
 			len(step.Outputs) != 1 || step.Outputs[0] != output {
-			t.Fatalf("step %q is not a single-attempt reference-agent producing %#v", step.Name, output)
+			t.Fatalf("step %q is not a retry-bounded reference-agent producing %#v", step.Name, output)
+		}
+	}
+	testAuthor := workflow.Spec.Steps[2].Agent.Responsibility
+	for _, expected := range []string{
+		"smallest unified-diff test change set",
+		"Modify exactly one existing file: src/main_test.go",
+		"Never include src/main.go",
+		"diff --git a/src/main_test.go b/src/main_test.go",
+	} {
+		if !strings.Contains(testAuthor, expected) {
+			t.Errorf("test-author responsibility does not contain %q", expected)
+		}
+	}
+	developer := workflow.Spec.Steps[3].Agent.Responsibility
+	for _, expected := range []string{
+		"smallest unified-diff production change set",
+		"Modify exactly one existing file: src/main.go",
+		"Never include src/main_test.go",
+		"diff --git a/src/main.go b/src/main.go",
+		"unchanged full-file content",
+	} {
+		if !strings.Contains(developer, expected) {
+			t.Errorf("developer responsibility does not contain %q", expected)
 		}
 	}
 }

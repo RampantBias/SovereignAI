@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -31,56 +32,14 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	workflow := &v1alpha1.SovereignWorkflow{
-		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
-		Spec: v1alpha1.SovereignWorkflowSpec{
-			Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-1",
-			Bootstrap: v1alpha1.WorkflowBootstrapSpec{
-				SourceRef:      v1alpha1.UIDReference{Name: "wf-1-bootstrap-input", UID: "source-uid"},
-				Key:            "change-request.json",
-				ExpectedDigest: "sha256:" + strings.Repeat("a", 64),
-				Contract:       v1alpha1.ContractReference{Name: "change-request", Version: "v1"},
-				ArtifactName:   "change-request",
-			},
-			Steps: []v1alpha1.StepConfig{{
-				Name: "architect", Kind: v1alpha1.ExecutionKindAgent,
-				Agent: &v1alpha1.AgentStepSpec{Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
-			}},
-		},
-		Status: v1alpha1.SovereignWorkflowStatus{
-			Phase:                string(v1alpha1.PhasePending),
-			BootstrapArtifactRef: &v1alpha1.UIDReference{Name: "change-request", UID: "artifact-uid"},
-			Conditions: []metav1.Condition{{
-				Type: "BootstrapReady", Status: metav1.ConditionTrue, Reason: "ChangeRequestAccepted",
-			}},
-		},
-	}
-	controller := true
-	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID}
-	artifact := &v1alpha1.Artifact{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "change-request", Namespace: workflow.Namespace, UID: "artifact-uid",
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow",
-				Name: workflow.Name, UID: workflow.UID, Controller: &controller,
-			}},
-		},
-		Spec: v1alpha1.ArtifactSpec{
-			WorkflowRef: workflowRef,
-			ProducerRef: v1alpha1.TypedLocalReference{
-				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: workflow.Name,
-			},
-			Contract: workflow.Spec.Bootstrap.Contract,
-			Digest:   workflow.Spec.Bootstrap.ExpectedDigest,
-			Path:     bootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest),
-		},
-		Status: v1alpha1.ArtifactStatus{
-			Phase: v1alpha1.PhaseSucceeded,
-			Conditions: []metav1.Condition{{
-				Type: "Valid", Status: metav1.ConditionTrue, Reason: "ContractAccepted",
-			}},
-		},
-	}
+	workflow := changeRequestWorkflow()
+	workflow.Spec.Steps = []v1alpha1.StepConfig{{
+		Name: "architect", Kind: v1alpha1.ExecutionKindAgent,
+		Agent: &v1alpha1.AgentStepSpec{Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
+	}}
+	workflow.Status.Phase = string(v1alpha1.PhasePending)
+
+	artifact := changeRequestArtifact(workflow)
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.StepAttempt{}, &v1alpha1.AgentRun{}, &v1alpha1.Artifact{}).
 		WithObjects(workflow, artifact).Build()
@@ -112,6 +71,164 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 	if len(runs.Items) != 1 || attempts.Items[0].Status.ExecutionRef == nil || attempts.Items[0].Status.ExecutionRef.Kind != "AgentRun" {
 		t.Fatalf("expected one owned AgentRun and a typed execution reference, runs=%#v attempt=%#v", runs.Items, attempts.Items[0].Status)
 	}
+}
+
+func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	// take pending step workflow, add additional step,
+	workflow := changeRequestWorkflow()
+	workflow.Spec.Steps = []v1alpha1.StepConfig{{
+		Name:        "test-author",
+		Kind:        v1alpha1.ExecutionKindAgent,
+		Order:       1,
+		MaxAttempts: 2,
+		Agent: &v1alpha1.AgentStepSpec{
+			Responsibility: "write tests",
+			Image:          "agent:test",
+			Executable:     []string{"/reference-agent"},
+		},
+		Outputs: []v1alpha1.ContractReference{{
+			Name:    "test-change-set",
+			Version: "v1",
+		}},
+	}}
+	workflow.Status.Phase = string(v1alpha1.PhaseRunning)
+	workflow.Status.ActiveStepName = "test-author"
+	workflow.Status.ActiveAttemptRef = "test-author-001"
+
+	// fail step attempt to trigger retry
+	controller := true
+	failed := &v1alpha1.StepAttempt{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-author-001",
+			Namespace: workflow.Namespace,
+			Labels: map[string]string{
+				LabelWorkflow: workflow.Spec.WorkflowID,
+				LabelStep:     "test-author",
+			},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow",
+				Name: workflow.Name, UID: workflow.UID, Controller: &controller,
+			}},
+		},
+		Spec: v1alpha1.StepAttemptSpec{
+			Kind: v1alpha1.ExecutionKindAgent,
+			WorkflowRef: v1alpha1.UIDReference{
+				Name: workflow.Name,
+				UID:  workflow.UID,
+			},
+			StepName: "test-author",
+			Attempt:  1,
+		},
+		Status: v1alpha1.StepAttemptStatus{
+			Phase:          v1alpha1.PhaseFailed,
+			FailureReason:  "TestPathNotRecognized",
+			FailureMessage: `test change set file "src/main.go" is not a recognized test path`,
+			Retryable:      true,
+		},
+	}
+
+	artifact := changeRequestArtifact(workflow)
+
+	recorder := audit.NewMemoryRecorder()
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(
+			&v1alpha1.SovereignWorkflow{},
+			&v1alpha1.StepAttempt{},
+			&v1alpha1.AgentRun{},
+			&v1alpha1.Artifact{},
+		).
+		WithObjects(artifact, workflow, failed).
+		Build()
+
+	reconciler := &WorkflowReconciler{
+		Client: kubeClient,
+		Reader: kubeClient,
+		Scheme: scheme,
+		Audit:  recorder,
+	}
+
+	// 1 -> create workspace writer lease
+	// 2 -> create test-author-002
+	// 3 -> observe new attempt
+	for range 3 {
+		if _, err := reconciler.Reconcile(
+			ctx,
+			ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflow)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// test-author-001 still exists and remains failed
+	var original v1alpha1.StepAttempt
+	if err := kubeClient.Get(ctx, types.NamespacedName{
+		Namespace: workflow.Namespace,
+		Name:      "test-author-001",
+	}, &original); err != nil {
+		t.Fatal(err)
+	}
+	if original.Status.Phase != v1alpha1.PhaseFailed || original.Spec.Attempt != 1 {
+		t.Fatal("original attempt was modified")
+	}
+
+	// test-author-002 exists with matching attempt #
+	var retried v1alpha1.StepAttempt
+	if err := kubeClient.Get(ctx, types.NamespacedName{
+		Namespace: workflow.Namespace,
+		Name:      "test-author-002",
+	}, &retried); err != nil {
+		t.Fatal(err)
+	}
+	if retried.Spec.Attempt != 2 || retried.Spec.StepName != "test-author" {
+		t.Fatalf("unexpected retry attempt: #%d; name: %s", retried.Spec.Attempt, retried.Spec.StepName)
+	}
+
+	// test-author-002 is owned by new attempt
+	var retriedRun v1alpha1.AgentRun
+	if err := kubeClient.Get(ctx, types.NamespacedName{
+		Name:      "test-author-002",
+		Namespace: workflow.Namespace,
+	}, &retriedRun); err != nil {
+		t.Fatal(err)
+	}
+	if retriedRun.Spec.AttemptRef != retried.Name ||
+		retriedRun.Spec.Attempt != 2 ||
+		!metav1.IsControlledBy(&retriedRun, &retried) ||
+		retried.Status.ExecutionRef == nil ||
+		retried.Status.ExecutionRef.Name != retriedRun.Name {
+		t.Fatalf("unexpected owner and attempt on retry run: %s; %d", retriedRun.Spec.AttemptRef, retriedRun.Spec.Attempt)
+	}
+	if retriedRun.Spec.PriorAttemptRef == nil ||
+		retriedRun.Spec.PriorAttemptRef.PreviousAttemptRef != failed.Name ||
+		retriedRun.Spec.PriorAttemptRef.Code != failed.Status.FailureReason ||
+		retriedRun.Spec.PriorAttemptRef.Message != failed.Status.FailureMessage {
+		t.Fatalf("retry run did not preserve bounded prior-attempt feedback: %#v", retriedRun.Spec.PriorAttemptRef)
+	}
+
+	// auditing events
+	if !recorder.Has("RecoveryDecisionSelected") {
+		t.Error("missing RecoveryDecisionSelected audit event")
+	}
+	if !recorder.Has("StepAttemptRetried") {
+		t.Error("missing StepAttemptRetried audit event")
+	}
+
 }
 
 func TestWorkflowSkipsNormalReconcileWhenNamespaceTerminating(t *testing.T) {
@@ -225,5 +342,58 @@ func TestWorkflowCreatesOneTypedDomainPrimitivePerAttemptKind(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func changeRequestArtifact(workflow *v1alpha1.SovereignWorkflow) *v1alpha1.Artifact {
+	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID}
+	controller := true
+
+	return &v1alpha1.Artifact{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "change-request", Namespace: workflow.Namespace, UID: "artifact-uid",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow",
+				Name: workflow.Name, UID: workflow.UID, Controller: &controller,
+			}},
+		},
+		Spec: v1alpha1.ArtifactSpec{
+			WorkflowRef: workflowRef,
+			ProducerRef: v1alpha1.TypedLocalReference{
+				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: workflow.Name,
+			},
+			Contract: workflow.Spec.Bootstrap.Contract,
+			Digest:   workflow.Spec.Bootstrap.ExpectedDigest,
+			Path:     bootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest),
+		},
+		Status: v1alpha1.ArtifactStatus{
+			Phase: v1alpha1.PhaseSucceeded,
+			Conditions: []metav1.Condition{{
+				Type: "Valid", Status: metav1.ConditionTrue, Reason: "ContractAccepted",
+			}},
+		},
+	}
+}
+
+func changeRequestWorkflow() *v1alpha1.SovereignWorkflow {
+	return &v1alpha1.SovereignWorkflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
+		Spec: v1alpha1.SovereignWorkflowSpec{
+			Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-1",
+			Bootstrap: v1alpha1.WorkflowBootstrapSpec{
+				SourceRef:      v1alpha1.UIDReference{Name: "wf-1-bootstrap-input", UID: "source-uid"},
+				Key:            "change-request.json",
+				ExpectedDigest: "sha256:" + strings.Repeat("a", 64),
+				Contract:       v1alpha1.ContractReference{Name: "change-request", Version: "v1"},
+				ArtifactName:   "change-request",
+			},
+		},
+		Status: v1alpha1.SovereignWorkflowStatus{
+			BootstrapArtifactRef: &v1alpha1.UIDReference{Name: "change-request", UID: "artifact-uid"},
+			Conditions: []metav1.Condition{{
+				Type: "BootstrapReady", Status: metav1.ConditionTrue, Reason: "ChangeRequestAccepted",
+			}},
+			PvcName: "aaa",
+		},
 	}
 }

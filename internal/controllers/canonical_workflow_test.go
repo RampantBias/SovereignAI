@@ -127,8 +127,11 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 	if responsibility := workflow.Spec.Steps[2].Agent.Responsibility; !strings.Contains(responsibility, "recognized test paths") || !strings.Contains(responsibility, "never modify production code") {
 		t.Errorf("test-author responsibility does not carry test-only authority: %q", responsibility)
 	}
-	if responsibility := workflow.Spec.Steps[3].Agent.Responsibility; !strings.Contains(responsibility, "production-code changes") || !strings.Contains(responsibility, "accepted test change set") {
-		t.Errorf("developer responsibility does not carry production-only authority: %q", responsibility)
+	developerResponsibility := workflow.Spec.Steps[3].Agent.Responsibility
+	for _, expected := range []string{"production-code changes", "accepted test change set", "exactly match the repository path manifest", "never select a recognized test path", "smallest hunks"} {
+		if !strings.Contains(developerResponsibility, expected) {
+			t.Errorf("developer responsibility does not contain %q", expected)
+		}
 	}
 	if provider := workflow.Spec.Steps[9].Validation; provider == nil || provider.Provider != supportedProjectValidationProvider {
 		t.Fatalf("validation must use %q", supportedProjectValidationProvider)

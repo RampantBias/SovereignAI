@@ -48,6 +48,36 @@ func TestStepAttemptMirrorsOwnedAgentRunStatus(t *testing.T) {
 	}
 }
 
+func TestStepAttemptMirrorsOwnedAgentFailureDiagnostic(t *testing.T) {
+	scheme := attemptScheme(t)
+	attempt := authorizedAttempt("test-author-001", "wf", "test-author", v1alpha1.ExecutionKindAgent)
+	run := &v1alpha1.AgentRun{
+		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace},
+		Spec:       v1alpha1.AgentRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRefFixture(), StepName: "test-author", Attempt: 1, Responsibility: "write tests", Image: "agent", Executable: []string{"/agent"}},
+		Status: v1alpha1.AgentRunStatus{
+			Phase:          v1alpha1.PhaseFailed,
+			FailureReason:  "TestPathNotRecognized",
+			FailureMessage: `test change set file "src/main.go" is not a recognized test path`,
+			Retryable:      true,
+		},
+	}
+	ownByAttempt(run, attempt)
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.StepAttempt{}, &v1alpha1.AgentRun{}).
+		WithObjects(attempt, run).Build()
+	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme}
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(attempt)); err != nil {
+		t.Fatal(err)
+	}
+	var updated v1alpha1.StepAttempt
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: attempt.Namespace, Name: attempt.Name}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.FailureReason != run.Status.FailureReason || updated.Status.FailureMessage != run.Status.FailureMessage || !updated.Status.Retryable {
+		t.Fatalf("attempt did not preserve failure diagnostic: %#v", updated.Status)
+	}
+}
+
 func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	scheme := attemptScheme(t)
 	workflow := workflowFixture()
@@ -70,6 +100,7 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 			Responsibility:  "plan",
 			Image:           "agent@sha256:test",
 			Executable:      []string{"/domain-agent", "--role", "architect"},
+			PriorAttemptRef: &v1alpha1.FailedAgentAttempt{PreviousAttemptRef: "architect-000", Code: "InvalidRepositoryPath", Message: "affected path was invalid"},
 			Inputs:          []v1alpha1.ArtifactReference{{Name: "repository-revision", Digest: "sha256:repository-revision"}},
 			OutputContracts: []v1alpha1.ContractReference{{Name: "implementation-plan", Version: "v1"}},
 		},
@@ -110,6 +141,10 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	}
 	if contract.Responsibility != "plan" || len(contract.Outputs) != 1 || len(contract.Inputs) != 1 {
 		t.Fatalf("unexpected agent contract: %#v", contract)
+	}
+	if contract.RetryFeedback == nil || contract.RetryFeedback.PreviousAttemptRef != "architect-000" ||
+		contract.RetryFeedback.Code != "InvalidRepositoryPath" || contract.RetryFeedback.Message != "affected path was invalid" {
+		t.Fatalf("agent contract lost retry feedback: %#v", contract.RetryFeedback)
 	}
 	if !contract.Outputs[0].Required || contract.Outputs[0].MediaType != "application/json" {
 		t.Fatalf("agent output obligation is not required JSON: %#v", contract.Outputs[0])

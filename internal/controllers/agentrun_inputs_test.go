@@ -6,9 +6,32 @@ import (
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestAgentPodFailureReadsStructuredBoundedDiagnostic(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-author-001"},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "agent",
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				Message: `{"code":"TestPathNotRecognized","message":"test change set file \"src/main.go\" is not a recognized test path"}`,
+			}},
+		}}},
+	}
+	code, message := agentPodFailure(pod)
+	if code != "TestPathNotRecognized" || !strings.Contains(message, "src/main.go") {
+		t.Fatalf("unexpected pod diagnostic: code=%q message=%q", code, message)
+	}
+
+	pod.Status.ContainerStatuses[0].State.Terminated.Message = `{"code":"invalid-code","message":"ignore me"}`
+	code, message = agentPodFailure(pod)
+	if code != "AgentPodFailed" || !strings.Contains(message, "without a valid structured diagnostic") {
+		t.Fatalf("invalid pod diagnostic was trusted: code=%q message=%q", code, message)
+	}
+}
 
 func TestResolveAgentInputsSelectsAcceptedArtifactByLogicalNameAndDigest(t *testing.T) {
 	scheme := attemptScheme(t)
