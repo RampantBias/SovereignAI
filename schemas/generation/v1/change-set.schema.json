@@ -7,8 +7,8 @@
     "patchLines": {
       "type": "array",
       "minItems": 5,
-      "maxItems": 8192,
-      "items": {"type": "string", "minLength": 1, "maxLength": 16384}
+      "maxItems": 256,
+      "items": {"type": "string", "minLength": 1, "maxLength": 4096}
     }
   }
 }
