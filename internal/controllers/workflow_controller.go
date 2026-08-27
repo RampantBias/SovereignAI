@@ -111,6 +111,11 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return bootstrapResult, nil
 	}
 
+	// Check if workflow is terminal
+	if state.IsTerminal(v1alpha1.ResourcePhase(workflow.Status.Phase)) {
+		return ctrl.Result{}, nil
+	}
+
 	// Check if workflow is being retried
 	if workflow.Status.ActiveAttemptRef == "" {
 		return ctrl.Result{}, r.createAttempt(ctx, &workflow, workflow.Spec.Steps[0], 1)
