@@ -29,7 +29,11 @@ spec:
         responsibility: >
           Analyze the change-request input and repository-revision input and produce
           an implementation plan output identifying affected files, planned changes,
-          risks, and testing requirements.
+          risks, and testing requirements. List every planned file change in
+          affectedPaths using the exact repository-relative path with / separators.
+          Do not use a leading ./, an absolute path, or any empty, ., .., or .git
+          path segment. Each affectedPaths path and action must correspond directly
+          to an implementation step, and no unrelated file may be listed.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
@@ -54,7 +58,23 @@ spec:
           Analyze the change request, implementation plan, and repository revision.
           Produce a test-change-set containing the concrete test-code changes
           required to verify the requested behavior, including relevant success,
-          failure, and edge cases. Do not modify production code.
+          failure, and edge cases. Production paths in the implementation plan describe
+          the behavior to test; they do not authorize production changes. Modify or
+          add only recognized test files. Return a short summary and patchLines, an array
+          containing exactly one physical Git unified-diff line per item with no
+          embedded CR, LF, or NUL. For every file, emit diff --git, ---, +++, one
+          or more @@ hunks, then exact context and changed lines. Use exact repository
+          paths and contents, include at least one added or deleted line, and do not
+          use timestamps, Markdown fences, placeholders, ellipses, prose, or invented
+          metadata in patchLines. Modify only recognized test paths and never modify
+          production code.
+
+          For Golang, every changed file must end in _test.go and must be selected from
+          an exact _test.go entry in the repository path manifest. Before responding,
+          verify every diff --git, ---, and +++ path is that test path and that the patch
+          contains only tests rather than implementation code. Never copy a production
+          path from affectedPaths into patchLines. Do not invent a test directory or
+          production path, and prefer the smallest patch against the existing test file.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
@@ -80,7 +100,18 @@ spec:
           Analyze the change request, implementation plan, repository revision, and
           test change set. Produce a change-set containing the concrete production
           code changes required to satisfy the change request, follow the implementation
-          plan, and pass the proposed tests. Do not modify the test changes.
+          plan, and pass the proposed tests. Return a short summary and patchLines, an
+          array containing exactly one physical Git unified-diff line per item with no
+          embedded CR, LF, or NUL. For every file, emit diff --git, ---, +++, one or
+          more @@ hunks, then exact context and changed lines. Use exact repository
+          paths and contents, include at least one added or deleted line, and do not
+          use timestamps, Markdown fences, placeholders, ellipses, prose, or invented
+          metadata in patchLines. Implement only the requested production-code changes
+          and do not repeat or modify the accepted test change set. Select production
+          paths only from affectedPaths entries that exactly match the repository path
+          manifest, never select a recognized test path, and never copy test change set
+          patchLines into the output. Prefer the smallest hunks against existing files;
+          do not emit unchanged full-file content.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
         capabilities: ["context.read", "artifact.publish"]
@@ -97,8 +128,6 @@ spec:
       outputs:
         - name: change-set
           version: v1
-        - name: combined-change-set
-          version: v1
       timeout: 15m
       maxAttempts: 2
     - name: prepare-candidate
@@ -108,12 +137,9 @@ spec:
         name: candidate.prepare
       inputs:
         - name: change-set
-        - name: combined-change-set
         - name: repository-revision
         - name: test-change-set
       outputs:
-        - name: authority-comparison
-          version: v1
         - name: prepared-candidate
           version: v1
       timeout: 15m
@@ -124,7 +150,6 @@ spec:
       utility:
         name: test.run
       inputs:
-        - name: authority-comparison
         - name: prepared-candidate
       outputs:
         - name: test-report
@@ -137,7 +162,6 @@ spec:
       utility:
         name: git.commit
       inputs:
-        - name: authority-comparison
         - name: prepared-candidate
         - name: test-report
       outputs:
