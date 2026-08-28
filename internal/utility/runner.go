@@ -45,6 +45,7 @@ func DefaultRegistry() Registry {
 	return NewRegistry(
 		RepositoryInitialize{},
 		GitCreateBranch{},
+		CandidatePrepare{},
 		GitCommit{},
 		GitPush{},
 		GitMerge{},
@@ -62,7 +63,7 @@ func IsPrivilegedOperation(name string) bool {
 	// Privileged means the controller must require a policy decision before the
 	// operation is materialized. Credential needs are classified separately.
 	switch name {
-	case OperationGitCommit, OperationGitPush, OperationGitMerge, OperationBuildImage:
+	case OperationCandidatePrepare, OperationGitCommit, OperationGitPush, OperationGitMerge, OperationBuildImage:
 		return true
 	default:
 		return false

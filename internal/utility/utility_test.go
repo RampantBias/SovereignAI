@@ -152,7 +152,7 @@ func TestProjectTemplateOperations(t *testing.T) {
 	workspace := t.TempDir()
 	runUtility(t, utilityInput(t, workspace, "initialize", OperationRepositoryInitialize, map[string]string{"repositoryURL": remote, "revision": initialCommit}, "repository-revision"))
 
-	testInput := utilityInput(t, workspace, "tests", OperationTestRun, nil, "test-report")
+	testInput := utilityInput(t, workspace, "tests", OperationTestRun, nil, "test-result")
 	testInput.Command = []string{"go", "version"}
 	runUtility(t, testInput)
 
@@ -162,7 +162,7 @@ func TestProjectTemplateOperations(t *testing.T) {
 	}
 	buildInput := utilityInput(t, workspace, "build", OperationBuildImage, map[string]string{
 		"imageName": "registry.internal/sovereign/controller", "digestFile": "image.digest",
-	}, "image-digest")
+	}, "build-result")
 	buildInput.Command = []string{"go", "version"}
 	result := runUtility(t, buildInput)
 	repeated := runUtility(t, buildInput)

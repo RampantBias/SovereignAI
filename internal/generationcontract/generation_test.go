@@ -137,8 +137,19 @@ func TestJoinPatchLinesRejectsInvalidLineEncoding(t *testing.T) {
 	valid := []string{"diff --git a/main.go b/main.go", "--- a/main.go", "+++ b/main.go", "@@ -1 +1 @@", "-old", "+new"}
 	for name, mutate := range map[string]func([]string) []string{
 		"too few": func(lines []string) []string { return lines[:4] },
+		"too many": func([]string) []string {
+			lines := make([]string, maximumPatchLines+1)
+			for index := range lines {
+				lines[index] = "line"
+			}
+			return lines
+		},
 		"empty": func(lines []string) []string {
 			lines[4] = ""
+			return lines
+		},
+		"oversized": func(lines []string) []string {
+			lines[4] = strings.Repeat("x", maximumPatchLineBytes+1)
 			return lines
 		},
 		"embedded newline": func(lines []string) []string {
@@ -152,6 +163,36 @@ func TestJoinPatchLinesRejectsInvalidLineEncoding(t *testing.T) {
 				t.Fatal("invalid patch lines accepted")
 			}
 		})
+	}
+}
+
+func TestChangeSetGenerationSchemaMatchesTrustedPatchLimits(t *testing.T) {
+	catalog, err := NewCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := catalog.Resolve("change-set", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties struct {
+			PatchLines struct {
+				MaxItems int `json:"maxItems"`
+				Items    struct {
+					MaxLength int `json:"maxLength"`
+				} `json:"items"`
+			} `json:"patchLines"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(binding.Schema.JSON, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema.Properties.PatchLines.MaxItems != maximumPatchLines ||
+		schema.Properties.PatchLines.Items.MaxLength != maximumPatchLineBytes {
+		t.Fatalf("schema patch limits = %d items/%d bytes, want %d/%d",
+			schema.Properties.PatchLines.MaxItems, schema.Properties.PatchLines.Items.MaxLength,
+			maximumPatchLines, maximumPatchLineBytes)
 	}
 }
 

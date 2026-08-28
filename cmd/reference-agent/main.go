@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -28,7 +29,7 @@ const (
 	maxRepoBytes      = 512 << 10
 	timeout           = 600 * time.Second
 	temperature       = 0.2
-	repetitionPenalty = 1.0
+	repetitionPenalty = 1.1
 	jsonMediaType     = "application/json"
 )
 
@@ -104,7 +105,10 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 	}
 
 	systemContext := buildSystemContext(input)
-	taskContext := buildTaskContext(input, artifactContents, repositoryContext)
+	taskContext, err := buildTaskContext(input, artifactContents, repositoryContext)
+	if err != nil {
+		return fmt.Errorf("build task context: %v", err)
+	}
 	if len(taskContext) > maxPromptBytes {
 		return fmt.Errorf("task context exceeds %d-byte limit", maxPromptBytes)
 	}
@@ -148,16 +152,14 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 	}
 
 	if response.FinishReason != "stop" {
-		log.Printf("incomplete generation content=%q", response.Content)
-		return writeGenerationRejection(resultPath, "IncompleteGeneration", incompleteGenerationMessage(response.FinishReason))
+		diagnostic := incompleteGenerationDiagnostic(response.FinishReason, response.Content)
+		logGenerationContent("incomplete generation", response.FinishReason, response.Content)
+		return writeGenerationRejection(resultPath, diagnostic.Code, diagnostic.Message)
 	}
 
 	content, err := binding.Finalize([]byte(response.Content), artifactSources(artifactContents))
 	if err != nil {
-		log.Printf(
-			"rejected generation content=%q",
-			response.Content,
-		)
+		logGenerationContent("rejected generation", response.FinishReason, response.Content)
 		diagnostic := generationcontract.DiagnoseRejection(err)
 		return writeGenerationRejection(resultPath, diagnostic.Code, diagnostic.Message)
 	}
@@ -183,6 +185,43 @@ func incompleteGenerationMessage(finishReason string) string {
 		return fmt.Sprintf("generation reached the %d-token output limit; return only the minimal authorized changes, omit unchanged content, and close the JSON document", maxOutputTokens)
 	}
 	return fmt.Sprintf("chat response received %s, expected stop", finishReason)
+}
+
+func incompleteGenerationDiagnostic(finishReason, content string) generationcontract.RejectionDiagnostic {
+	if finishReason == "length" && hasDegeneratePatchLines(content) {
+		return generationcontract.RejectionDiagnostic{
+			Code: "DegeneratePatchLines",
+			Message: "the previous response repeated whitespace-only patchLines and never closed the JSON document; " +
+				"start a fresh minimal production-only diff, do not reproduce the test patch, emit at most 256 patchLines, " +
+				"and close the document immediately after the final hunk",
+		}
+	}
+	return generationcontract.RejectionDiagnostic{Code: "IncompleteGeneration", Message: incompleteGenerationMessage(finishReason)}
+}
+
+func hasDegeneratePatchLines(content string) bool {
+	tail := content
+	if len(tail) > 4096 {
+		tail = tail[len(tail)-4096:]
+	}
+	return strings.Count(tail, "\" \"") >= 16
+}
+
+func logGenerationContent(label, finishReason, content string) {
+	log.Printf("%s finishReason=%s responseBytes=%d responseDigest=%s prefix=%q suffix=%q",
+		label, finishReason, len([]byte(content)), artifactcontract.DigestBytes([]byte(content)),
+		boundedRunes(content, 256, true), boundedRunes(content, 256, false))
+}
+
+func boundedRunes(value string, limit int, prefix bool) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if prefix {
+		return string(runes[:limit])
+	}
+	return string(runes[len(runes)-limit:])
 }
 
 func writeGenerationRejection(resultPath, code, message string) error {
@@ -276,7 +315,76 @@ func loadRepositoryContext(input agentcontract.Input, artifacts []loadedArtifact
 	if err != nil {
 		return nil, err
 	}
+	if isDeveloperGeneration(input) {
+		if err := filterDeveloperRepositoryContext(&snapshot, artifacts); err != nil {
+			return nil, err
+		}
+	}
 	return &snapshot, nil
+}
+
+func isDeveloperGeneration(input agentcontract.Input) bool {
+	return len(input.Outputs) == 1 && input.Outputs[0].Name == "change-set" && input.Outputs[0].Version == "v1"
+}
+
+func filterDeveloperRepositoryContext(snapshot *contextrepo.Snapshot, artifacts []loadedArtifact) error {
+	var plan *artifactcontract.ImplementationPlan
+	testPaths := make(map[string]struct{})
+	for _, artifact := range artifacts {
+		switch artifact.Metadata.Contract {
+		case artifactcontract.ImplementationPlanContract:
+			if plan != nil {
+				return fmt.Errorf("multiple %s inputs", artifactcontract.ImplementationPlanContract)
+			}
+			var value artifactcontract.ImplementationPlan
+			if err := json.Unmarshal(artifact.Content, &value); err != nil {
+				return fmt.Errorf("decode %s: %w", artifactcontract.ImplementationPlanContract, err)
+			}
+			plan = &value
+		case artifactcontract.TestChangeSetContract:
+			var value artifactcontract.TestChangeSet
+			if err := json.Unmarshal(artifact.Content, &value); err != nil {
+				return fmt.Errorf("decode %s: %w", artifactcontract.TestChangeSetContract, err)
+			}
+			for _, path := range value.Files {
+				testPaths[path] = struct{}{}
+			}
+		}
+	}
+	if plan == nil {
+		return fmt.Errorf("developer repository context requires one %s input", artifactcontract.ImplementationPlanContract)
+	}
+
+	required := make(map[string]struct{})
+	for _, affected := range plan.AffectedPaths {
+		if affected.Action == "add" {
+			continue
+		}
+		if _, testPath := testPaths[affected.Path]; !testPath {
+			required[affected.Path] = struct{}{}
+		}
+	}
+	filtered := make([]contextrepo.SnapshotFile, 0, len(required))
+	var total int64
+	for _, file := range snapshot.Files {
+		if _, ok := required[file.Path]; !ok {
+			continue
+		}
+		filtered = append(filtered, file)
+		total += file.Bytes
+		delete(required, file.Path)
+	}
+	if len(required) != 0 {
+		missing := make([]string, 0, len(required))
+		for path := range required {
+			missing = append(missing, path)
+		}
+		slices.Sort(missing)
+		return fmt.Errorf("planned production paths are missing from repository context: %s", strings.Join(missing, ", "))
+	}
+	snapshot.Files = filtered
+	snapshot.TotalBytes = total
+	return nil
 }
 
 func buildSystemContext(input agentcontract.Input) string {
@@ -291,7 +399,7 @@ func buildSystemContext(input agentcontract.Input) string {
 	return output.String()
 }
 
-func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact, repository *contextrepo.Snapshot) string {
+func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact, repository *contextrepo.Snapshot) (string, error) {
 	var output strings.Builder
 
 	output.WriteString("# EXECUTION IDENTITY\n")
@@ -351,7 +459,11 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact, rep
 		output.WriteString("\nDigest: ")
 		output.WriteString(artifact.Metadata.Digest)
 		output.WriteString("\nContent:\n")
-		output.WriteString(string(artifact.Content))
+		content, err := promptArtifactContent(input, artifact)
+		if err != nil {
+			return "", err
+		}
+		output.WriteString(content)
 		output.WriteString("\n--- END INPUT ARTIFACT ")
 		output.WriteString(fmt.Sprint(index + 1))
 		output.WriteString(" ---\n")
@@ -392,12 +504,45 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact, rep
 		output.WriteString("\n")
 	}
 
+	if isDeveloperGeneration(input) {
+		output.WriteString("\n# OUTPUT CONSTRUCTION RULES\n")
+		output.WriteString("- Emit one minimal unified diff for authorized production files only.\n")
+		output.WriteString("- Never reproduce any test-change-set patch line.\n")
+		output.WriteString("- Emit no more than 256 patchLines; every element is exactly one physical diff line.\n")
+		output.WriteString("- A one-space context line is allowed only when that blank line exists in the source.\n")
+		output.WriteString("- Immediately close the JSON array and object after the final changed hunk line.\n")
+	}
+
 	output.WriteString("\n# FINAL INSTRUCTION\nProduce exactly one ")
 	output.WriteString(input.Outputs[0].Name)
 	output.WriteString("/")
 	output.WriteString(input.Outputs[0].Version)
 	output.WriteString(" generation document matching the supplied schema and no other text.\n")
-	return output.String()
+	return output.String(), nil
+}
+
+func promptArtifactContent(input agentcontract.Input, artifact loadedArtifact) (string, error) {
+	if !isDeveloperGeneration(input) || artifact.Metadata.Contract != artifactcontract.TestChangeSetContract {
+		return string(artifact.Content), nil
+	}
+	var tests artifactcontract.TestChangeSet
+	if err := json.Unmarshal(artifact.Content, &tests); err != nil {
+		return "", fmt.Errorf("decode %s for prompt projection: %w", artifactcontract.TestChangeSetContract, err)
+	}
+	var output strings.Builder
+	output.WriteString("Accepted test evidence (patch content intentionally omitted).\nSummary: ")
+	output.WriteString(tests.Summary)
+	output.WriteString("\nPatch Digest: ")
+	output.WriteString(tests.PatchDigest)
+	output.WriteString("\nChanged Test Paths:\n")
+	for _, path := range tests.Files {
+		output.WriteString("- ")
+		output.WriteString(path)
+		output.WriteString("\n")
+	}
+	output.WriteString(fmt.Sprintf("Line Counts: added=%d deleted=%d\n", tests.LineCounts.Added, tests.LineCounts.Deleted))
+	output.WriteString("The accepted test patch is reference evidence only. Do not modify test paths or reproduce the test implementation.")
+	return output.String(), nil
 }
 
 func writeArtifact(stagingPath string, output agentcontract.OutputObligation, content []byte) (agentcontract.ArtifactOutput, error) {

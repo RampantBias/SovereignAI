@@ -14,6 +14,7 @@ import (
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/contextrepo"
 )
 
 func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
@@ -82,8 +83,8 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		if payload.Model != "code-small" {
 			t.Errorf("model = %q, want code-small", payload.Model)
 		}
-		if payload.RepetitionPenalty != 1.0 {
-			t.Errorf("repetition penalty = %v, want neutral 1.0", payload.RepetitionPenalty)
+		if payload.RepetitionPenalty != repetitionPenalty {
+			t.Errorf("repetition penalty = %v, want %v", payload.RepetitionPenalty, repetitionPenalty)
 		}
 		if payload.Temperature != temperature {
 			t.Errorf("temperature = %v, want %v", payload.Temperature, temperature)
@@ -237,6 +238,77 @@ func TestRunMakesOneInferenceRequestAndPublishesResult(t *testing.T) {
 		finalized.RepositoryRevisionDigest != artifactcontract.DigestBytes(repositoryRevisionContent) ||
 		finalized.SourceCommit != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Fatalf("runtime-derived fields are incorrect: %#v", finalized)
+	}
+}
+
+func TestDeveloperPromptProjectsTestsAndFiltersRepositoryContext(t *testing.T) {
+	planContent, err := json.Marshal(artifactcontract.ImplementationPlan{
+		AffectedPaths: []artifactcontract.AffectedPath{
+			{Path: "calculator.go", Action: "modify"},
+			{Path: "calculator_test.go", Action: "modify"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testPatch := "diff --git a/calculator_test.go b/calculator_test.go\n+func TestPostCalculate(t *testing.T) {}\n"
+	testContent, err := json.Marshal(artifactcontract.TestChangeSet{
+		Summary: "verify divide behavior", Patch: testPatch,
+		PatchDigest: artifactcontract.DigestBytes([]byte(testPatch)),
+		Files:       []string{"calculator_test.go"}, LineCounts: artifactcontract.LineCounts{Added: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := []loadedArtifact{
+		{Metadata: agentcontract.ArtifactInput{Contract: artifactcontract.ImplementationPlanContract}, Content: planContent},
+		{Metadata: agentcontract.ArtifactInput{Contract: artifactcontract.TestChangeSetContract}, Content: testContent},
+	}
+	repository := &contextrepo.Snapshot{Revision: "abc", TotalBytes: 48, Files: []contextrepo.SnapshotFile{
+		{Path: "calculator.go", Bytes: 16, Content: "package calculator"},
+		{Path: "calculator_test.go", Bytes: 16, Content: "func TestHidden()"},
+		{Path: "unrelated.go", Bytes: 16, Content: "package unrelated"},
+	}}
+	if err := filterDeveloperRepositoryContext(repository, artifacts); err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.Files) != 1 || repository.Files[0].Path != "calculator.go" || repository.TotalBytes != 16 {
+		t.Fatalf("developer repository context was not filtered: %#v", repository)
+	}
+	input := agentcontract.Input{
+		WorkflowID: "workflow", StepName: "developer", Attempt: 1, Role: "developer",
+		Responsibility: "Implement the production change.",
+		Outputs:        []agentcontract.OutputObligation{{Name: "change-set", Version: "v1", MediaType: jsonMediaType}},
+	}
+	prompt, err := buildTaskContext(input, artifacts, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Accepted test evidence (patch content intentionally omitted)",
+		"verify divide behavior", "calculator_test.go", "Path: calculator.go",
+		"# OUTPUT CONSTRUCTION RULES", "Never reproduce any test-change-set patch line", "no more than 256 patchLines",
+	} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("developer prompt does not contain %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"func TestPostCalculate", "func TestHidden", "package unrelated"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Errorf("developer prompt leaked excluded content %q", forbidden)
+		}
+	}
+}
+
+func TestIncompleteGenerationDiagnosticDetectsDegeneratePatchLines(t *testing.T) {
+	degenerate := `{"summary":"change","patchLines":["diff --git a/a b/a"` + strings.Repeat(`," "`, 20)
+	diagnostic := incompleteGenerationDiagnostic("length", degenerate)
+	if diagnostic.Code != "DegeneratePatchLines" || !strings.Contains(diagnostic.Message, "do not reproduce the test patch") {
+		t.Fatalf("degenerate diagnostic = %#v", diagnostic)
+	}
+	ordinary := incompleteGenerationDiagnostic("length", `{"summary":"change"}`)
+	if ordinary.Code != "IncompleteGeneration" {
+		t.Fatalf("ordinary length diagnostic = %#v", ordinary)
 	}
 }
 

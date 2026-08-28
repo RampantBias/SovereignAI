@@ -8,6 +8,7 @@ import (
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 	policyengine "github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/utilitycontract"
 	batchv1 "k8s.io/api/batch/v1"
@@ -209,6 +210,9 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	if len(contract.Command) != 2 || contract.Command[0] != "go" || contract.Operation != "test.run" {
 		t.Fatalf("unexpected utility contract: %#v", contract)
 	}
+	if contract.Parameters["environmentImageDigest"] != artifactcontract.DigestBytes([]byte(project.Spec.TestJob.Image)) {
+		t.Fatalf("test environment identity was not derived from Project state: %#v", contract.Parameters)
+	}
 	if contract.Authority.Kind != "UtilityOperation" || contract.Authority.Name != operation.Name || contract.PolicyDecisionID != "allow-test" {
 		t.Fatalf("utility contract lost its authority lineage: %#v", contract)
 	}
@@ -283,6 +287,19 @@ func TestUtilityOperationScopesRegistryCredentialToUtilityContainer(t *testing.T
 	}
 	if len(job.Spec.Template.Spec.InitContainers) != 1 || len(job.Spec.Template.Spec.InitContainers[0].VolumeMounts) != 1 {
 		t.Fatal("trusted runtime init container unexpectedly received credential material")
+	}
+	var inputConfig corev1.ConfigMap
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: operation.Namespace, Name: operation.Name + "-input"}, &inputConfig); err != nil {
+		t.Fatal(err)
+	}
+	var buildContract utilitycontract.Input
+	if err := json.Unmarshal([]byte(inputConfig.Data["input.json"]), &buildContract); err != nil {
+		t.Fatal(err)
+	}
+	if buildContract.Parameters["imageName"] != project.Spec.Validation.ImageName ||
+		buildContract.Parameters["builderImageDigest"] != artifactcontract.DigestBytes([]byte(project.Spec.BuildJob.Image)) ||
+		buildContract.Parameters["digestFile"] != "image-metadata.json" || buildContract.Parameters["dockerfile"] != "Dockerfile" {
+		t.Fatalf("build evidence parameters were not derived from Project state: %#v", buildContract.Parameters)
 	}
 	main := job.Spec.Template.Spec.Containers[0]
 	foundCredential := false

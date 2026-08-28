@@ -196,6 +196,7 @@ func (v ChangeSet) Validate() error {
 func (v PreparedCandidate) Validate() error {
 	for field, value := range map[string]string{
 		"repositoryRevisionDigest": v.RepositoryRevisionDigest,
+		"testChangeSetDigest":      v.TestChangeSetDigest,
 		"changeSetDigest":          v.ChangeSetDigest,
 		"preparationCommandDigest": v.PreparationCommandDigest,
 	} {

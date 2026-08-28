@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/audit"
 	policyengine "github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/utility"
@@ -628,6 +629,7 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 		result.executionImage = project.Spec.TestJob.Image
 		result.bootstrapRuntime = result.executionImage != runtimeImage
 		result.input.Command = append(append([]string(nil), project.Spec.TestJob.Command...), project.Spec.TestJob.Args...)
+		result.input.Parameters["environmentImageDigest"] = admittedImageIdentityDigest(project.Spec.TestJob.Image)
 		result.credentialRef = project.Spec.TestJob.CredentialRef
 	case utility.OperationBuildImage:
 		if project.Spec.BuildJob.Image == "" || len(project.Spec.BuildJob.Command) == 0 {
@@ -636,6 +638,9 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 		result.executionImage = project.Spec.BuildJob.Image
 		result.bootstrapRuntime = result.executionImage != runtimeImage
 		result.input.Command = append(append([]string(nil), project.Spec.BuildJob.Command...), project.Spec.BuildJob.Args...)
+		result.input.Parameters["builderImageDigest"] = admittedImageIdentityDigest(project.Spec.BuildJob.Image)
+		result.input.Parameters["digestFile"] = "image-metadata.json"
+		result.input.Parameters["dockerfile"] = "Dockerfile"
 		result.credentialRef = utilityCredentialReference(project, operation.Spec.Operation.Name)
 		if project.Spec.Validation.ImageName != "" {
 			result.input.Parameters["imageName"] = project.Spec.Validation.ImageName
@@ -647,6 +652,15 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 	return result, result.input.Validate()
 }
 
+func admittedImageIdentityDigest(image string) string {
+	if separator := strings.LastIndex(image, "@sha256:"); separator >= 0 {
+		candidate := image[separator+1:]
+		if len(candidate) == 71 && candidate == strings.ToLower(candidate) {
+			return candidate
+		}
+	}
+	return artifactcontract.DigestBytes([]byte(image))
+}
 func utilityIdempotencyKey(operation *v1alpha1.UtilityOperation, workflow *v1alpha1.SovereignWorkflow) string {
 	identity := string(workflow.UID)
 	if identity == "" {

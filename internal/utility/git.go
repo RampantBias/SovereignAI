@@ -79,17 +79,17 @@ func (GitCommit) Validate(input utilitycontract.Input) error {
 	if err := ensureWorkspace(input); err != nil {
 		return err
 	}
-	_, err := parameter(input, "message")
-	if err != nil {
+	if _, err := parameter(input, "repositoryURL"); err != nil {
 		return err
 	}
-	_, err = parameter(input, "repositoryURL")
-	if err == nil && outputContract(input) == artifactcontract.CandidateRevisionContract {
-		_, err = requiredInput(input, artifactcontract.PreparedCandidateContract)
-		if err == nil {
-			_, err = requiredInput(input, artifactcontract.TestReportContract)
+	if outputContract(input) == artifactcontract.CandidateRevisionContract {
+		if _, err := requiredInput(input, artifactcontract.PreparedCandidateContract); err != nil {
+			return err
 		}
+		_, err := requiredInput(input, artifactcontract.TestReportContract)
+		return err
 	}
+	_, err := parameter(input, "message")
 	return err
 }
 
@@ -97,8 +97,10 @@ func (GitCommit) Run(ctx context.Context, input utilitycontract.Input) (utilityc
 	if err := verifyAdmittedRepository(ctx, input); err != nil {
 		return utilitycontract.Result{}, err
 	}
-	if _, err := runGit(ctx, input.WorkspacePath, "add", "-A"); err != nil {
-		return utilitycontract.Result{}, err
+	if outputContract(input) != artifactcontract.CandidateRevisionContract {
+		if _, err := runGit(ctx, input.WorkspacePath, "add", "-A"); err != nil {
+			return utilitycontract.Result{}, err
+		}
 	}
 	// write-tree records the exact staged content without creating a commit. It
 	// lets a retry prove that an existing idempotent commit represents the same
@@ -130,7 +132,10 @@ func (GitCommit) Run(ctx context.Context, input utilitycontract.Input) (utilityc
 		head, _ := gitOutput(ctx, input.WorkspacePath, "rev-parse", "HEAD")
 		return gitCommitResult(ctx, input, "no changes to commit", head, requestedTree)
 	}
-	message, _ := parameter(input, "message")
+	message, err := admittedCommitMessage(input)
+	if err != nil {
+		return utilitycontract.Result{}, err
+	}
 	trailer := "Sovereign-Idempotency-Key: " + input.IdempotencyKey
 	if _, err := runGit(ctx, input.WorkspacePath, "commit", "-m", message, "-m", trailer); err != nil {
 		return utilitycontract.Result{}, err
@@ -150,16 +155,17 @@ func (GitPush) Validate(input utilitycontract.Input) error {
 	if err := ensureWorkspace(input); err != nil {
 		return err
 	}
-	if _, err := parameter(input, "branch"); err != nil {
-		return err
-	}
 	if remote := optionalParameter(input, "remote", "origin"); remote != "origin" {
 		return fmt.Errorf("git.push remote must be origin")
 	}
-	_, err := parameter(input, "repositoryURL")
-	if err == nil && outputContract(input) == artifactcontract.CandidateRemoteProofContract {
-		_, err = requiredInput(input, artifactcontract.CandidateRevisionContract)
+	if _, err := parameter(input, "repositoryURL"); err != nil {
+		return err
 	}
+	if outputContract(input) == artifactcontract.CandidateRemoteProofContract {
+		_, err := requiredInput(input, artifactcontract.CandidateRevisionContract)
+		return err
+	}
+	_, err := parameter(input, "branch")
 	return err
 }
 
@@ -167,26 +173,33 @@ func (GitPush) Run(ctx context.Context, input utilitycontract.Input) (utilitycon
 	if err := verifyAdmittedRepository(ctx, input); err != nil {
 		return utilitycontract.Result{}, err
 	}
-	branch, _ := parameter(input, "branch")
-	if _, err := runGit(ctx, input.WorkspacePath, "check-ref-format", "--branch", branch); err != nil {
-		return utilitycontract.Result{}, fmt.Errorf("invalid branch %q: %w", branch, err)
-	}
-	remote := optionalParameter(input, "remote", "origin")
 	var candidateRef utilitycontract.ArtifactInput
+	branch := ""
 	if outputContract(input) == artifactcontract.CandidateRemoteProofContract {
 		reference, candidate, err := readInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
 		candidateRef = reference
+		branch = candidate.Branch
 		localCommit, err := gitOutput(ctx, input.WorkspacePath, "rev-parse", branch)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
-		if candidate.Branch != branch || candidate.Commit != localCommit {
+		if candidate.Commit != localCommit {
 			return utilitycontract.Result{}, fmt.Errorf("candidate-revision input does not identify branch %s at %s", branch, localCommit)
 		}
+	} else {
+		var err error
+		branch, err = parameter(input, "branch")
+		if err != nil {
+			return utilitycontract.Result{}, err
+		}
 	}
+	if _, err := runGit(ctx, input.WorkspacePath, "check-ref-format", "--branch", branch); err != nil {
+		return utilitycontract.Result{}, fmt.Errorf("invalid branch %q: %w", branch, err)
+	}
+	remote := optionalParameter(input, "remote", "origin")
 	localCommit, remoteCommit, err := pushBranch(ctx, input.WorkspacePath, remote, branch)
 	if err != nil {
 		return utilitycontract.Result{}, err
@@ -332,6 +345,17 @@ func (GitMerge) Run(ctx context.Context, input utilitycontract.Input) (utilityco
 		"approvalDecisionRef": input.Parameters["approvalDecisionRef"], "validationRunRef": input.Parameters["validationRunRef"],
 	}
 	return gitMergeResult(ctx, input, "merge completed", source, target, commit, previousRemote, metadata)
+}
+
+func admittedCommitMessage(input utilitycontract.Input) (string, error) {
+	if outputContract(input) != artifactcontract.CandidateRevisionContract {
+		return parameter(input, "message")
+	}
+	preparedRef, _, err := readInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
+	if err != nil {
+		return "", err
+	}
+	return "SovereignAI candidate " + sha256String(preparedRef.Digest)[:12], nil
 }
 
 func gitCommitResult(ctx context.Context, input utilitycontract.Input, message, commit, tree string) (utilitycontract.Result, error) {

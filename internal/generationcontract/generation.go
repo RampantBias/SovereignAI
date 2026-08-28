@@ -17,8 +17,8 @@ import (
 
 const (
 	minimumPatchLines     = 5
-	maximumPatchLines     = 8192
-	maximumPatchLineBytes = 16 << 10
+	maximumPatchLines     = 256
+	maximumPatchLineBytes = 4 << 10
 )
 
 var schemaFiles = map[string]string{

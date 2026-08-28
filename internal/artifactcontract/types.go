@@ -106,6 +106,7 @@ type ChangeSet struct {
 
 type PreparedCandidate struct {
 	RepositoryRevisionDigest string   `json:"repositoryRevisionDigest"`
+	TestChangeSetDigest      string   `json:"testChangeSetDigest"`
 	ChangeSetDigest          string   `json:"changeSetDigest"`
 	BaseCommit               string   `json:"baseCommit"`
 	Branch                   string   `json:"branch"`
