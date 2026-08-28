@@ -150,6 +150,7 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		MaxTokens:         request.MaxOutputTokens,
 		Temperature:       request.Temperature,
 		RepetitionPenalty: request.RepetitionPenalty,
+		Tools:             request.Tools,
 	}
 	if request.OutputSchema != nil {
 		payload.ResponseFormat = &responseFormat{
@@ -200,15 +201,17 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 	if len(decoded.Choices) == 0 {
 		return ChatResponse{}, fmt.Errorf("inference response contains no choices")
 	}
-	if len(decoded.Choices[0].Message.Content) == 0 {
-		return ChatResponse{}, fmt.Errorf("inference response has no content")
+	choice := decoded.Choices[0]
+	if len(choice.Message.Content) == 0 && len(choice.Message.ToolCalls) == 0 {
+		return ChatResponse{}, fmt.Errorf("inference response has neither content nor tool calls")
 	}
 
 	return ChatResponse{
-		Content:          decoded.Choices[0].Message.Content,
-		FinishReason:     decoded.Choices[0].FinishReason,
+		Content:          choice.Message.Content,
+		FinishReason:     choice.FinishReason,
 		PromptTokens:     decoded.Usage.PromptTokens,
 		CompletionTokens: decoded.Usage.CompletionTokens,
+		ToolCalls:        choice.Message.ToolCalls,
 	}, nil
 }
 

@@ -23,6 +23,8 @@ const (
 	CapabilityWorkspaceReplace = "workspace_replace"
 	CapabilityWorkspaceDelete  = "workspace_delete"
 	CapabilityWorkspaceTree    = "workspace_tree"
+	CapabilityCandidateWrite   = "candidate_write"
+	CapabilityAgentComplete    = "agent_complete"
 )
 
 type ArtifactInput struct {
@@ -82,6 +84,14 @@ type ArtifactOutput struct {
 	Contract  string `json:"contract"`
 	Path      string `json:"path"`
 	MediaType string `json:"mediaType,omitempty"`
+}
+
+// AgentCompletion is the durable terminal action returned by agent_complete.
+// EvidenceDigest fences materialization to the exact candidate or workspace
+// state the agent declared complete.
+type AgentCompletion struct {
+	Summary        string `json:"summary"`
+	EvidenceDigest string `json:"evidenceDigest"`
 }
 
 type Result struct {

@@ -148,6 +148,42 @@ func TestChatRejectsOversizedResponse(t *testing.T) {
 	}
 }
 
+func TestChatSendsToolsAndDecodesToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload chatCompletionPayload
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Tools) != 1 || payload.Tools[0].Function.Name != "workspace_read" {
+			t.Fatalf("tools = %#v", payload.Tools)
+		}
+		if len(payload.Messages) != 1 || payload.Messages[0].Role != "user" {
+			t.Fatalf("messages = %#v", payload.Messages)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"choices":[{"message":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"workspace_read","arguments":"{\"path\":\"main.go\"}"}}]},"finish_reason":"tool_calls"}]}`)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, time.Second, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Chat(context.Background(), ChatRequest{
+		Model: "ex", Messages: []Message{{Role: "user", Content: "edit"}},
+		MaxOutputTokens: 128,
+		OutputSchema:    &JSONSchema{Name: "completion", Schema: json.RawMessage(`{"type":"object"}`)},
+		Tools: []ToolDefinition{{Type: "function", Function: ToolFunctionDefinition{
+			Name: "workspace_read", Parameters: json.RawMessage(`{"type":"object"}`),
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "workspace_read" || response.FinishReason != "tool_calls" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
 func validChatRequest() ChatRequest {
 	return ChatRequest{
 		Model: "ex",

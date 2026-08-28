@@ -185,6 +185,10 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 	}
 	return nil
 }
+func logInference(response inference.ChatResponse) {
+	log.Printf("inference completed finishReason=%s promptTokens=%d completionTokens=%d toolCalls=%d",
+		response.FinishReason, response.PromptTokens, response.CompletionTokens, len(response.ToolCalls))
+}
 
 func incompleteGenerationMessage(finishReason string) string {
 	if finishReason == "length" {
@@ -321,91 +325,22 @@ func loadRepositoryContext(input agentcontract.Input, artifacts []loadedArtifact
 	if err != nil {
 		return nil, err
 	}
-	if isDeveloperGeneration(input) {
-		if err := filterDeveloperRepositoryContext(&snapshot, artifacts); err != nil {
-			return nil, err
-		}
-	}
 	return &snapshot, nil
 }
 
-func isDeveloperGeneration(input agentcontract.Input) bool {
-	return len(input.Outputs) == 1 && input.Outputs[0].Name == "change-set" && input.Outputs[0].Version == "v1"
-}
-
 func isMcpNeeded(input agentcontract.Input) bool {
-	for _, capability := input.Capabilities {
-		switch(capability) {
+	for _, capability := range input.Capabilities {
+		switch capability {
 		case agentcontract.CapabilityWorkspaceRead,
 			agentcontract.CapabilityWorkspaceDelete,
 			agentcontract.CapabilityWorkspaceReplace,
 			agentcontract.CapabilityWorkspaceSearch,
 			agentcontract.CapabilityWorkspaceTree,
 			agentcontract.CapabilityWorkspaceWrite:
-			return true;
+			return true
 		}
 	}
-	return false;
-}
-
-func filterDeveloperRepositoryContext(snapshot *contextrepo.Snapshot, artifacts []loadedArtifact) error {
-	var plan *artifactcontract.ImplementationPlan
-	testPaths := make(map[string]struct{})
-	for _, artifact := range artifacts {
-		switch artifact.Metadata.Contract {
-		case artifactcontract.ImplementationPlanContract:
-			if plan != nil {
-				return fmt.Errorf("multiple %s inputs", artifactcontract.ImplementationPlanContract)
-			}
-			var value artifactcontract.ImplementationPlan
-			if err := json.Unmarshal(artifact.Content, &value); err != nil {
-				return fmt.Errorf("decode %s: %w", artifactcontract.ImplementationPlanContract, err)
-			}
-			plan = &value
-		case artifactcontract.TestChangeSetContract:
-			var value artifactcontract.TestChangeSet
-			if err := json.Unmarshal(artifact.Content, &value); err != nil {
-				return fmt.Errorf("decode %s: %w", artifactcontract.TestChangeSetContract, err)
-			}
-			for _, path := range value.Files {
-				testPaths[path] = struct{}{}
-			}
-		}
-	}
-	if plan == nil {
-		return fmt.Errorf("developer repository context requires one %s input", artifactcontract.ImplementationPlanContract)
-	}
-
-	required := make(map[string]struct{})
-	for _, affected := range plan.AffectedPaths {
-		if affected.Action == "add" {
-			continue
-		}
-		if _, testPath := testPaths[affected.Path]; !testPath {
-			required[affected.Path] = struct{}{}
-		}
-	}
-	filtered := make([]contextrepo.SnapshotFile, 0, len(required))
-	var total int64
-	for _, file := range snapshot.Files {
-		if _, ok := required[file.Path]; !ok {
-			continue
-		}
-		filtered = append(filtered, file)
-		total += file.Bytes
-		delete(required, file.Path)
-	}
-	if len(required) != 0 {
-		missing := make([]string, 0, len(required))
-		for path := range required {
-			missing = append(missing, path)
-		}
-		slices.Sort(missing)
-		return fmt.Errorf("planned production paths are missing from repository context: %s", strings.Join(missing, ", "))
-	}
-	snapshot.Files = filtered
-	snapshot.TotalBytes = total
-	return nil
+	return false
 }
 
 func buildSystemContext(input agentcontract.Input) string {
@@ -530,27 +465,28 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact, rep
 		output.WriteString("\n")
 	}
 
-	if isDeveloperGeneration(input) {
+	if isMcpNeeded(input) {
 		output.WriteString("\n# OUTPUT CONSTRUCTION RULES\n")
-		output.WriteString("- Emit one minimal unified diff for authorized production files only.\n")
-		output.WriteString("- Never reproduce any test-change-set patch line.\n")
-		output.WriteString("- Emit no more than 256 patchLines; every element is exactly one physical diff line.\n")
-		output.WriteString("- A one-space context line is allowed only when that blank line exists in the source.\n")
-		output.WriteString("- Immediately close the JSON array and object after the final changed hunk line.\n")
+		output.WriteString("- Inspect repository files with workspace_read, workspace_search, or workspace_tree.\n")
+		output.WriteString("- Use workspace_write, workspace_replace, or workspace_delete for authorized changes")
+		output.WriteString(" if you have access to those tools.\n")
+		output.WriteString("- Use expectedDigest=absent only when creating a new file.\n")
+		output.WriteString("- Do not emit patch text; the runtime derives and validates the change set.\n")
 	}
 
 	output.WriteString("\n# FINAL INSTRUCTION\nProduce exactly one ")
 	output.WriteString(input.Outputs[0].Name)
 	output.WriteString("/")
 	output.WriteString(input.Outputs[0].Version)
+	if isMcpNeeded(input) {
+		output.WriteString(" completion document with exactly one summary field after finishing all workspace edits.\n")
+	} else {
 	output.WriteString(" generation document matching the supplied schema and no other text.\n")
+	}
 	return output.String(), nil
 }
 
 func promptArtifactContent(input agentcontract.Input, artifact loadedArtifact) (string, error) {
-	if !isDeveloperGeneration(input) || artifact.Metadata.Contract != artifactcontract.TestChangeSetContract {
-		return string(artifact.Content), nil
-	}
 	var tests artifactcontract.TestChangeSet
 	if err := json.Unmarshal(artifact.Content, &tests); err != nil {
 		return "", fmt.Errorf("decode %s for prompt projection: %w", artifactcontract.TestChangeSetContract, err)
