@@ -207,16 +207,21 @@ func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
 			t.Fatal("controller manually selected a GPU device")
 		}
 	}
-	wantStructuredOutputsConfig := `{"backend":"xgrammar","disable_any_whitespace":true}`
-	gotStructuredOutputsConfig := ""
+	autoToolChoice, toolCallParser := false, ""
 	for index, argument := range pod.Spec.Containers[0].Args {
-		if argument == "--structured-outputs-config" && index+1 < len(pod.Spec.Containers[0].Args) {
-			gotStructuredOutputsConfig = pod.Spec.Containers[0].Args[index+1]
-			break
+		switch argument {
+		case "--enable-auto-tool-choice":
+			autoToolChoice = true
+		case "--tool-call-parser":
+			if index+1 < len(pod.Spec.Containers[0].Args) {
+				toolCallParser = pod.Spec.Containers[0].Args[index+1]
+			}
+		case "--structured-outputs-config":
+			t.Fatal("inference runtime still configures obsolete structured chat outputs")
 		}
 	}
-	if gotStructuredOutputsConfig != wantStructuredOutputsConfig {
-		t.Fatalf("structured outputs config = %q, want %q", gotStructuredOutputsConfig, wantStructuredOutputsConfig)
+	if !autoToolChoice || toolCallParser != "hermes" {
+		t.Fatalf("tool calling args = %v, want automatic Hermes parsing", pod.Spec.Containers[0].Args)
 	}
 	if got := pod.Spec.Containers[0].Resources.Limits["nvidia.com/gpu"]; got.String() != "1" {
 		t.Fatalf("GPU request = %s, want 1", got.String())

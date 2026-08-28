@@ -133,6 +133,30 @@ func TestChangeSetBindingFinalizesRuntimeFields(t *testing.T) {
 	}
 }
 
+func TestFinalizeWorkspaceChangeSetUsesTrustedDerivedPatch(t *testing.T) {
+	revision := []byte(`{"repositoryURL":"https://git.example.test/calculator.git","requestedRevision":"main","resolvedCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","utilityOperation":{"namespace":"workflow","name":"initialize-001","uid":"operation-uid"}}`)
+	sources := []SourceArtifact{
+		{Contract: artifactcontract.ChangeRequestContract, Digest: artifactcontract.DigestBytes([]byte("change"))},
+		{Contract: artifactcontract.ImplementationPlanContract, Digest: artifactcontract.DigestBytes([]byte("plan"))},
+		{Contract: artifactcontract.RepositoryRevisionContract, Digest: artifactcontract.DigestBytes(revision), Content: revision},
+	}
+	patch := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+new\n"
+	content, err := FinalizeWorkspaceChangeSet(artifactcontract.ChangeSetContract, "edit through workspace tools", patch, sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactcontract.ValidateContract(artifactcontract.ChangeSetContract, content); err != nil {
+		t.Fatalf("final artifact is invalid: %v", err)
+	}
+	var change artifactcontract.ChangeSet
+	if err := json.Unmarshal(content, &change); err != nil {
+		t.Fatal(err)
+	}
+	if change.Patch != patch || change.PatchDigest != artifactcontract.DigestBytes([]byte(patch)) || change.Summary != "edit through workspace tools" {
+		t.Fatalf("unexpected finalized change set: %#v", change)
+	}
+}
+
 func TestJoinPatchLinesRejectsInvalidLineEncoding(t *testing.T) {
 	valid := []string{"diff --git a/main.go b/main.go", "--- a/main.go", "+++ b/main.go", "@@ -1 +1 @@", "-old", "+new"}
 	for name, mutate := range map[string]func([]string) []string{

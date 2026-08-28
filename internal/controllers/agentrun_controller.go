@@ -591,6 +591,7 @@ func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName, mcpImage stri
 				Env: []corev1.EnvVar{
 					{Name: "SOVEREIGN_MCP_ADDRESS", Value: "127.0.0.1:8080"},
 					{Name: "SOVEREIGN_MCP_REQUIRE_IDENTITY", Value: "false"},
+					{Name: "SOVEREIGN_AGENT_INPUT", Value: "/control/input.json"},
 					{Name: "SOVEREIGN_REPOSITORY_ROOT", Value: "/repository"},
 					{Name: "SOVEREIGN_WORKSPACE_OVERLAY_ROOT", Value: executionStagingPath(run.Name) + "/overlay"},
 				},
@@ -598,6 +599,7 @@ func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName, mcpImage stri
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workspace", MountPath: "/repository", ReadOnly: true},
 					{Name: "workspace", MountPath: "/workspace"},
+					{Name: "input", MountPath: "/control", ReadOnly: true},
 				},
 			}},
 			Containers: []corev1.Container{

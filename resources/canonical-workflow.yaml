@@ -27,16 +27,16 @@ spec:
       order: 2
       agent:
         responsibility: >
-          Analyze the change-request input and repository-revision input and produce
-          an implementation plan output identifying affected files, planned changes,
-          risks, and testing requirements. List every planned file change in
+          Analyze the change-request input and checked-out repository. Write the
+          complete implementation-plan candidate through candidate_write, identifying
+          affected files, planned changes, risks, and testing requirements. List every planned file change in
           affectedPaths using the exact repository-relative path with / separators.
           Do not use a leading ./, an absolute path, or any empty, ., .., or .git
           path segment. Each affectedPaths path and action must correspond directly
           to an implementation step, and no unrelated file may be listed.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "artifact_publish", "workspace_tree", "workspace_search"]
+        capabilities: ["workspace_read", "workspace_tree", "workspace_search", "candidate_write", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
@@ -56,28 +56,20 @@ spec:
       agent:
         responsibility: >
           Analyze the change request, implementation plan, and repository revision.
-          Produce a test-change-set containing the concrete test-code changes
-          required to verify the requested behavior, including relevant success,
-          failure, and edge cases. Production paths in the implementation plan describe
-          the behavior to test; they do not authorize production changes. Modify or
-          add only recognized test files. Return a short summary and patchLines, an array
-          containing exactly one physical Git unified-diff line per item with no
-          embedded CR, LF, or NUL. For every file, emit diff --git, ---, +++, one
-          or more @@ hunks, then exact context and changed lines. Use exact repository
-          paths and contents, include at least one added or deleted line, and do not
-          use timestamps, Markdown fences, placeholders, ellipses, prose, or invented
-          metadata in patchLines. Modify only recognized test paths and never modify
-          production code.
+          Implement the concrete test-code changes directly in the attempt workspace
+          to verify the requested behavior, including relevant success, failure, and
+          edge cases. Production paths in the implementation plan describe the
+          behavior to test; they do not authorize production changes. Modify or add
+          only recognized test paths and never modify production code.
 
           For Golang, every changed file must end in _test.go and must be selected from
-          an exact _test.go entry in the repository path manifest. Before responding,
-          verify every diff --git, ---, and +++ path is that test path and that the patch
-          contains only tests rather than implementation code. Never copy a production
-          path from affectedPaths into patchLines. Do not invent a test directory or
-          production path, and prefer the smallest patch against the existing test file.
+          an exact _test.go path discovered in the repository. Inspect current content
+          before editing, do not invent a test directory or production path, and make
+          the smallest targeted workspace changes. Do not generate or return a diff or
+          patchLines; trusted code derives the test-change-set from the workspace.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "artifact_publish", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
@@ -98,23 +90,18 @@ spec:
       agent:
         responsibility: >
           Analyze the change request, implementation plan, repository revision, and
-          test change set. Produce a change-set containing the concrete production
-          code changes required to satisfy the change request, follow the implementation
-          plan, and pass the proposed tests. Return a short summary and patchLines, an
-          array containing exactly one physical Git unified-diff line per item with no
-          embedded CR, LF, or NUL. For every file, emit diff --git, ---, +++, one or
-          more @@ hunks, then exact context and changed lines. Use exact repository
-          paths and contents, include at least one added or deleted line, and do not
-          use timestamps, Markdown fences, placeholders, ellipses, prose, or invented
-          metadata in patchLines. Implement only the requested production-code changes
-          and do not repeat or modify the accepted test change set. Select production
-          paths only from affectedPaths entries that exactly match the repository path
-          manifest, never select a recognized test path, and never copy test change set
-          patchLines into the output. Prefer the smallest hunks against existing files;
-          do not emit unchanged full-file content.
+          test change set. Implement the concrete production-code changes directly in
+          the attempt workspace to satisfy the change request, follow the implementation
+          plan, and pass the proposed tests. Treat the accepted test change set as
+          read-only requirements and do not repeat or modify it. Select production paths
+          only from affectedPaths entries that exactly match files discovered in the
+          repository, and never select or modify a recognized test path. Inspect current
+          content before editing and make the smallest targeted workspace changes. Do
+          not generate or return a diff or patchLines; trusted code derives the
+          change-set from the workspace.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "artifact_publish", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"

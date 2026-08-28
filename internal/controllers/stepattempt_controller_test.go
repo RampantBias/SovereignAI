@@ -136,9 +136,20 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	if sidecar.RestartPolicy == nil || *sidecar.RestartPolicy != corev1.ContainerRestartPolicyAlways {
 		t.Fatalf("MCP container is not a native sidecar: %#v", sidecar.RestartPolicy)
 	}
-	if len(sidecar.VolumeMounts) != 2 || !sidecar.VolumeMounts[0].ReadOnly ||
-		sidecar.VolumeMounts[0].MountPath != "/repository" || sidecar.VolumeMounts[1].MountPath != "/workspace" {
+	if len(sidecar.VolumeMounts) != 3 || !sidecar.VolumeMounts[0].ReadOnly ||
+		sidecar.VolumeMounts[0].MountPath != "/repository" || sidecar.VolumeMounts[1].MountPath != "/workspace" ||
+		!sidecar.VolumeMounts[2].ReadOnly || sidecar.VolumeMounts[2].MountPath != "/control" {
 		t.Fatalf("unexpected MCP mounts: %#v", sidecar.VolumeMounts)
+	}
+	foundAgentInput := false
+	for _, variable := range sidecar.Env {
+		if variable.Name == "SOVEREIGN_AGENT_INPUT" && variable.Value == "/control/input.json" {
+			foundAgentInput = true
+			break
+		}
+	}
+	if !foundAgentInput {
+		t.Fatalf("MCP sidecar is missing SOVEREIGN_AGENT_INPUT: %#v", sidecar.Env)
 	}
 	if pod.Annotations[AnnotationWorkspaceWriterEpoch] != "1" {
 		t.Fatalf("agent pod writer epoch = %q, want 1", pod.Annotations[AnnotationWorkspaceWriterEpoch])

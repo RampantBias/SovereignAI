@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/utility"
 	"sigs.k8s.io/yaml"
@@ -110,8 +111,22 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 			agent.Inference.SharingScope != v1alpha1.SharingWithinWorkflow {
 			t.Fatalf("step %q has a different model request", workflow.Spec.Steps[index].Name)
 		}
+		for _, capability := range []string{
+			agentcontract.CapabilityWorkspaceRead,
+			agentcontract.CapabilityAgentComplete,
+		} {
+			if !slices.Contains(agent.Capabilities, capability) {
+				t.Errorf("step %q is missing capability %q", workflow.Spec.Steps[index].Name, capability)
+			}
+		}
 		if index >= 2 {
-			for _, expected := range []string{"patchLines", "one physical Git unified-diff line per item", "diff --git", "exact repository paths and contents"} {
+			if !slices.Contains(agent.Capabilities, agentcontract.CapabilityWorkspaceWrite) {
+				t.Errorf("step %q is missing workspace-write authority", workflow.Spec.Steps[index].Name)
+			}
+			if slices.Contains(agent.Capabilities, agentcontract.CapabilityCandidateWrite) {
+				t.Errorf("step %q unexpectedly has candidate-write authority", workflow.Spec.Steps[index].Name)
+			}
+			for _, expected := range []string{"directly in the attempt workspace", "Do not generate or return a diff or patchLines", "trusted code derives"} {
 				if !strings.Contains(agent.Responsibility, expected) {
 					t.Errorf("step %q responsibility does not contain %q", workflow.Spec.Steps[index].Name, expected)
 				}
@@ -119,7 +134,11 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 		}
 	}
 	architectResponsibility := workflow.Spec.Steps[1].Agent.Responsibility
-	for _, expected := range []string{"affectedPaths", "exact repository-relative path", "Do not use a leading ./", "must correspond directly to an implementation step", "no unrelated file"} {
+	if !slices.Contains(workflow.Spec.Steps[1].Agent.Capabilities, agentcontract.CapabilityCandidateWrite) ||
+		slices.Contains(workflow.Spec.Steps[1].Agent.Capabilities, agentcontract.CapabilityWorkspaceWrite) {
+		t.Errorf("architect capabilities do not declare candidate-only materialization: %v", workflow.Spec.Steps[1].Agent.Capabilities)
+	}
+	for _, expected := range []string{"candidate_write", "affectedPaths", "exact repository-relative path", "Do not use a leading ./", "must correspond directly to an implementation step", "no unrelated file"} {
 		if !strings.Contains(architectResponsibility, expected) {
 			t.Errorf("architect responsibility does not contain %q", expected)
 		}
@@ -128,7 +147,7 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 		t.Errorf("test-author responsibility does not carry test-only authority: %q", responsibility)
 	}
 	developerResponsibility := workflow.Spec.Steps[3].Agent.Responsibility
-	for _, expected := range []string{"production-code changes", "accepted test change set", "exactly match the repository path manifest", "never select a recognized test path", "smallest hunks"} {
+	for _, expected := range []string{"production-code changes", "accepted test change set", "files discovered in the repository", "never select or modify a recognized test path", "smallest targeted workspace changes"} {
 		if !strings.Contains(developerResponsibility, expected) {
 			t.Errorf("developer responsibility does not contain %q", expected)
 		}
@@ -152,7 +171,7 @@ func TestRuntimeSmokeWorkflowCarriesChangeSetResponsibilities(t *testing.T) {
 		t.Fatal("runtime smoke workflow is missing agent step \"architect\"")
 	}
 	architectResponsibility := workflow.Spec.Steps[architectIndex].Agent.Responsibility
-	for _, expected := range []string{"affectedPaths", "exact repository-relative path", "Do not use a leading ./", "must correspond directly to an implementation step", "no unrelated file"} {
+	for _, expected := range []string{"candidate_write", "affectedPaths", "exact repository-relative path", "Do not use a leading ./", "must correspond directly to an implementation step", "no unrelated file"} {
 		if !strings.Contains(architectResponsibility, expected) {
 			t.Errorf("architect responsibility does not contain %q", expected)
 		}
@@ -163,7 +182,7 @@ func TestRuntimeSmokeWorkflowCarriesChangeSetResponsibilities(t *testing.T) {
 			t.Fatalf("runtime smoke workflow is missing agent step %q", stepName)
 		}
 		responsibility := workflow.Spec.Steps[index].Agent.Responsibility
-		for _, expected := range []string{"patchLines", "one physical Git unified-diff line per item", "diff --git", "exact repository paths and contents"} {
+		for _, expected := range []string{"directly in the attempt workspace", "Do not generate or return a diff or patchLines", "trusted code derives"} {
 			if !strings.Contains(responsibility, expected) {
 				t.Errorf("step %q responsibility does not contain %q", stepName, expected)
 			}

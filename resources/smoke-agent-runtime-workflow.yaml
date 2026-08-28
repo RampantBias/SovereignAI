@@ -43,8 +43,9 @@ spec:
       order: 2
       agent:
         responsibility: >
-          Analyze the change request and checked-out repository and produce an
-          implementation plan identifying affected files, changes, risks, and tests.
+          Analyze the change request and checked-out repository. Write the complete
+          implementation-plan candidate through candidate_write, identifying affected
+          files, changes, risks, and tests.
           List every planned file change in affectedPaths using the exact
           repository-relative path with / separators. Do not use a leading ./, an
           absolute path, or any empty, ., .., or .git path segment. Each affectedPaths
@@ -52,7 +53,7 @@ spec:
           unrelated file may be listed.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["context.read", "artifact.publish"]
+        capabilities: ["workspace_read", "workspace_tree", "workspace_search", "candidate_write", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
@@ -71,26 +72,19 @@ spec:
       order: 3
       agent:
         responsibility: >
-          Use the change request, implementation plan, and repository to produce the
-          smallest unified-diff test change set that verifies divide success, divide
-          by zero, and preservation of the existing calculator behavior. Modify exactly
+          Use the change request, implementation plan, and repository to implement the
+          smallest targeted test changes directly in the attempt workspace, verifying
+          divide success, divide by zero, and preservation of existing calculator
+          behavior. Modify exactly
           one existing file: src/main_test.go. Never include src/main.go or any other
           path, and do not implement production behavior. Extend the existing tests;
           do not rewrite package declarations, production types, handlers, or the
-          complete source file. Return a short summary and patchLines, an array
-          containing exactly one physical Git unified-diff line per item with no
-          embedded CR, LF, or NUL. The first three patchLines must be exactly
-          `diff --git a/src/main_test.go b/src/main_test.go`,
-          `--- a/src/main_test.go`, and `+++ b/src/main_test.go`. Follow them with one
-          or more valid @@ hunks and exact context and changed lines from the repository.
-          Use exact repository paths and contents and include at least one added or
-          deleted line. Do not use timestamps, Markdown fences, placeholders, ellipses,
-          prose, invented metadata, or production paths in patchLines. Before responding,
-          verify every diff header names only src/main_test.go and every changed line is
-          test code.
+          complete source file. Inspect the current file before editing. Do not generate
+          or return a diff or patchLines; trusted code derives the test-change-set from
+          the workspace.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["context.read", "artifact.publish"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
@@ -111,26 +105,19 @@ spec:
       agent:
         responsibility: >
           Use the change request, implementation plan, proposed tests, and repository
-          to produce the smallest unified-diff production change set that implements
-          divide success and the division-by-zero response while preserving existing
-          calculator behavior. Modify exactly one existing file: src/main.go. Never
+          to implement the smallest targeted production changes directly in the attempt
+          workspace, adding divide success and the division-by-zero response while
+          preserving existing calculator behavior. Modify exactly one existing file:
+          src/main.go. Never
           include src/main_test.go or any other path. Treat the accepted test change set
-          as read-only requirements; never repeat or modify its patchLines. Extend the
+          as read-only requirements; never repeat or modify its changes. Extend the
           existing operation constants and calculation handler without rewriting the
           package declaration, imports, unrelated handlers, or the complete source file.
-          Return a short summary and patchLines, an array containing exactly one physical
-          Git unified-diff line per item with no embedded CR, LF, or NUL. The first three
-          patchLines must be exactly `diff --git a/src/main.go b/src/main.go`,
-          `--- a/src/main.go`, and `+++ b/src/main.go`. Follow them with the smallest
-          valid @@ hunks and exact context and changed lines from the repository. Use
-          exact repository paths and contents and include at least one added or deleted
-          line. Do not use timestamps, Markdown fences, placeholders, ellipses, prose,
-          invented metadata, test paths, or unchanged full-file content in patchLines.
-          Before responding, verify every diff header names only src/main.go and every
-          changed line is required production code.
+          Inspect the current file before editing. Do not generate or return a diff or
+          patchLines; trusted code derives the change-set from the workspace.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["context.read", "artifact.publish"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
