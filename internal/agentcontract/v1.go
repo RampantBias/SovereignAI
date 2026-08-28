@@ -16,6 +16,13 @@ const (
 	MaxRetryFeedbackReferenceBytes = 253
 	MaxRetryFeedbackCodeBytes      = 128
 	MaxRetryFeedbackMessageBytes   = 1024
+
+	CapabilityWorkspaceRead    = "workspace_read"
+	CapabilityWorkspaceWrite   = "workspace_write"
+	CapabilityWorkspaceSearch  = "workspace_search"
+	CapabilityWorkspaceReplace = "workspace_replace"
+	CapabilityWorkspaceDelete  = "workspace_delete"
+	CapabilityWorkspaceTree    = "workspace_tree"
 )
 
 type ArtifactInput struct {

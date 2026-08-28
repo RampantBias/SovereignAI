@@ -13,8 +13,32 @@ import (
 )
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type ToolDefinition struct {
+	Type     string                 `json:"type"`
+	Function ToolFunctionDefinition `json:"function"`
+}
+
+type ToolFunctionDefinition struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters"`
 }
 
 type JSONSchema struct {
@@ -29,6 +53,7 @@ type ChatRequest struct {
 	Temperature       float64
 	RepetitionPenalty float64
 	OutputSchema      *JSONSchema
+	Tools             []ToolDefinition
 }
 
 type ChatResponse struct {
@@ -36,22 +61,25 @@ type ChatResponse struct {
 	FinishReason     string
 	PromptTokens     int
 	CompletionTokens int
+	ToolCalls        []ToolCall
 }
 
 type chatCompletionPayload struct {
-	Model             string          `json:"model"`
-	Messages          []Message       `json:"messages"`
-	MaxTokens         int             `json:"max_tokens"`
-	Temperature       float64         `json:"temperature,omitempty"`
-	RepetitionPenalty float64         `json:"repetition_penalty,omitempty"`
-	ResponseFormat    *responseFormat `json:"response_format,omitempty"`
+	Model             string           `json:"model"`
+	Messages          []Message        `json:"messages"`
+	MaxTokens         int              `json:"max_tokens"`
+	Temperature       float64          `json:"temperature,omitempty"`
+	RepetitionPenalty float64          `json:"repetition_penalty,omitempty"`
+	ResponseFormat    *responseFormat  `json:"response_format,omitempty"`
+	Tools             []ToolDefinition `json:"tools,omitempty"`
 }
 
 // OpenAI response format
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
