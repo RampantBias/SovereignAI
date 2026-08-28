@@ -131,7 +131,8 @@ func main() {
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,
-			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev")},
+			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
+			MCPImage:       env("SOVEREIGN_MCP_IMAGE", "sovereign-mcp-server:dev")},
 		&controllers.UtilityOperationReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),

@@ -129,6 +129,17 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	if security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem {
 		t.Fatal("agent root filesystem is writable")
 	}
+	if len(pod.Spec.InitContainers) != 1 || pod.Spec.InitContainers[0].Name != "mcp" {
+		t.Fatalf("agent pod MCP sidecar = %#v", pod.Spec.InitContainers)
+	}
+	sidecar := pod.Spec.InitContainers[0]
+	if sidecar.RestartPolicy == nil || *sidecar.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+		t.Fatalf("MCP container is not a native sidecar: %#v", sidecar.RestartPolicy)
+	}
+	if len(sidecar.VolumeMounts) != 2 || !sidecar.VolumeMounts[0].ReadOnly ||
+		sidecar.VolumeMounts[0].MountPath != "/repository" || sidecar.VolumeMounts[1].MountPath != "/workspace" {
+		t.Fatalf("unexpected MCP mounts: %#v", sidecar.VolumeMounts)
+	}
 	if pod.Annotations[AnnotationWorkspaceWriterEpoch] != "1" {
 		t.Fatalf("agent pod writer epoch = %q, want 1", pod.Annotations[AnnotationWorkspaceWriterEpoch])
 	}
@@ -158,6 +169,9 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	}
 	if contract.WorkspaceWrite.WriterEpoch != 1 || contract.WorkspaceWrite.LeaseName != workflow.Status.WorkspaceWriterLeaseRef {
 		t.Fatalf("agent contract lost workspace writer authority: %#v", contract.WorkspaceWrite)
+	}
+	if contract.MCPServer != "http://127.0.0.1:8080/mcp" {
+		t.Fatalf("agent contract MCP endpoint = %q", contract.MCPServer)
 	}
 }
 

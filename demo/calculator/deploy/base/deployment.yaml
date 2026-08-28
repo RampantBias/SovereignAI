@@ -21,7 +21,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: calculator
-          image: calculator:seed
+          image: registry.internal/sovereign/calculator:seed
           ports:
             - name: http
               containerPort: 8080

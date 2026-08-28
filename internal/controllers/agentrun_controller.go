@@ -32,6 +32,7 @@ type AgentRunReconciler struct {
 	Audit          audit.Recorder
 	Now            func() time.Time
 	CollectorImage string
+	MCPImage       string
 }
 
 func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -436,7 +437,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		Outputs:           outputs,
 		Capabilities:      append([]string(nil), run.Spec.Capabilities...),
 		InferenceEndpoint: endpoint,
-		MCPServer:         "https://sovereign-mcp.sovereign-orchestrator-system.svc",
+		MCPServer:         "http://127.0.0.1:8080/mcp",
 		WorkspacePath:     "/workspace",
 		StagingPath:       executionStagingPath(run.Name),
 		ControlPath:       executionControlPath(run.Name),
@@ -463,7 +464,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 	if err := r.Create(ctx, config); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
-	pod := buildAgentRunPod(run, workflow.Status.PvcName, configName, grant)
+	pod := buildAgentRunPod(run, workflow.Status.PvcName, configName, r.mcpImage(), grant)
 	if err := controllerutil.SetControllerReference(run, pod, r.Scheme); err != nil {
 		return err
 	}
@@ -563,11 +564,12 @@ func artifactAccepted(artifact *v1alpha1.Artifact) bool {
 		condition.ObservedGeneration == artifact.Generation
 }
 
-func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant workspaceWriterGrant) *corev1.Pod {
+func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName, mcpImage string, grant workspaceWriterGrant) *corev1.Pod {
 	if pvcName == "" {
 		pvcName = run.Spec.WorkflowRef.Name + "-workspace"
 	}
 	automount, readOnly, allowPrivilegeEscalation := false, true, false
+	sidecarRestartPolicy := corev1.ContainerRestartPolicyAlways
 	executable, _ := json.Marshal(run.Spec.Executable)
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -582,6 +584,22 @@ func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant 
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
 			SecurityContext: workspaceWorkloadSecurityContext(),
+			InitContainers: []corev1.Container{{
+				Name:          "mcp",
+				Image:         mcpImage,
+				RestartPolicy: &sidecarRestartPolicy,
+				Env: []corev1.EnvVar{
+					{Name: "SOVEREIGN_MCP_ADDRESS", Value: "127.0.0.1:8080"},
+					{Name: "SOVEREIGN_MCP_REQUIRE_IDENTITY", Value: "false"},
+					{Name: "SOVEREIGN_REPOSITORY_ROOT", Value: "/repository"},
+					{Name: "SOVEREIGN_WORKSPACE_OVERLAY_ROOT", Value: executionStagingPath(run.Name) + "/overlay"},
+				},
+				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+				VolumeMounts: []corev1.VolumeMount{
+					{Name: "workspace", MountPath: "/repository", ReadOnly: true},
+					{Name: "workspace", MountPath: "/workspace"},
+				},
+			}},
 			Containers: []corev1.Container{
 				{
 					Name:            "agent",
@@ -596,6 +614,13 @@ func buildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName string, grant 
 				{Name: "input", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
 			},
 		}}
+}
+
+func (r *AgentRunReconciler) mcpImage() string {
+	if r.MCPImage != "" {
+		return r.MCPImage
+	}
+	return "sovereign-mcp-server:dev"
 }
 
 func (r *AgentRunReconciler) startCollection(ctx context.Context, run *v1alpha1.AgentRun) (ctrl.Result, error) {

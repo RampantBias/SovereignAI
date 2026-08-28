@@ -24,7 +24,7 @@ func TestWorkspaceWorkloadsShareNonRootIdentity(t *testing.T) {
 	contexts := map[string]*corev1.PodSecurityContext{
 		"bootstrap": buildBootstrapJob(workflow, "bootstrap", grant).Spec.Template.Spec.SecurityContext,
 		"utility":   buildUtilityJob(operation, workflow.Status.PvcName, "input", "runtime", utilityWorkloadConfig{}, grant).Spec.Template.Spec.SecurityContext,
-		"agent":     buildAgentRunPod(run, workflow.Status.PvcName, "input", grant).Spec.SecurityContext,
+		"agent":     buildAgentRunPod(run, workflow.Status.PvcName, "input", "mcp", grant).Spec.SecurityContext,
 		"collector": collector.Spec.Template.Spec.SecurityContext,
 	}
 	for name, security := range contexts {
