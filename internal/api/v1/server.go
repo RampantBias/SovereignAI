@@ -338,7 +338,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 	}
 	workflowCRD.ObjectMeta.Labels["sovereign-ai.io/project"] = projectName
 	workflowCRD.ObjectMeta.Labels["sovereign-ai.io/workflow-id"] = workflowID
-	workflowCRD.Spec.Project.Name = projectName
+	workflowCRD.Spec.Project = v1alpha1.UIDReference{Name: projectName, UID: project.UID}
 	workflowCRD.Spec.WorkflowID = workflowID
 	workflowCRD.Spec.RequesterSubject = requester.Subject
 	workflowCRD.Spec.Bootstrap = v1alpha1.WorkflowBootstrapSpec{

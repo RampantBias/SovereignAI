@@ -5,8 +5,9 @@ flowchart TD
     B --> C{Utility \nDeterministic}
     B --> D{Agent \nProbabilistic}
     B --> E{Validation \nTesting}
-    C --> F(Artifact)
+    C --> F[Artifact]
     D --> F
     E --> F
-    
+    F --> G[ApprovalDecision]
+    G --> H[State Transition]
 ```

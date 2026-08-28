@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,10 +17,11 @@ import (
 )
 
 var (
-	digestPattern        = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	gitOIDPattern        = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	ociRepositoryPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
-	branchPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	digestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	gitOIDPattern          = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	ociRepositoryPattern   = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	branchPattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	unifiedDiffHunkPattern = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@(?: .*)?$`)
 )
 
 func DigestBytes(data []byte) string {
@@ -536,7 +538,68 @@ func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
 	hunks := 0
 	added := 0
 	deleted := 0
+	invalidMetadataLine := 0
+	type hunkState struct {
+		headerLine               int
+		expectedOld, expectedNew int
+		observedOld, observedNew int
+		sawContent               bool
+	}
+	var hunk *hunkState
+	finishHunk := func() error {
+		if hunk.observedOld != hunk.expectedOld || hunk.observedNew != hunk.expectedNew {
+			return fmt.Errorf(
+				"patch line %d hunk declares %d old and %d new lines but contains %d old and %d new lines",
+				hunk.headerLine, hunk.expectedOld, hunk.expectedNew, hunk.observedOld, hunk.observedNew,
+			)
+		}
+		return nil
+	}
 	for index, line := range lines {
+		lineNumber := index + 1
+		if hunk != nil {
+			if line == `\ No newline at end of file` {
+				if !hunk.sawContent {
+					return nil, 0, 0, fmt.Errorf("patch line %d has a misplaced no-newline marker", lineNumber)
+				}
+				hunk.sawContent = false
+				continue
+			}
+			if hunk.observedOld == hunk.expectedOld && hunk.observedNew == hunk.expectedNew {
+				if err := finishHunk(); err != nil {
+					return nil, 0, 0, err
+				}
+				hunk = nil
+			} else {
+				if line == "" {
+					return nil, 0, 0, fmt.Errorf("patch line %d is empty inside a hunk", lineNumber)
+				}
+				switch line[0] {
+				case ' ':
+					hunk.observedOld++
+					hunk.observedNew++
+				case '-':
+					hunk.observedOld++
+					deleted++
+				case '+':
+					hunk.observedNew++
+					added++
+				default:
+					return nil, 0, 0, fmt.Errorf("patch line %d is not a context, addition, or deletion line inside a hunk", lineNumber)
+				}
+				hunk.sawContent = true
+				if hunk.observedOld > hunk.expectedOld || hunk.observedNew > hunk.expectedNew {
+					return nil, 0, 0, fmt.Errorf(
+						"patch line %d exceeds hunk declaration at line %d: declared %d old and %d new lines",
+						lineNumber, hunk.headerLine, hunk.expectedOld, hunk.expectedNew,
+					)
+				}
+				continue
+			}
+		}
+		if index == len(lines)-1 && line == "" {
+			continue
+		}
 		if strings.HasPrefix(line, "diff --git ") {
 			fields := strings.Fields(line)
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") {
@@ -552,21 +615,34 @@ func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
 			}
 			diffHeaders++
 			files = append(files, oldPath, newPath)
+			continue
 		}
 		if strings.HasPrefix(line, "--- ") {
 			oldHeaders++
+			continue
 		}
 		if strings.HasPrefix(line, "+++ ") {
 			newHeaders++
+			continue
 		}
 		if strings.HasPrefix(line, "@@ ") {
+			expectedOld, expectedNew, err := parseUnifiedDiffHunkHeader(line)
+			if err != nil {
+				return nil, 0, 0, fmt.Errorf("patch line %d has a malformed hunk header: %w", lineNumber, err)
+			}
 			hunks++
+			hunk = &hunkState{headerLine: lineNumber, expectedOld: expectedOld, expectedNew: expectedNew}
+			continue
 		}
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			added++
+		if !isUnifiedDiffMetadata(line) {
+			if invalidMetadataLine == 0 {
+				invalidMetadataLine = lineNumber
+			}
 		}
-		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			deleted++
+	}
+	if hunk != nil {
+		if err := finishHunk(); err != nil {
+			return nil, 0, 0, err
 		}
 	}
 	if diffHeaders == 0 {
@@ -581,12 +657,53 @@ func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
 	if hunks == 0 {
 		return nil, 0, 0, fmt.Errorf("patch is missing an @@ -old,count +new,count @@ hunk header")
 	}
+	if invalidMetadataLine != 0 {
+		return nil, 0, 0, fmt.Errorf("patch line %d is not valid unified diff metadata", invalidMetadataLine)
+	}
 	if added+deleted == 0 {
 		return nil, 0, 0, fmt.Errorf("patch must include at least one added or deleted hunk line")
 	}
 	sort.Strings(files)
 	files = slices.Compact(files)
 	return files, added, deleted, nil
+}
+
+func parseUnifiedDiffHunkHeader(line string) (int, int, error) {
+	matches := unifiedDiffHunkPattern.FindStringSubmatch(line)
+	if matches == nil {
+		return 0, 0, fmt.Errorf("must use @@ -old[,count] +new[,count] @@ form")
+	}
+	parse := func(start, count string) (int, error) {
+		if _, err := strconv.ParseUint(start, 10, 64); err != nil {
+			return 0, err
+		}
+		if count == "" {
+			return 1, nil
+		}
+		value, err := strconv.ParseUint(count, 10, 31)
+		return int(value), err
+	}
+	oldCount, err := parse(matches[1], matches[2])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid old range")
+	}
+	newCount, err := parse(matches[3], matches[4])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid new range")
+	}
+	return oldCount, newCount, nil
+}
+
+func isUnifiedDiffMetadata(line string) bool {
+	for _, prefix := range []string{
+		"index ", "new file mode ", "deleted file mode ", "similarity index ", "dissimilarity index ",
+		"rename from ", "rename to ", "copy from ", "copy to ",
+	} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func boundedText(field, value string, maximum int) error {

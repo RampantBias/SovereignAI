@@ -40,6 +40,16 @@ RUN apk add --no-cache ca-certificates git
 COPY --from=builder /out/utility-runner /utility-runner
 ENTRYPOINT ["/utility-runner"]
 
+FROM golang:1.26.2-alpine3.23 AS test-runner
+RUN apk add --no-cache ca-certificates git
+WORKDIR /workspace
+
+FROM moby/buildkit:v0.24.0-rootless AS build-runner
+USER root
+RUN apk add --no-cache ca-certificates git
+USER 1000:1000
+WORKDIR /workspace
+
 FROM gcr.io/distroless/static-debian12:nonroot AS smoke-agent
 COPY --from=builder /out/agent-wrapper /agent-wrapper
 COPY --from=builder /out/smoke-agent /smoke-agent

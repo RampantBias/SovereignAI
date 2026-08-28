@@ -3,6 +3,7 @@ module github.com/SovereignAI
 go 1.26.2
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/open-policy-agent/opa v1.18.2

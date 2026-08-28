@@ -77,13 +77,14 @@ The workflow graph is fixed and sequential. Repository initialization remains an
 | 2 | Architect | AgentRun | accepted `implementation-plan/v1` |
 | 3 | Test Writer | AgentRun | accepted unified-diff `test-change-set/v1` |
 | 4 | Developer | AgentRun | accepted unified-diff `change-set/v1` |
-| 5 | Prepare candidate | Utility: `candidate.prepare` | accepted `prepared-candidate/v1` containing deterministic branch, base commit, change-set digest, and Git tree |
-| 6 | Commit candidate | Utility: `git.commit` | accepted `candidate-revision/v1` bound to the tested tree |
-| 7 | Push candidate | Utility: `git.push` | evidence that the remote candidate branch resolves to the exact candidate commit |
-| 8 | Build calculator | Utility: `build.image` | accepted `image-digest/v1` for one calculator image built from the candidate commit |
-| 9 | Ephemeral validation | ValidationRun | accepted `validation-result/v1`, Argo health, and direct review instructions |
-| 10 | Product approval | HumanGate | admitted ApprovalDecision for the exact validated subject |
-| 11 | Merge candidate | Utility: `git.merge` | accepted `merge-revision/v1` proving the approved candidate was merged and pushed once |
+| 5 | Prepare candidate | Utility: `candidate.prepare` | accepted `prepared-candidate/v1` binding both accepted patch digests, deterministic branch, base commit, and Git tree |
+| 6 | Test candidate | Utility: `test.run` | accepted `test-report/v1` proving the Project-owned test command passed without tree drift |
+| 7 | Commit candidate | Utility: `git.commit` | accepted `candidate-revision/v1` bound to the tested tree |
+| 8 | Push candidate | Utility: `git.push` | accepted `candidate-remote-proof/v1` proving the remote branch resolves to the exact candidate commit |
+| 9 | Build calculator | Utility: `build.image` | accepted `image-digest/v1` for one calculator image built from the candidate commit and tree |
+| 10 | Ephemeral validation | ValidationRun | accepted `validation-result/v1`, Argo health, and direct review instructions |
+| 11 | Product approval | HumanGate | admitted ApprovalDecision for the exact validated subject |
+| 12 | Merge candidate | Utility: `git.merge` | accepted `merge-revision/v1` proving the approved candidate was merged and pushed once |
 
 The submitted change request is an immutable workflow input. Every later input is resolved to an accepted Artifact by API version, kind, namespace, name, UID, digest, contract, producer, workflow UID, classification, and source commit before its consumer resource is created.
 

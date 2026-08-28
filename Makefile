@@ -19,6 +19,8 @@ images:
 	docker build --target agent-wrapper -t sovereign-agent-wrapper:dev .
 	docker build --target reference-agent -t sovereign-reference-agent:dev .
 	docker build --target utility-runner -t sovereign-utility-runner:dev .
+	docker build --target test-runner -t sovereign-test-runner:dev .
+	docker build --target build-runner -t sovereign-build-runner:dev .
 	docker build --target smoke-agent -t sovereign-smoke-agent:dev .
 	docker build --target mcp-server -t sovereign-mcp-server:dev .
 	docker build --target artifact-collector -t sovereign-artifact-collector:dev .
