@@ -48,7 +48,7 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 
 	// Check for namespace termination
-	terminating, err := namespaceTerminating(ctx, r.Client, run.Namespace)
+	terminating, err := NamespaceTerminating(ctx, r.Client, run.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -113,7 +113,7 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 }
 
 func (r *ValidationRunReconciler) appendValidationEvent(ctx context.Context, run *v1alpha1.ValidationRun, eventType, action, outcome, reason string) error {
-	return appendControllerEvent(ctx, r.Audit, "validationrun-controller", r.Now, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "validationrun-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
 			Namespace: run.Namespace,

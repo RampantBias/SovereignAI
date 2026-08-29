@@ -35,7 +35,7 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if !approval.DeletionTimestamp.IsZero() || terminalAttempt(approval.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
-	terminating, err := namespaceTerminating(ctx, r.Client, approval.Namespace)
+	terminating, err := NamespaceTerminating(ctx, r.Client, approval.Namespace)
 	if err != nil || terminating {
 		return ctrl.Result{}, err
 	}
@@ -52,7 +52,7 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if err := r.setAwaiting(ctx, &approval); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{}, appendControllerEvent(ctx, r.Audit, "approvalrequest-controller", r.Now, audit.EventOptions{
+	return ctrl.Result{}, audit.AppendControllerEvent(ctx, r.Audit, "approvalrequest-controller", r.Now, audit.EventOptions{
 		Type: "ApprovalRequested", Subject: audit.Subject{Namespace: approval.Namespace, Workflow: approval.Spec.WorkflowRef.Name, Step: approval.Spec.StepName, Attempt: approval.Spec.Attempt},
 		Action: "request", Target: approval.Name, Outcome: "awaiting", References: map[string]string{"approvalRequest": approval.Name, "stepAttempt": approval.Spec.AttemptRef.Name},
 		Data: map[string]any{"mode": approval.Spec.Approval.Mode, "requiredGroups": approval.Spec.Approval.RequiredGroups},

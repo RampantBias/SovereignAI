@@ -1,4 +1,4 @@
-package controllers
+package workflow
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllermeta"
+	"github.com/SovereignAI/internal/controllers"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -50,7 +52,7 @@ func TestWorkflowBootstrapGatesFirstAttemptUntilArtifactAcceptance(t *testing.T)
 	workflow := &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "wf-bootstrap", Namespace: "wf-bootstrap", UID: "workflow-uid",
-			Finalizers: []string{WorkflowFinalizer},
+			Finalizers: []string{controllermeta.WorkflowFinalizer},
 		},
 		Spec: v1alpha1.SovereignWorkflowSpec{
 			Project:    v1alpha1.UIDReference{Name: "platform", UID: "project-uid"},
@@ -103,7 +105,7 @@ func TestWorkflowBootstrapGatesFirstAttemptUntilArtifactAcceptance(t *testing.T)
 		}
 		assertNoStepAttempts(t, ctx, kubeClient)
 		err := kubeClient.Get(ctx, types.NamespacedName{
-			Namespace: workflow.Namespace, Name: bootstrapJobName(workflow.Name),
+			Namespace: workflow.Namespace, Name: controllers.BootstrapJobName(workflow.Name),
 		}, &job)
 		if err == nil {
 			break
@@ -139,12 +141,12 @@ func TestWorkflowBootstrapGatesFirstAttemptUntilArtifactAcceptance(t *testing.T)
 		t.Fatal(err)
 	}
 	if artifact.Spec.Digest != digest ||
-		artifact.Spec.Path != bootstrapArtifactPath(digest) ||
+		artifact.Spec.Path != controllers.BootstrapArtifactPath(digest) ||
 		artifact.Spec.ProducerRef.Kind != "SovereignWorkflow" {
 		t.Fatalf("unexpected bootstrap Artifact: %#v", artifact.Spec)
 	}
 
-	artifactReconciler := &ArtifactReconciler{Client: kubeClient, Audit: recorder}
+	artifactReconciler := &controllers.ArtifactReconciler{Client: kubeClient, Audit: recorder}
 	if _, err := artifactReconciler.Reconcile(ctx, ctrl.Request{NamespacedName: artifactKey}); err != nil {
 		t.Fatal(err)
 	}

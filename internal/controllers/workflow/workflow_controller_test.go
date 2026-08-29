@@ -1,4 +1,4 @@
-package controllers
+package workflow
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllermeta"
+	"github.com/SovereignAI/internal/controllers"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -118,8 +120,8 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 			Name:      "test-author-001",
 			Namespace: workflow.Namespace,
 			Labels: map[string]string{
-				LabelWorkflow: workflow.Spec.WorkflowID,
-				LabelStep:     "test-author",
+				controllermeta.LabelWorkflow: workflow.Spec.WorkflowID,
+				controllermeta.LabelStep:     "test-author",
 			},
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow",
@@ -251,7 +253,7 @@ func TestWorkflowSkipsNormalReconcileWhenNamespaceTerminating(t *testing.T) {
 		},
 	}
 	workflow := &v1alpha1.SovereignWorkflow{
-		ObjectMeta: metav1.ObjectMeta{Name: "wf-terminating", Namespace: "wf-terminating", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
+		ObjectMeta: metav1.ObjectMeta{Name: "wf-terminating", Namespace: "wf-terminating", UID: "uid-1", Finalizers: []string{controllermeta.WorkflowFinalizer}},
 		Spec: v1alpha1.SovereignWorkflowSpec{Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-terminating", Steps: []v1alpha1.StepConfig{{
 			Name: "architect", Kind: v1alpha1.ExecutionKindAgent,
 			Agent: &v1alpha1.AgentStepSpec{Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
@@ -364,7 +366,7 @@ func changeRequestArtifact(workflow *v1alpha1.SovereignWorkflow) *v1alpha1.Artif
 			},
 			Contract: workflow.Spec.Bootstrap.Contract,
 			Digest:   workflow.Spec.Bootstrap.ExpectedDigest,
-			Path:     bootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest),
+			Path:     controllers.BootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest),
 		},
 		Status: v1alpha1.ArtifactStatus{
 			Phase: v1alpha1.PhaseSucceeded,
@@ -377,7 +379,7 @@ func changeRequestArtifact(workflow *v1alpha1.SovereignWorkflow) *v1alpha1.Artif
 
 func changeRequestWorkflow() *v1alpha1.SovereignWorkflow {
 	return &v1alpha1.SovereignWorkflow{
-		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{WorkflowFinalizer}},
+		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{controllermeta.WorkflowFinalizer}},
 		Spec: v1alpha1.SovereignWorkflowSpec{
 			Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-1",
 			Bootstrap: v1alpha1.WorkflowBootstrapSpec{

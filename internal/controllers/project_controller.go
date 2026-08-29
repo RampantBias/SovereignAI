@@ -472,7 +472,7 @@ func (r *SovereignProjectReconciler) appendProjectEvent(
 	references map[string]string,
 	data any,
 ) error {
-	return appendControllerEvent(ctx, r.Audit, "sovereignproject-controller", r.Now, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "sovereignproject-controller", r.Now, audit.EventOptions{
 		Type:          eventType,
 		Subject:       audit.Subject{Project: project.Name},
 		Action:        action,

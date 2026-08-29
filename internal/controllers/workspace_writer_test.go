@@ -29,38 +29,38 @@ func TestWorkspaceWriterLeaseIsExclusiveAndEpochIsMonotonic(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(lease).Build()
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 
-	firstGrant, state, err := acquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "AgentRun", first, 0, now)
+	firstGrant, state, err := AcquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "AgentRun", first, 0, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state != workspaceWriterGranted || firstGrant.Epoch != 1 {
+	if state != WorkspaceWriterGranted || firstGrant.Epoch != 1 {
 		t.Fatalf("first acquisition = %s epoch %d, want Granted epoch 1", state, firstGrant.Epoch)
 	}
 
-	_, state, err = acquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "UtilityOperation", second, 0, now)
+	_, state, err = AcquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "UtilityOperation", second, 0, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state != workspaceWriterBlocked {
+	if state != WorkspaceWriterBlocked {
 		t.Fatalf("second writer state = %s, want Blocked", state)
 	}
 
-	if err := releaseWorkspaceWriter(context.Background(), c, "wf", firstGrant, now.Add(time.Minute)); err != nil {
+	if err := ReleaseWorkspaceWriter(context.Background(), c, "wf", firstGrant, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	secondGrant, state, err := acquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "UtilityOperation", second, 0, now.Add(2*time.Minute))
+	secondGrant, state, err := AcquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "UtilityOperation", second, 0, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state != workspaceWriterGranted || secondGrant.Epoch != 2 {
+	if state != WorkspaceWriterGranted || secondGrant.Epoch != 2 {
 		t.Fatalf("second acquisition = %s epoch %d, want Granted epoch 2", state, secondGrant.Epoch)
 	}
 
-	_, state, err = acquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "AgentRun", first, firstGrant.Epoch, now.Add(3*time.Minute))
+	_, state, err = AcquireWorkspaceWriter(context.Background(), c, workflow, lease.Name, "AgentRun", first, firstGrant.Epoch, now.Add(3*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state != workspaceWriterLost {
+	if state != WorkspaceWriterLost {
 		t.Fatalf("stale writer state = %s, want Lost", state)
 	}
 }

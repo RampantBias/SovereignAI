@@ -1,4 +1,4 @@
-package controllers
+package workflow
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllermeta"
+	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/domain/state"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -24,13 +26,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-const (
-	WorkflowFinalizer = "sovereign-ai.io/workflow-cleanup"
-	LabelWorkflow     = "sovereign-ai.io/workflow-id"
-	LabelStep         = "sovereign-ai.io/step-name"
-	defaultVolumeSize = "250Mi"
-)
-
 type WorkflowReconciler struct {
 	client.Client
 	client.Reader
@@ -40,6 +35,10 @@ type WorkflowReconciler struct {
 	StorageClass   string
 	BootstrapImage string
 }
+
+const (
+	defaultVolumeSize = "250Mi"
+)
 
 func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -59,27 +58,9 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	}
 
 	// Check if workflow has been deleted
-	if !workflow.DeletionTimestamp.IsZero() {
-		if controllerutil.ContainsFinalizer(&workflow, WorkflowFinalizer) {
-			return ctrl.Result{}, r.updateWorkflow(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
-				controllerutil.RemoveFinalizer(latest, WorkflowFinalizer)
-			})
-		}
-		return ctrl.Result{}, nil
-	}
-	if !controllerutil.ContainsFinalizer(&workflow, WorkflowFinalizer) {
-		return ctrl.Result{}, r.updateWorkflow(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
-			controllerutil.AddFinalizer(latest, WorkflowFinalizer)
-		})
-	}
-
-	// Check for namespace termination
-	terminating, err := namespaceTerminating(ctx, r.Client, workflow.Namespace)
-	if err != nil {
+	isDeleting, err := r.isDeleted(ctx, workflow, request)
+	if isDeleting {
 		return ctrl.Result{}, err
-	}
-	if terminating {
-		return ctrl.Result{}, nil
 	}
 
 	// Ensure workflow has steps
@@ -100,10 +81,14 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	if workflow.Status.PvcName == "" {
 		return ctrl.Result{}, r.ensureWorkspace(ctx, &workflow)
 	}
+
+	// Ensure writer lease (write capability) is established for workflow
 	if workflow.Status.WorkspaceWriterLeaseRef == "" {
 		return ctrl.Result{}, r.ensureWorkspaceWriterLease(ctx, &workflow)
 	}
-	bootstrapReady, bootstrapResult, err := r.reconcileBootstrap(ctx, &workflow)
+
+	//
+	bootstrapReady, bootstrapResult, err := r.ensureBootstrap(ctx, &workflow)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -131,7 +116,13 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 				return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepMissing", workflow.Status.ActiveStepName)
 			}
 			var attempts v1alpha1.StepAttemptList
-			if listErr := r.stepAttemptReader().List(ctx, &attempts, client.InNamespace(workflow.Namespace), client.MatchingLabels{LabelWorkflow: workflow.Spec.WorkflowID, LabelStep: step.Name}); listErr != nil {
+			if listErr := r.stepAttemptReader().List(
+				ctx,
+				&attempts,
+				client.InNamespace(workflow.Namespace),
+				client.MatchingLabels{
+					controllermeta.LabelWorkflow: workflow.Spec.WorkflowID,
+					controllermeta.LabelStep:     step.Name}); listErr != nil {
 				return ctrl.Result{}, listErr
 			}
 			return ctrl.Result{}, r.createAttempt(ctx, &workflow, step, state.NextAttemptNumber(attempts.Items, step.Name))
@@ -180,6 +171,32 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	return ctrl.Result{}, nil
 }
 
+func (r *WorkflowReconciler) isDeleted(ctx context.Context, workflow v1alpha1.SovereignWorkflow, request ctrl.Request) (bool, error) {
+	if !workflow.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(&workflow, controllermeta.WorkflowFinalizer) {
+			return true, r.updateWorkflow(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+				controllerutil.RemoveFinalizer(latest, controllermeta.WorkflowFinalizer)
+			})
+		}
+		return true, nil
+	}
+	if !controllerutil.ContainsFinalizer(&workflow, controllermeta.WorkflowFinalizer) {
+		return true, r.updateWorkflow(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+			controllerutil.AddFinalizer(latest, controllermeta.WorkflowFinalizer)
+		})
+	}
+
+	// Check for namespace termination
+	terminating, err := controllers.NamespaceTerminating(ctx, r.Client, workflow.Namespace)
+	if err != nil {
+		return true, err
+	}
+	if terminating {
+		return true, nil
+	}
+	return false, nil
+}
+
 // ensureWorkspaceWriterLease creates the workflow-owned coordination
 // primitive that serializes every writable workspace mount. LeaseTransitions
 // is retained across releases and serves as the monotonically increasing
@@ -196,7 +213,7 @@ func (r *WorkflowReconciler) ensureWorkspaceWriterLease(ctx context.Context, wor
 		lease = coordinationv1.Lease{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name, Namespace: workflow.Namespace,
-				Labels: map[string]string{LabelWorkflow: workflow.Spec.WorkflowID},
+				Labels: map[string]string{controllermeta.LabelWorkflow: workflow.Spec.WorkflowID},
 			},
 			Spec: coordinationv1.LeaseSpec{LeaseTransitions: &zero},
 		}
@@ -239,7 +256,7 @@ func (r *WorkflowReconciler) ensureWorkspace(ctx context.Context, workflow *v1al
 		}
 
 		claim := &corev1.PersistentVolumeClaim{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: workflow.Namespace, Labels: map[string]string{LabelWorkflow: workflow.Spec.WorkflowID}},
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: workflow.Namespace, Labels: map[string]string{controllermeta.LabelWorkflow: workflow.Spec.WorkflowID}},
 			Spec: corev1.PersistentVolumeClaimSpec{
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 				Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: quantity}},
@@ -281,7 +298,9 @@ func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, work
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: workflow.Namespace,
-			Labels:    map[string]string{LabelWorkflow: workflow.Spec.WorkflowID, LabelStep: step.Name},
+			Labels: map[string]string{
+				controllermeta.LabelWorkflow: workflow.Spec.WorkflowID,
+				controllermeta.LabelStep:     step.Name},
 		},
 		Spec: v1alpha1.StepAttemptSpec{
 			WorkflowRef: v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.UID},
@@ -321,7 +340,9 @@ func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, work
 func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig, feedback *v1alpha1.FailedAgentAttempt) (*v1alpha1.TypedLocalReference, error) {
 	metadata := metav1.ObjectMeta{
 		Name: attempt.Name, Namespace: attempt.Namespace,
-		Labels: map[string]string{LabelWorkflow: attempt.Labels[LabelWorkflow], LabelStep: step.Name},
+		Labels: map[string]string{
+			controllermeta.LabelWorkflow: attempt.Labels[controllermeta.LabelWorkflow],
+			controllermeta.LabelStep:     step.Name},
 	}
 	var object client.Object
 	var reference v1alpha1.TypedLocalReference
@@ -531,7 +552,7 @@ func (r *WorkflowReconciler) appendRecoveryEvents(ctx context.Context, workflow 
 }
 
 func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, eventType, step string, attempt int32, action, target, outcome, reason string, references map[string]string, data any) error {
-	return appendControllerEvent(ctx, r.Audit, "workflow-controller", r.Now, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "workflow-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
 			Project:   workflow.Spec.Project.Name,
@@ -575,4 +596,14 @@ func nextStep(steps []v1alpha1.StepConfig, name string) (v1alpha1.StepConfig, bo
 		}
 	}
 	return v1alpha1.StepConfig{}, false
+}
+
+func workspaceWriterLeaseName(workflowName string) string {
+	const suffix = "-workspace-writer"
+	maximumPrefix := 63 - len(suffix)
+	prefix := strings.Trim(workflowName, "-")
+	if len(prefix) > maximumPrefix {
+		prefix = strings.TrimRight(prefix[:maximumPrefix], "-")
+	}
+	return prefix + suffix
 }

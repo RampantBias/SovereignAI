@@ -26,21 +26,21 @@ const (
 	workspaceWorkloadID             int64 = 65532
 )
 
-type workspaceWriterState string
+type WorkspaceWriterState string
 
 const (
-	workspaceWriterGranted workspaceWriterState = "Granted"
-	workspaceWriterBlocked workspaceWriterState = "Blocked"
-	workspaceWriterLost    workspaceWriterState = "Lost"
+	WorkspaceWriterGranted WorkspaceWriterState = "Granted"
+	WorkspaceWriterBlocked WorkspaceWriterState = "Blocked"
+	WorkspaceWriterLost    WorkspaceWriterState = "Lost"
 )
 
-type workspaceWriterGrant struct {
+type WorkspaceWriterGrant struct {
 	LeaseName      string
 	HolderIdentity string
 	Epoch          int32
 }
 
-func workspaceWorkloadSecurityContext() *corev1.PodSecurityContext {
+func WorkspaceWorkloadSecurityContext() *corev1.PodSecurityContext {
 	nonRoot, identity := true, workspaceWorkloadID
 	return &corev1.PodSecurityContext{
 		RunAsNonRoot: &nonRoot,
@@ -50,21 +50,21 @@ func workspaceWorkloadSecurityContext() *corev1.PodSecurityContext {
 	}
 }
 
-// acquireWorkspaceWriter uses the Lease resourceVersion as the compare-and-
+// AcquireWorkspaceWriter uses the Lease resourceVersion as the compare-and-
 // swap boundary. LeaseTransitions is the monotonically increasing writer
 // epoch: It advances only when an empty lease is granted to a new writer.
 //
 // A caller that has already recorded an epoch may only recover the exact same
 // lease term. It must never silently reacquire an empty lease because its old
 // pod could still be writing with the previous epoch.
-func acquireWorkspaceWriter(ctx context.Context, c client.Client, workflow client.Object, leaseName, kind string, object client.Object, expectedEpoch int32, now time.Time) (workspaceWriterGrant, workspaceWriterState, error) {
+func AcquireWorkspaceWriter(ctx context.Context, c client.Client, workflow client.Object, leaseName, kind string, object client.Object, expectedEpoch int32, now time.Time) (WorkspaceWriterGrant, WorkspaceWriterState, error) {
 	workflowNamespace := workflow.GetNamespace()
-	holder, err := workspaceWriterIdentity(kind, object)
+	holder, err := WorkspaceWriterIdentity(kind, object)
 	if err != nil {
-		return workspaceWriterGrant{}, workspaceWriterBlocked, err
+		return WorkspaceWriterGrant{}, WorkspaceWriterBlocked, err
 	}
-	grant := workspaceWriterGrant{LeaseName: leaseName, HolderIdentity: holder}
-	state := workspaceWriterBlocked
+	grant := WorkspaceWriterGrant{LeaseName: leaseName, HolderIdentity: holder}
+	state := WorkspaceWriterBlocked
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var lease coordinationv1.Lease
 		if err := c.Get(ctx, types.NamespacedName{Namespace: workflowNamespace, Name: leaseName}, &lease); err != nil {
@@ -85,9 +85,9 @@ func acquireWorkspaceWriter(ctx context.Context, c client.Client, workflow clien
 		if expectedEpoch > 0 {
 			grant.Epoch = expectedEpoch
 			if currentHolder == holder && epoch == expectedEpoch {
-				state = workspaceWriterGranted
+				state = WorkspaceWriterGranted
 			} else {
-				state = workspaceWriterLost
+				state = WorkspaceWriterLost
 			}
 			return nil
 		}
@@ -95,11 +95,11 @@ func acquireWorkspaceWriter(ctx context.Context, c client.Client, workflow clien
 			if epoch < 1 {
 				return fmt.Errorf("workspace writer lease %s/%s has holder without a positive epoch", workflowNamespace, leaseName)
 			}
-			grant.Epoch, state = epoch, workspaceWriterGranted
+			grant.Epoch, state = epoch, WorkspaceWriterGranted
 			return nil
 		}
 		if currentHolder != "" {
-			state = workspaceWriterBlocked
+			state = WorkspaceWriterBlocked
 			return nil
 		}
 		if epoch == math.MaxInt32 {
@@ -114,16 +114,16 @@ func acquireWorkspaceWriter(ctx context.Context, c client.Client, workflow clien
 		if err := c.Update(ctx, &lease); err != nil {
 			return err
 		}
-		grant.Epoch, state = epoch, workspaceWriterGranted
+		grant.Epoch, state = epoch, WorkspaceWriterGranted
 		return nil
 	})
 	return grant, state, err
 }
 
-// releaseWorkspaceWriter clears only the exact holder and epoch that the
+// ReleaseWorkspaceWriter clears only the exact holder and epoch that the
 // execution unit was granted. The transitions counter is deliberately kept so
 // the next successful acquisition receives a strictly greater writer epoch.
-func releaseWorkspaceWriter(ctx context.Context, c client.Client, namespace string, grant workspaceWriterGrant, now time.Time) error {
+func ReleaseWorkspaceWriter(ctx context.Context, c client.Client, namespace string, grant WorkspaceWriterGrant, now time.Time) error {
 	if grant.LeaseName == "" || grant.HolderIdentity == "" || grant.Epoch < 1 {
 		return nil
 	}
@@ -158,24 +158,14 @@ func releaseWorkspaceWriter(ctx context.Context, c client.Client, namespace stri
 	})
 }
 
-func workspaceWriterIdentity(kind string, object client.Object) (string, error) {
+func WorkspaceWriterIdentity(kind string, object client.Object) (string, error) {
 	if object.GetUID() == "" {
 		return "", fmt.Errorf("%s %s/%s has no UID and cannot hold workspace write authority", kind, object.GetNamespace(), object.GetName())
 	}
 	return strings.Join([]string{kind, object.GetNamespace(), object.GetName(), string(object.GetUID())}, "/"), nil
 }
 
-func workspaceWriterLeaseName(workflowName string) string {
-	const suffix = "-workspace-writer"
-	maximumPrefix := 63 - len(suffix)
-	prefix := strings.Trim(workflowName, "-")
-	if len(prefix) > maximumPrefix {
-		prefix = strings.TrimRight(prefix[:maximumPrefix], "-")
-	}
-	return prefix + suffix
-}
-
-func workspaceWriterAnnotations(grant workspaceWriterGrant) map[string]string {
+func WorkspaceWriterAnnotations(grant WorkspaceWriterGrant) map[string]string {
 	return map[string]string{
 		AnnotationWorkspaceWriterLease:  grant.LeaseName,
 		AnnotationWorkspaceWriterHolder: grant.HolderIdentity,
@@ -183,7 +173,7 @@ func workspaceWriterAnnotations(grant workspaceWriterGrant) map[string]string {
 	}
 }
 
-func workspaceWriterEnv(grant workspaceWriterGrant) []corev1.EnvVar {
+func WorkspaceWriterEnv(grant WorkspaceWriterGrant) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "SOVEREIGN_WORKSPACE_WRITER_LEASE", Value: grant.LeaseName},
 		{Name: "SOVEREIGN_WORKSPACE_WRITER_HOLDER", Value: grant.HolderIdentity},
@@ -191,7 +181,7 @@ func workspaceWriterEnv(grant workspaceWriterGrant) []corev1.EnvVar {
 	}
 }
 
-func podWriterQuiescent(ctx context.Context, c client.Client, namespace, name string) (bool, error) {
+func PodWriterQuiescent(ctx context.Context, c client.Client, namespace, name string) (bool, error) {
 	if name == "" {
 		return true, nil
 	}
@@ -205,7 +195,7 @@ func podWriterQuiescent(ctx context.Context, c client.Client, namespace, name st
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed, nil
 }
 
-func jobWriterQuiescent(ctx context.Context, c client.Client, namespace, name string) (bool, error) {
+func JobWriterQuiescent(ctx context.Context, c client.Client, namespace, name string) (bool, error) {
 	if name == "" {
 		return true, nil
 	}

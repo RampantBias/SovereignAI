@@ -9,6 +9,7 @@ import (
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/controllermeta"
 	policyengine "github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/utilitycontract"
 	batchv1 "k8s.io/api/batch/v1"
@@ -92,7 +93,7 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 		workflowRefFixture(),
 	)
 	run := &v1alpha1.AgentRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", UID: "architect-run-uid", Labels: map[string]string{LabelWorkflow: "wf"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", UID: "architect-run-uid", Labels: map[string]string{controllermeta.LabelWorkflow: "wf"}},
 		Spec: v1alpha1.AgentRunSpec{
 			AttemptRef:      "architect-001",
 			WorkflowRef:     workflowRefFixture(),
@@ -192,7 +193,7 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	project := projectFixture()
 	attempt := authorizedAttempt("tests-001", "wf", "tests", v1alpha1.ExecutionKindUtility)
 	operation := &v1alpha1.UtilityOperation{
-		ObjectMeta: metav1.ObjectMeta{Name: "tests-001", Namespace: "wf", UID: "tests-operation-uid", Labels: map[string]string{LabelWorkflow: "wf"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "tests-001", Namespace: "wf", UID: "tests-operation-uid", Labels: map[string]string{controllermeta.LabelWorkflow: "wf"}},
 		Spec: v1alpha1.UtilityOperationSpec{
 			AttemptRef: "tests-001", WorkflowRef: workflowRefFixture(), StepName: "tests", Attempt: 1,
 			Operation:       v1alpha1.UtilityOperationRequest{Name: "test.run"},

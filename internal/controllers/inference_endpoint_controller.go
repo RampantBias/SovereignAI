@@ -74,7 +74,7 @@ func (r *InferenceEndpointReconciler) Reconcile(ctx context.Context, request ctr
 }
 
 func (r *InferenceEndpointReconciler) appendEndpointEvent(ctx context.Context, endpoint *v1alpha1.InferenceEndpoint, eventType, action, outcome, reason string) error {
-	return appendControllerEvent(ctx, r.Audit, "inferenceendpoint-controller", r.Now, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "inferenceendpoint-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
 			Project: endpoint.Labels["sovereign-ai.io/project"],

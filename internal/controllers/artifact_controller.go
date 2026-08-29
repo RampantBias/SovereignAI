@@ -5,6 +5,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
 	batchv1 "k8s.io/api/batch/v1"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -31,7 +32,7 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	// Check for namespace termination
-	terminating, err := namespaceTerminating(ctx, r.Client, artifact.Namespace)
+	terminating, err := NamespaceTerminating(ctx, r.Client, artifact.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -42,7 +43,7 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	// immutable Artifact spec and terminal status remain sufficient on later
 	// reconciliations; consumption performs its own identity/digest checks.
 	if artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" &&
-		artifactAccepted(&artifact) {
+		artifacts.ArtifactAccepted(&artifact) {
 		return ctrl.Result{}, nil
 	}
 
@@ -83,31 +84,6 @@ func (r *ArtifactReconciler) validateStoredArtifact(ctx context.Context, artifac
 	if artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" {
 		return r.validateBootstrapArtifact(ctx, artifact)
 	}
-	// info, err := os.Lstat(artifact.Spec.Path)
-	// if err != nil {
-	// 	return "ContentUnavailable", "stored artifact content is unavailable"
-	// }
-	// if !info.Mode().IsRegular() {
-	// 	return "InvalidContent", "stored artifact content must be a regular file"
-	// }
-	// if info.Size() > artifactcontract.MaxArtifactBytes {
-	// 	return "ContentTooLarge", fmt.Sprintf("stored artifact exceeds %d-byte limit", artifactcontract.MaxArtifactBytes)
-	// }
-	// content, err := os.ReadFile(artifact.Spec.Path)
-	// if err != nil {
-	// 	return "ContentUnavailable", "stored artifact content cannot be read"
-	// }
-	// actualDigest := artifactcontract.DigestBytes(content)
-	// if artifact.Spec.Digest != actualDigest {
-	// 	return "DigestMismatch", fmt.Sprintf("stored artifact digest does not match declared digest: got %s", actualDigest)
-	// }
-	// registry := r.Contracts
-	// if registry == nil {
-	// 	registry = artifactcontract.DefaultRegistry()
-	// }
-	// if err := registry.Validate(artifact.Spec.Contract.Name, artifact.Spec.Contract.Version, content); err != nil {
-	// 	return "ContractRejected", err.Error()
-	// }
 	return "", ""
 }
 
@@ -117,10 +93,10 @@ func (r *ArtifactReconciler) validateBootstrapArtifact(ctx context.Context, arti
 	if err := r.Get(ctx, key, &workflow); err != nil {
 		return "BootstrapWorkflowUnavailable", "bootstrap workflow is unavailable"
 	}
-	if err := validateBootstrapArtifactIdentity(&workflow, artifact); err != nil {
+	if err := ValidateBootstrapArtifactIdentity(&workflow, artifact); err != nil {
 		return "InvalidBootstrapProvenance", err.Error()
 	}
-	_, changeRequest, err := loadBootstrapSource(ctx, r.Client, &workflow)
+	_, changeRequest, err := LoadBootstrapChangeRequest(ctx, r.Client, &workflow)
 	if err != nil {
 		return "InvalidBootstrapSource", err.Error()
 	}
@@ -129,7 +105,7 @@ func (r *ArtifactReconciler) validateBootstrapArtifact(ctx context.Context, arti
 	}
 	jobName := workflow.Status.BootstrapJobRef
 	if jobName == "" {
-		jobName = bootstrapJobName(workflow.Name)
+		jobName = BootstrapJobName(workflow.Name)
 	}
 	var job batchv1.Job
 	if err := r.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: jobName}, &job); err != nil {
@@ -148,7 +124,7 @@ func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *
 		eventType = "ArtifactRejected"
 		outcome = "rejected"
 	}
-	return appendControllerEvent(ctx, r.Audit, "artifact-controller", nil, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "artifact-controller", nil, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
 			Namespace: artifact.Namespace,

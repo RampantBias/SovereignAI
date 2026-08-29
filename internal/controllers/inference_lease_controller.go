@@ -369,7 +369,7 @@ func (r *InferenceLeaseReconciler) appendLeaseEvent(ctx context.Context, lease *
 	}
 	references["lease"] = lease.Name
 	references["attempt"] = lease.Spec.AttemptRef
-	return appendControllerEvent(ctx, r.Audit, "inferencelease-controller", r.Now, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "inferencelease-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
 			Project:   lease.Spec.ProjectRef,

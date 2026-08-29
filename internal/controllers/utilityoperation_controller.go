@@ -11,7 +11,9 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllermeta"
 	policyengine "github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/utility"
 	"github.com/SovereignAI/internal/utilitycontract"
@@ -63,7 +65,7 @@ func (r *UtilityOperationReconciler) Reconcile(ctx context.Context, request ctrl
 			return ctrl.Result{}, err
 		}
 	}
-	terminating, err := namespaceTerminating(ctx, r.Client, operation.Namespace)
+	terminating, err := NamespaceTerminating(ctx, r.Client, operation.Namespace)
 	if err != nil || terminating {
 		return ctrl.Result{}, err
 	}
@@ -104,7 +106,7 @@ func (r *UtilityOperationReconciler) Reconcile(ctx context.Context, request ctrl
 		return ctrl.Result{}, err
 	}
 	switch writerState {
-	case workspaceWriterBlocked:
+	case WorkspaceWriterBlocked:
 		if operation.Status.JobRef != "" || operation.Status.CollectorJobRef != "" {
 			if err := r.deleteWorkspaceWriterWorkloads(ctx, &operation); err != nil {
 				return ctrl.Result{}, err
@@ -112,7 +114,7 @@ func (r *UtilityOperationReconciler) Reconcile(ctx context.Context, request ctrl
 			return ctrl.Result{}, r.interrupt(ctx, &operation, "WorkspaceWriterAuthorityNotEstablished", true)
 		}
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, r.setPhase(ctx, &operation, v1alpha1.PhasePending, "WorkspaceWriterBlocked", "another execution unit holds workspace write authority")
-	case workspaceWriterLost:
+	case WorkspaceWriterLost:
 		if err := r.deleteWorkspaceWriterWorkloads(ctx, &operation); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -148,20 +150,20 @@ func (r *UtilityOperationReconciler) Reconcile(ctx context.Context, request ctrl
 	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
 
-func (r *UtilityOperationReconciler) ensureWorkspaceWriter(ctx context.Context, operation *v1alpha1.UtilityOperation) (workspaceWriterGrant, workspaceWriterState, error) {
+func (r *UtilityOperationReconciler) ensureWorkspaceWriter(ctx context.Context, operation *v1alpha1.UtilityOperation) (WorkspaceWriterGrant, WorkspaceWriterState, error) {
 	var workflow v1alpha1.SovereignWorkflow
 	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.WorkflowRef.Name}, &workflow); err != nil {
-		return workspaceWriterGrant{}, workspaceWriterBlocked, err
+		return WorkspaceWriterGrant{}, WorkspaceWriterBlocked, err
 	}
 	if workflow.Status.WorkspaceWriterLeaseRef == "" {
-		return workspaceWriterGrant{}, workspaceWriterBlocked, nil
+		return WorkspaceWriterGrant{}, WorkspaceWriterBlocked, nil
 	}
 	now := time.Now()
 	if r.Now != nil {
 		now = r.Now()
 	}
-	grant, state, err := acquireWorkspaceWriter(ctx, r.Client, &workflow, workflow.Status.WorkspaceWriterLeaseRef, "UtilityOperation", operation, operation.Status.WorkspaceWriterEpoch, now)
-	if err != nil || state != workspaceWriterGranted {
+	grant, state, err := AcquireWorkspaceWriter(ctx, r.Client, &workflow, workflow.Status.WorkspaceWriterLeaseRef, "UtilityOperation", operation, operation.Status.WorkspaceWriterEpoch, now)
+	if err != nil || state != WorkspaceWriterGranted {
 		return grant, state, err
 	}
 	newGrant := operation.Status.WorkspaceWriterEpoch == 0
@@ -169,25 +171,25 @@ func (r *UtilityOperationReconciler) ensureWorkspaceWriter(ctx context.Context, 
 	operation.Status.WorkspaceWriterEpoch = grant.Epoch
 	operation.Status.WorkspaceWriterReleased = false
 	if err := r.recordWorkspaceWriterStatus(ctx, operation); err != nil {
-		return workspaceWriterGrant{}, workspaceWriterBlocked, err
+		return WorkspaceWriterGrant{}, WorkspaceWriterBlocked, err
 	}
 	if newGrant {
 		if err := r.appendEvent(ctx, operation, "WorkspaceWriterAcquired", "acquire", grant.LeaseName, "granted", fmt.Sprintf("WriterEpoch%d", grant.Epoch), nil); err != nil {
-			return workspaceWriterGrant{}, workspaceWriterBlocked, err
+			return WorkspaceWriterGrant{}, WorkspaceWriterBlocked, err
 		}
 	}
 	return grant, state, nil
 }
 
-func (r *UtilityOperationReconciler) workspaceWriterGrant(operation *v1alpha1.UtilityOperation) (workspaceWriterGrant, error) {
-	holder, err := workspaceWriterIdentity("UtilityOperation", operation)
+func (r *UtilityOperationReconciler) workspaceWriterGrant(operation *v1alpha1.UtilityOperation) (WorkspaceWriterGrant, error) {
+	holder, err := WorkspaceWriterIdentity("UtilityOperation", operation)
 	if err != nil {
-		return workspaceWriterGrant{}, err
+		return WorkspaceWriterGrant{}, err
 	}
 	if operation.Status.WorkspaceWriterLeaseRef == "" || operation.Status.WorkspaceWriterEpoch < 1 {
-		return workspaceWriterGrant{}, fmt.Errorf("UtilityOperation %s has no workspace writer grant", operation.Name)
+		return WorkspaceWriterGrant{}, fmt.Errorf("UtilityOperation %s has no workspace writer grant", operation.Name)
 	}
-	return workspaceWriterGrant{LeaseName: operation.Status.WorkspaceWriterLeaseRef, HolderIdentity: holder, Epoch: operation.Status.WorkspaceWriterEpoch}, nil
+	return WorkspaceWriterGrant{LeaseName: operation.Status.WorkspaceWriterLeaseRef, HolderIdentity: holder, Epoch: operation.Status.WorkspaceWriterEpoch}, nil
 }
 
 func (r *UtilityOperationReconciler) recordWorkspaceWriterStatus(ctx context.Context, operation *v1alpha1.UtilityOperation) error {
@@ -210,11 +212,11 @@ func (r *UtilityOperationReconciler) reconcileWorkspaceWriterRelease(ctx context
 	if operation.Status.WorkspaceWriterEpoch < 1 || operation.Status.WorkspaceWriterReleased {
 		return ctrl.Result{}, nil
 	}
-	jobQuiet, err := jobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name)
+	jobQuiet, err := JobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	collectorQuiet, err := jobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name+"-collect")
+	collectorQuiet, err := JobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name+"-collect")
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -229,7 +231,7 @@ func (r *UtilityOperationReconciler) reconcileWorkspaceWriterRelease(ctx context
 	if r.Now != nil {
 		now = r.Now()
 	}
-	if err := releaseWorkspaceWriter(ctx, r.Client, operation.Namespace, grant, now); err != nil {
+	if err := ReleaseWorkspaceWriter(ctx, r.Client, operation.Namespace, grant, now); err != nil {
 		return ctrl.Result{}, err
 	}
 	operation.Status.WorkspaceWriterReleased = true
@@ -256,11 +258,11 @@ func (r *UtilityOperationReconciler) finalizeWorkspaceWriter(ctx context.Context
 	if err := r.deleteWorkspaceWriterWorkloads(ctx, operation); err != nil {
 		return ctrl.Result{}, err
 	}
-	jobQuiet, err := jobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name)
+	jobQuiet, err := JobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	collectorQuiet, err := jobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name+"-collect")
+	collectorQuiet, err := JobWriterQuiescent(ctx, r.Client, operation.Namespace, operation.Name+"-collect")
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -276,7 +278,7 @@ func (r *UtilityOperationReconciler) finalizeWorkspaceWriter(ctx context.Context
 		if r.Now != nil {
 			now = r.Now()
 		}
-		if err := releaseWorkspaceWriter(ctx, r.Client, operation.Namespace, grant, now); err != nil {
+		if err := ReleaseWorkspaceWriter(ctx, r.Client, operation.Namespace, grant, now); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -364,7 +366,7 @@ type utilityWorkloadConfig struct {
 	bootstrapRuntime bool
 }
 
-func (r *UtilityOperationReconciler) ensureWorkload(ctx context.Context, operation *v1alpha1.UtilityOperation, grant workspaceWriterGrant) error {
+func (r *UtilityOperationReconciler) ensureWorkload(ctx context.Context, operation *v1alpha1.UtilityOperation, grant WorkspaceWriterGrant) error {
 	workflow, project, err := r.resolveContext(ctx, operation)
 	if err != nil {
 		return err
@@ -406,18 +408,18 @@ func (r *UtilityOperationReconciler) resolveUtilityInputs(ctx context.Context, o
 	if len(operation.Spec.Inputs) == 0 {
 		return nil, nil
 	}
-	var artifacts v1alpha1.ArtifactList
-	if err := r.List(ctx, &artifacts, client.InNamespace(operation.Namespace)); err != nil {
+	var artifactList v1alpha1.ArtifactList
+	if err := r.List(ctx, &artifactList, client.InNamespace(operation.Namespace)); err != nil {
 		return nil, fmt.Errorf("list utility input artifacts: %w", err)
 	}
 	resolved := make([]utilitycontract.ArtifactInput, 0, len(operation.Spec.Inputs))
 	for _, requested := range operation.Spec.Inputs {
 		matches := make([]v1alpha1.Artifact, 0, 1)
-		for index := range artifacts.Items {
-			artifact := artifacts.Items[index]
+		for index := range artifactList.Items {
+			artifact := artifactList.Items[index]
 			if artifact.Spec.WorkflowRef == operation.Spec.WorkflowRef &&
 				artifact.Spec.Contract.Name == requested.Name &&
-				(requested.Digest == "" || artifact.Spec.Digest == requested.Digest) && artifactAccepted(&artifact) {
+				(requested.Digest == "" || artifact.Spec.Digest == requested.Digest) && artifacts.ArtifactAccepted(&artifact) {
 				matches = append(matches, artifact)
 			}
 		}
@@ -580,7 +582,7 @@ func (r *UtilityOperationReconciler) reconcileCollection(ctx context.Context, op
 	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
 
-func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *v1alpha1.SovereignWorkflow, project *v1alpha1.SovereignProject, runtimeImage string, grant workspaceWriterGrant) (utilityWorkloadConfig, error) {
+func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *v1alpha1.SovereignWorkflow, project *v1alpha1.SovereignProject, runtimeImage string, grant WorkspaceWriterGrant) (utilityWorkloadConfig, error) {
 	if !utility.IsSupportedOperation(operation.Spec.Operation.Name) {
 		return utilityWorkloadConfig{}, fmt.Errorf("unsupported utility operation %q", operation.Spec.Operation.Name)
 	}
@@ -669,7 +671,7 @@ func utilityIdempotencyKey(operation *v1alpha1.UtilityOperation, workflow *v1alp
 	return operation.Namespace + "/" + identity + "/" + operation.Spec.StepName
 }
 
-func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, runtimeImage string, workload utilityWorkloadConfig, grant workspaceWriterGrant) *batchv1.Job {
+func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, runtimeImage string, workload utilityWorkloadConfig, grant WorkspaceWriterGrant) *batchv1.Job {
 	automount, allowPrivilegeEscalation := false, false
 	backoff, ttl := int32(0), int32(3600)
 	if pvcName == "" {
@@ -681,21 +683,21 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 			Name:      operation.Name,
 			Namespace: operation.Namespace,
 			Labels: map[string]string{
-				LabelWorkflow:                       operation.Labels[LabelWorkflow],
-				LabelStep:                           operation.Spec.StepName,
+				controllermeta.LabelWorkflow:        operation.Labels[controllermeta.LabelWorkflow],
+				controllermeta.LabelStep:            operation.Spec.StepName,
 				"sovereign-ai.io/utility-operation": operation.Name,
 			},
-			Annotations: workspaceWriterAnnotations(grant),
+			Annotations: WorkspaceWriterAnnotations(grant),
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoff,
 			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Annotations: workspaceWriterAnnotations(grant)},
+				ObjectMeta: metav1.ObjectMeta{Annotations: WorkspaceWriterAnnotations(grant)},
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
 					AutomountServiceAccountToken: &automount,
-					SecurityContext:              workspaceWorkloadSecurityContext(),
+					SecurityContext:              WorkspaceWorkloadSecurityContext(),
 					Containers: []corev1.Container{
 						{
 							Name:            "utility",
@@ -715,7 +717,7 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 		job.Spec.ActiveDeadlineSeconds = &seconds
 	}
 	container := &job.Spec.Template.Spec.Containers[0]
-	container.Env = append(container.Env, workspaceWriterEnv(grant)...)
+	container.Env = append(container.Env, WorkspaceWriterEnv(grant)...)
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "HOME", Value: "/home/utility"},
 		corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: "/home/utility/.cache"},
@@ -856,7 +858,7 @@ func (r *UtilityOperationReconciler) updateStatus(ctx context.Context, key types
 }
 
 func (r *UtilityOperationReconciler) appendEvent(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType, action, target, outcome, reason string, data any) error {
-	return appendControllerEvent(ctx, r.Audit, "utilityoperation-controller", r.Now, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "utilityoperation-controller", r.Now, audit.EventOptions{
 		Type: eventType, Subject: audit.Subject{Namespace: operation.Namespace, Workflow: operation.Spec.WorkflowRef.Name, Step: operation.Spec.StepName, Attempt: operation.Spec.Attempt},
 		Action: action, Target: target, Outcome: outcome, Reason: reason, DecisionID: operation.Status.PolicyDecisionID,
 		References: map[string]string{"utilityOperation": operation.Name, "stepAttempt": operation.Spec.AttemptRef, "job": operation.Status.JobRef, "collector": operation.Status.CollectorJobRef, "workspaceWriterLease": operation.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(operation.Status.WorkspaceWriterEpoch)},

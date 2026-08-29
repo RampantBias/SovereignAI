@@ -9,6 +9,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllers"
+	"github.com/SovereignAI/internal/controllers/workflow"
 	"github.com/SovereignAI/internal/inference"
 	"github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/validation"
@@ -116,7 +117,7 @@ func main() {
 		&controllers.SovereignProjectReconciler{
 			Client: mgr.GetClient(),
 			Audit:  recorder},
-		&controllers.WorkflowReconciler{
+		&workflow.WorkflowReconciler{
 			Client:         mgr.GetClient(),
 			Reader:         mgr.GetAPIReader(),
 			Scheme:         mgr.GetScheme(),
