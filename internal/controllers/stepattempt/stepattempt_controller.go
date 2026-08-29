@@ -1,4 +1,4 @@
-package controllers
+package stepattempt
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/domain/state"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -46,10 +47,11 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 	if !attempt.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
-	terminating, err := NamespaceTerminating(ctx, r.Client, attempt.Namespace)
+	terminating, err := controllers.NamespaceTerminating(ctx, r.Client, attempt.Namespace)
 	if err != nil || terminating {
 		return ctrl.Result{}, err
 	}
+
 	// Shift to pending
 	if attempt.Status.Phase == "" {
 		return ctrl.Result{}, r.setPhase(ctx, &attempt, v1alpha1.PhasePending, "Initialized", "attempt initialized")
@@ -57,12 +59,14 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 	if state.IsTerminal(attempt.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
+
 	if attempt.Status.ExecutionRef == nil {
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
-	if attempt.Status.ExecutionRef.APIVersion != v1alpha1.GroupVersion.String() || attempt.Status.ExecutionRef.Kind != DomainKind(attempt.Spec.Kind) {
+	if attempt.Status.ExecutionRef.APIVersion != v1alpha1.GroupVersion.String() || attempt.Status.ExecutionRef.Kind != controllers.DomainKind(attempt.Spec.Kind) {
 		return ctrl.Result{}, r.fail(ctx, &attempt, "InvalidExecutionReference", false)
 	}
+
 	phase, reason, failureMessage, retryable, err := r.domainStatus(ctx, &attempt)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -90,7 +94,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 		if err := r.Get(ctx, key, &run); err != nil {
 			return "", "", "", false, err
 		}
-		if err := validateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindAgent, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
+		if err := controllers.ValidateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindAgent, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
 			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
 		return run.Status.Phase, run.Status.FailureReason, run.Status.FailureMessage, run.Status.Retryable, nil
@@ -102,7 +106,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 		if err := r.Get(ctx, key, &operation); err != nil {
 			return "", "", "", false, err
 		}
-		if err := validateDomainBinding(attempt, &operation, operation.Spec.AttemptRef, v1alpha1.ExecutionKindUtility, operation.Spec.WorkflowRef, operation.Spec.StepName, operation.Spec.Attempt); err != nil {
+		if err := controllers.ValidateDomainBinding(attempt, &operation, operation.Spec.AttemptRef, v1alpha1.ExecutionKindUtility, operation.Spec.WorkflowRef, operation.Spec.StepName, operation.Spec.Attempt); err != nil {
 			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
 		return operation.Status.Phase, operation.Status.FailureReason, "", operation.Status.Retryable, nil
@@ -114,7 +118,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 		if err := r.Get(ctx, key, &approval); err != nil {
 			return "", "", "", false, err
 		}
-		if err := validateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
+		if err := controllers.ValidateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
 			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
 		return approval.Status.Phase, approval.Status.FailureReason, "", approval.Status.Retryable, nil
@@ -126,7 +130,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 		if err := r.Get(ctx, key, &run); err != nil {
 			return "", "", "", false, err
 		}
-		if err := validateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
+		if err := controllers.ValidateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
 			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
 		return run.Status.Phase, run.Status.FailureReason, "", run.Status.Retryable, nil

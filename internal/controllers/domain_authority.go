@@ -23,7 +23,7 @@ func ValidateDomainAuthority(ctx context.Context, reader client.Reader, object c
 		}
 		return false, err
 	}
-	if err := validateDomainBinding(&attempt, object, attemptRef, expectedKind, workflowRef, stepName, attemptNumber); err != nil {
+	if err := ValidateDomainBinding(&attempt, object, attemptRef, expectedKind, workflowRef, stepName, attemptNumber); err != nil {
 		return false, err
 	}
 	if attempt.Status.ExecutionRef == nil {
@@ -37,7 +37,7 @@ func ValidateDomainAuthority(ctx context.Context, reader client.Reader, object c
 }
 
 // Verifies
-func validateDomainBinding(attempt *v1alpha1.StepAttempt, object client.Object, attemptRef string, expectedKind v1alpha1.ExecutionKind, workflowRef v1alpha1.UIDReference, stepName string, attemptNumber int32) error {
+func ValidateDomainBinding(attempt *v1alpha1.StepAttempt, object client.Object, attemptRef string, expectedKind v1alpha1.ExecutionKind, workflowRef v1alpha1.UIDReference, stepName string, attemptNumber int32) error {
 	if attemptRef != attempt.Name || !metav1.IsControlledBy(object, attempt) {
 		return fmt.Errorf("%T %s is not controlled by StepAttempt %s", object, object.GetName(), attempt.Name)
 	}

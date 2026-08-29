@@ -10,6 +10,8 @@ import (
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/controllers/agentrun"
+	"github.com/SovereignAI/internal/controllers/stepattempt"
+	"github.com/SovereignAI/internal/controllers/utilityoperation"
 	"github.com/SovereignAI/internal/controllers/workflow"
 	"github.com/SovereignAI/internal/inference"
 	"github.com/SovereignAI/internal/policy"
@@ -125,7 +127,7 @@ func main() {
 			Audit:          recorder,
 			StorageClass:   storageClass,
 			BootstrapImage: env("SOVEREIGN_BOOTSTRAP_IMAGE", "sovereign-artifact-bootstrap:dev")},
-		&controllers.StepAttemptReconciler{
+		&stepattempt.StepAttemptReconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 			Audit:  recorder},
@@ -135,7 +137,7 @@ func main() {
 			Audit:          recorder,
 			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
 			MCPImage:       env("SOVEREIGN_MCP_IMAGE", "sovereign-mcp-server:dev")},
-		&controllers.UtilityOperationReconciler{
+		&utilityoperation.UtilityOperationReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,

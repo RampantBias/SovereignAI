@@ -7,4 +7,6 @@ const (
 
 	InferenceNamespace                     = "sovereign-inference"
 	InferenceLeaseReleaseRequestAnnotation = "sovereign-ai.io/inference-lease-release-request"
+
+	RepositoryCredentialKey = "credentials"
 )

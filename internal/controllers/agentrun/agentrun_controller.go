@@ -10,7 +10,6 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
-	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/domain/state"
 	batchv1 "k8s.io/api/batch/v1"
@@ -320,101 +319,6 @@ func (r *AgentRunReconciler) finalizeWorkspaceWriter(ctx context.Context, run *v
 	return ctrl.Result{}, r.Update(ctx, run)
 }
 
-func (r *AgentRunReconciler) ensureLease(ctx context.Context, run *v1alpha1.AgentRun) (*v1alpha1.InferenceLease, error) {
-	name := run.Name + "-inference"
-	var lease v1alpha1.InferenceLease
-	err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: name}, &lease)
-	if err == nil {
-		if run.Status.InferenceLeaseRef != name {
-			run.Status.InferenceLeaseRef = name
-			if err := r.updateStatusFields(ctx, run); err != nil {
-				return nil, err
-			}
-		}
-		return &lease, nil
-	}
-	if !apierrors.IsNotFound(err) {
-		return nil, err
-	}
-	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
-		return nil, err
-	}
-	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID}
-	lease = v1alpha1.InferenceLease{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: run.Namespace}, Spec: v1alpha1.InferenceLeaseSpec{
-		WorkflowRef: workflowRef, AttemptRef: run.Spec.AttemptRef, ProjectRef: workflow.Spec.Project.Name,
-		Tenant: workflow.Spec.Project.Name, Classification: workflow.Spec.Classification,
-		SharingScope: run.Spec.Inference.SharingScope, Model: run.Spec.Inference.Model,
-		ModelRevision: run.Spec.Inference.ModelRevision, EstimatedKVRAMMiB: run.Spec.Inference.EstimatedKVRAMMiB,
-		Priority: run.Spec.Inference.Priority, Evictable: run.Spec.Inference.Evictable,
-	}}
-	if err := controllerutil.SetControllerReference(run, &lease, r.Scheme); err != nil {
-		return nil, err
-	}
-	if err := r.Create(ctx, &lease); err != nil {
-		return nil, err
-	}
-	run.Status.InferenceLeaseRef = name
-	if err := r.updateStatusFields(ctx, run); err != nil {
-		return nil, err
-	}
-	if err := r.appendEvent(ctx, run, "InferenceLeaseRequested", "request", name, "requested", ""); err != nil {
-		return nil, err
-	}
-	return &lease, nil
-}
-
-func (r *AgentRunReconciler) reconcileInferenceLeaseRelease(ctx context.Context, run *v1alpha1.AgentRun) (bool, error) {
-	if run.Status.InferenceLeaseRef == "" {
-		return true, nil
-	}
-	key := types.NamespacedName{Namespace: run.Namespace, Name: run.Status.InferenceLeaseRef}
-	var lease v1alpha1.InferenceLease
-	if err := r.Get(ctx, key, &lease); err != nil {
-		if apierrors.IsNotFound(err) {
-			return true, nil
-		}
-		return false, err
-	}
-	if state.IsTerminal(lease.Status.Phase) {
-		return true, nil
-	}
-	reason := "AgentRun" + string(run.Status.Phase)
-	if !run.DeletionTimestamp.IsZero() {
-		reason = "AgentRunDeleted"
-	}
-	requested := false
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var latest v1alpha1.InferenceLease
-		if err := r.Get(ctx, key, &latest); err != nil {
-			return err
-		}
-		if latest.Annotations != nil && latest.Annotations[controllermeta.InferenceLeaseReleaseRequestAnnotation] != "" {
-			return nil
-		}
-		annotations := make(map[string]string, len(latest.Annotations)+1)
-		for name, value := range latest.Annotations {
-			annotations[name] = value
-		}
-		annotations[controllermeta.InferenceLeaseReleaseRequestAnnotation] = reason
-		latest.Annotations = annotations
-		if err := r.Update(ctx, &latest); err != nil {
-			return err
-		}
-		requested = true
-		return nil
-	})
-	if err != nil {
-		return false, err
-	}
-	if requested {
-		if err := r.appendEvent(ctx, run, "InferenceLeaseReleaseRequested", "release", lease.Name, "requested", reason); err != nil {
-			return false, err
-		}
-	}
-	return false, nil
-}
-
 func (r *AgentRunReconciler) deletePod(ctx context.Context, run *v1alpha1.AgentRun) error {
 	if run.Status.PodRef == "" {
 		return nil
@@ -478,7 +382,7 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 	if err := r.Create(ctx, config); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
-	pod := BuildAgentRunPod(run, workflow.Status.PvcName, configName, r.mcpImage(), grant)
+	pod := BuildAgentRunPod(run, workflow.Status.PvcName, configName, r.MCPImage, grant)
 	if err := controllerutil.SetControllerReference(run, pod, r.Scheme); err != nil {
 		return err
 	}
@@ -565,67 +469,6 @@ func (r *AgentRunReconciler) resolveAgentInputs(ctx context.Context, run *v1alph
 	}
 
 	return resolved, true, "", nil
-}
-
-func BuildAgentRunPod(run *v1alpha1.AgentRun, pvcName, configName, mcpImage string, grant controllers.WorkspaceWriterGrant) *corev1.Pod {
-	if pvcName == "" {
-		pvcName = run.Spec.WorkflowRef.Name + "-workspace"
-	}
-	automount, readOnly, allowPrivilegeEscalation := false, true, false
-	sidecarRestartPolicy := corev1.ContainerRestartPolicyAlways
-	executable, _ := json.Marshal(run.Spec.Executable)
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      run.Name,
-			Namespace: run.Namespace,
-			Labels: map[string]string{
-				controllermeta.LabelWorkflow: run.Labels[controllermeta.LabelWorkflow],
-				controllermeta.LabelStep:     run.Spec.StepName,
-				"sovereign-ai.io/agent-run":  run.Name,
-			},
-			Annotations: controllers.WorkspaceWriterAnnotations(grant)},
-		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: &automount,
-			SecurityContext: controllers.WorkspaceWorkloadSecurityContext(),
-			InitContainers: []corev1.Container{{
-				Name:          "mcp",
-				Image:         mcpImage,
-				RestartPolicy: &sidecarRestartPolicy,
-				Env: []corev1.EnvVar{
-					{Name: "SOVEREIGN_MCP_ADDRESS", Value: "127.0.0.1:8080"},
-					{Name: "SOVEREIGN_MCP_REQUIRE_IDENTITY", Value: "false"},
-					{Name: "SOVEREIGN_AGENT_INPUT", Value: "/control/input.json"},
-					{Name: "SOVEREIGN_REPOSITORY_ROOT", Value: "/repository"},
-					{Name: "SOVEREIGN_WORKSPACE_OVERLAY_ROOT", Value: controllers.ExecutionStagingPath(run.Name) + "/overlay"},
-				},
-				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "workspace", MountPath: "/repository", ReadOnly: true},
-					{Name: "workspace", MountPath: "/workspace"},
-					{Name: "input", MountPath: "/control", ReadOnly: true},
-				},
-			}},
-			Containers: []corev1.Container{
-				{
-					Name:            "agent",
-					Image:           run.Spec.Image,
-					Command:         []string{"/agent-wrapper"},
-					Args:            []string{"--input", "/control/input.json", "--result", controllers.ExecutionResultPath(run.Name)},
-					Env:             append([]corev1.EnvVar{{Name: "SOVEREIGN_AGENT_EXECUTABLE", Value: string(executable)}}, controllers.WorkspaceWriterEnv(grant)...),
-					SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnly, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-					VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
-				}}, Volumes: []corev1.Volume{
-				{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}},
-				{Name: "input", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}}},
-			},
-		}}
-}
-
-func (r *AgentRunReconciler) mcpImage() string {
-	if r.MCPImage != "" {
-		return r.MCPImage
-	}
-	return "sovereign-mcp-server:dev"
 }
 
 func (r *AgentRunReconciler) startCollection(ctx context.Context, run *v1alpha1.AgentRun) (ctrl.Result, error) {
