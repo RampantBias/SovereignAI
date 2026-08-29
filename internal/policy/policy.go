@@ -51,6 +51,7 @@ func (o *OPAEvaluator) Evaluate(ctx context.Context, input any) (Decision, error
 	if !ok {
 		return Decision{}, fmt.Errorf("OPA decision must be an object")
 	}
+	// decision id would be a policy revision + policy digest + input digest + outcome
 	decision := Decision{ID: o.revision}
 	if allowed, ok := raw["allowed"].(bool); ok {
 		decision.Allowed = allowed

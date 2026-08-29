@@ -365,6 +365,23 @@ func (r *WorkflowReconciler) completeBootstrap(ctx context.Context, workflow *v1
 			return err
 		}
 	}
+	// decisionEvaluated := audit.DecisionEvaluated{
+	// 	SchemaVersion: "V1",
+	// 	Primitive: audit.ResourceRef{
+	// 		SchemaVersion: "V1",
+	// 		APIVersion:    "v1alpha1",
+	// 		Kind:          "sovereignworkflow",
+	// 		Namespace:     workflow.Namespace,
+	// 		Name:          workflow.Name,
+	// 		UID:           string(workflow.UID),
+	// 	},
+	// 	Decision: audit.DecisionRef{
+	// 		SchemaVersion: "V1",
+
+	// 	},
+	// 	AuthorityEvent: ,
+
+	// }
 	return r.cleanupBootstrapResources(ctx, updated)
 }
 

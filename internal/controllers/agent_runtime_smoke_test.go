@@ -3,9 +3,11 @@ package controllers
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"sigs.k8s.io/yaml"
 )
@@ -34,13 +36,29 @@ func TestAgentRuntimeSmokeStopsAfterThreeSingleOutputAgents(t *testing.T) {
 			len(step.Outputs) != 1 || step.Outputs[0] != output {
 			t.Fatalf("step %q is not a retry-bounded reference-agent producing %#v", step.Name, output)
 		}
+		for _, capability := range []string{agentcontract.CapabilityWorkspaceRead, agentcontract.CapabilityAgentComplete} {
+			if !slices.Contains(step.Agent.Capabilities, capability) {
+				t.Errorf("step %q is missing capability %q", step.Name, capability)
+			}
+		}
+	}
+	if !slices.Contains(workflow.Spec.Steps[1].Agent.Capabilities, agentcontract.CapabilityCandidateWrite) {
+		t.Error("architect is missing candidate_write")
+	}
+	for _, index := range []int{2, 3} {
+		if !slices.Contains(workflow.Spec.Steps[index].Agent.Capabilities, agentcontract.CapabilityWorkspaceWrite) {
+			t.Errorf("step %q is missing workspace_write", workflow.Spec.Steps[index].Name)
+		}
+		if slices.Contains(workflow.Spec.Steps[index].Agent.Capabilities, agentcontract.CapabilityWorkspaceReplace) {
+			t.Errorf("step %q unexpectedly exposes workspace_replace", workflow.Spec.Steps[index].Name)
+		}
 	}
 	testAuthor := workflow.Spec.Steps[2].Agent.Responsibility
 	for _, expected := range []string{
-		"smallest unified-diff test change set",
+		"directly in the attempt workspace",
 		"Modify exactly one existing file: src/main_test.go",
 		"Never include src/main.go",
-		"diff --git a/src/main_test.go b/src/main_test.go",
+		"Do not generate or return a diff or patchLines",
 	} {
 		if !strings.Contains(testAuthor, expected) {
 			t.Errorf("test-author responsibility does not contain %q", expected)
@@ -48,11 +66,10 @@ func TestAgentRuntimeSmokeStopsAfterThreeSingleOutputAgents(t *testing.T) {
 	}
 	developer := workflow.Spec.Steps[3].Agent.Responsibility
 	for _, expected := range []string{
-		"smallest unified-diff production change set",
+		"directly in the attempt workspace",
 		"Modify exactly one existing file: src/main.go",
 		"Never include src/main_test.go",
-		"diff --git a/src/main.go b/src/main.go",
-		"unchanged full-file content",
+		"Do not generate or return a diff or patchLines",
 	} {
 		if !strings.Contains(developer, expected) {
 			t.Errorf("developer responsibility does not contain %q", expected)

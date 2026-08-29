@@ -46,6 +46,12 @@ type Changes struct {
 	Deleted     int      `json:"deleted"`
 }
 
+type TreeListing struct {
+	Entries      []string
+	TotalEntries int
+	Truncated    bool
+}
+
 // Ensure base & overlay directories are semantically correct, distinct, and exist.
 func (e Editor) Validate() error {
 	if e.BaseRoot == "" || e.OverlayRoot == "" {
@@ -100,11 +106,16 @@ func (e Editor) Write(path, content, expectedDigest string) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
-	data := []byte(content)
-	if err := e.validateContent(data); err != nil {
+	lineEnding, err := e.lineEndingForWrite(relative, expectedDigest)
+	if err != nil {
 		return File{}, err
 	}
-	if err := e.checkDigest(relative, expectedDigest); err != nil {
+	normalized := normalizeLineEndings(content)
+	if lineEnding == "\r\n" {
+		normalized = strings.ReplaceAll(normalized, "\n", "\r\n")
+	}
+	data := []byte(normalized)
+	if err := e.validateContent(data); err != nil {
 		return File{}, err
 	}
 	if err := e.checkBasePath(relative); err != nil {
@@ -120,6 +131,8 @@ func (e Editor) Write(path, content, expectedDigest string) (File, error) {
 }
 
 func (e Editor) Replace(path, oldText, newText, expectedDigest string, expectedOccurrences int) (File, error) {
+	oldText = normalizeLineEndings(oldText)
+	newText = normalizeLineEndings(newText)
 	if oldText == "" {
 		return File{}, fmt.Errorf("oldText is required")
 	}
@@ -133,10 +146,11 @@ func (e Editor) Replace(path, oldText, newText, expectedDigest string, expectedO
 	if current.Digest != expectedDigest {
 		return File{}, staleError(current.Path, expectedDigest, current.Digest)
 	}
-	if count := strings.Count(current.Content, oldText); count != expectedOccurrences {
+	currentContent := normalizeLineEndings(current.Content)
+	if count := strings.Count(currentContent, oldText); count != expectedOccurrences {
 		return File{}, fmt.Errorf("oldText occurs %d times in %q, expected %d", count, current.Path, expectedOccurrences)
 	}
-	return e.Write(current.Path, strings.Replace(current.Content, oldText, newText, expectedOccurrences), expectedDigest)
+	return e.Write(current.Path, strings.Replace(currentContent, oldText, newText, expectedOccurrences), expectedDigest)
 }
 
 func (e Editor) Delete(path, expectedDigest string) error {
@@ -166,12 +180,17 @@ func (e Editor) Delete(path, expectedDigest string) error {
 }
 
 func (e Editor) Tree(path string, maxEntries int) ([]string, error) {
+	listing, err := e.TreeListing(path, maxEntries)
+	return listing.Entries, err
+}
+
+func (e Editor) TreeListing(path string, maxEntries int) (TreeListing, error) {
 	prefix := ""
 	if path != "" && path != "." {
 		var err error
 		prefix, err = normalizePath(path)
 		if err != nil {
-			return nil, err
+			return TreeListing{}, err
 		}
 	}
 	if maxEntries <= 0 || maxEntries > 5000 {
@@ -179,10 +198,10 @@ func (e Editor) Tree(path string, maxEntries int) ([]string, error) {
 	}
 	all := map[string]struct{}{}
 	if err := e.walk(e.BaseRoot, func(path string) { all[path] = struct{}{} }); err != nil {
-		return nil, err
+		return TreeListing{}, err
 	}
 	if err := e.walk(e.filesRoot(), func(path string) { all[path] = struct{}{} }); err != nil && !os.IsNotExist(err) {
-		return nil, err
+		return TreeListing{}, err
 	}
 	entries := make([]string, 0, len(all))
 	for current := range all {
@@ -194,10 +213,13 @@ func (e Editor) Tree(path string, maxEntries int) ([]string, error) {
 		}
 	}
 	sort.Strings(entries)
+	listing := TreeListing{TotalEntries: len(entries)}
 	if len(entries) > maxEntries {
+		listing.Truncated = true
 		entries = entries[:maxEntries]
 	}
-	return entries, nil
+	listing.Entries = entries
+	return listing, nil
 }
 
 func (e Editor) Search(path, query string, maxResults int) ([]SearchMatch, error) {
@@ -325,30 +347,30 @@ func (e Editor) validateContent(content []byte) error {
 	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
 		return fmt.Errorf("file content must be UTF-8 text without NUL")
 	}
-	if bytes.Contains(content, []byte("\r")) {
-		return fmt.Errorf("file content must use LF line endings")
+	if _, err := detectLineEnding(string(content)); err != nil {
+		return err
 	}
 	return nil
 }
 
-func (e Editor) checkDigest(path, expected string) error {
+func (e Editor) lineEndingForWrite(path, expected string) (string, error) {
 	if expected == "" {
-		return fmt.Errorf("expectedDigest is required")
+		return "", fmt.Errorf("expectedDigest is required")
 	}
 	current, err := e.Read(path, 0)
 	if os.IsNotExist(err) {
 		if expected != AbsentDigest {
-			return staleError(path, expected, AbsentDigest)
+			return "", staleError(path, expected, AbsentDigest)
 		}
-		return nil
+		return "\n", nil
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	if current.Digest != expected {
-		return staleError(path, expected, current.Digest)
+		return "", staleError(path, expected, current.Digest)
 	}
-	return nil
+	return detectLineEnding(current.Content)
 }
 
 func (e Editor) readAt(root, relative string, limit int64) ([]byte, bool, error) {
@@ -497,6 +519,25 @@ func atomicWrite(path string, content []byte) error {
 		return err
 	}
 	return os.Rename(temporary, path)
+}
+
+func normalizeLineEndings(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	return strings.ReplaceAll(value, "\r", "\n")
+}
+
+func detectLineEnding(value string) (string, error) {
+	withoutCRLF := strings.ReplaceAll(value, "\r\n", "")
+	if strings.ContainsRune(withoutCRLF, '\r') {
+		return "", fmt.Errorf("file content must use consistent LF or CRLF line endings without bare CR")
+	}
+	if strings.Contains(value, "\r\n") {
+		if strings.ContainsRune(withoutCRLF, '\n') {
+			return "", fmt.Errorf("file content must use consistent LF or CRLF line endings without bare CR")
+		}
+		return "\r\n", nil
+	}
+	return "\n", nil
 }
 
 func newFile(path string, content []byte, source string) File {

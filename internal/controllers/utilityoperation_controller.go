@@ -685,7 +685,8 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 				LabelStep:                           operation.Spec.StepName,
 				"sovereign-ai.io/utility-operation": operation.Name,
 			},
-			Annotations: workspaceWriterAnnotations(grant)},
+			Annotations: workspaceWriterAnnotations(grant),
+		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoff,
 			TTLSecondsAfterFinished: &ttl,
@@ -715,6 +716,27 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 	}
 	container := &job.Spec.Template.Spec.Containers[0]
 	container.Env = append(container.Env, workspaceWriterEnv(grant)...)
+	container.Env = append(container.Env,
+		corev1.EnvVar{Name: "HOME", Value: "/home/utility"},
+		corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: "/home/utility/.cache"},
+	)
+
+	container.VolumeMounts = append(container.VolumeMounts,
+		corev1.VolumeMount{
+			Name:      "utility-home",
+			MountPath: "/home/utility",
+		},
+	)
+
+	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes,
+		corev1.Volume{
+			Name: "utility-home",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	)
+
 	if workload.bootstrapRuntime {
 		runnerPath = "/sovereign-bin/utility-runner"
 		container.Command = []string{runnerPath}

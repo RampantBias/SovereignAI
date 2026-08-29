@@ -27,7 +27,14 @@ func unifiedFileDiff(path string, oldContent []byte, oldExists bool, newContent 
 		toFile = "/dev/null"
 	}
 	var output strings.Builder
-	fmt.Fprintf(&output, "diff --git a/%s b/%s\n--- %s\n+++ %s\n", path, path, fromFile, toFile)
+	fmt.Fprintf(&output, "diff --git a/%s b/%s\n", path, path)
+	if !oldExists {
+		output.WriteString("new file mode 100644\n")
+	}
+	if !newExists {
+		output.WriteString("deleted file mode 100644\n")
+	}
+	fmt.Fprintf(&output, "--- %s\n+++ %s\n", fromFile, toFile)
 	for _, group := range groups {
 		first, last := group[0], group[len(group)-1]
 		fmt.Fprintf(&output, "@@ -%s +%s @@\n", unifiedRange(first.I1, last.I2), unifiedRange(first.J1, last.J2))

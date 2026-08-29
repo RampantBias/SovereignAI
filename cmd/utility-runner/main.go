@@ -52,12 +52,25 @@ func main() {
 		events.operationFailed(context.Background(), err, time.Since(started))
 		fail(*resultPath, "UtilityOperationFailed", err)
 	}
-	events.operationSucceeded(ctx, time.Since(started), result)
-	if err := utilitycontract.WriteResult(*resultPath, result); err != nil {
+	events.operationCompleted(ctx, time.Since(started), result)
+	succeeded, err := writeOperationResult(*resultPath, result)
+	if err != nil {
 		events.resultRejected(context.Background(), err)
 		fail(*resultPath, "UtilityResultWriteFailed", err)
 	}
+	if !succeeded {
+		events.completedWithResult(context.Background(), result)
+		log.Print(result.Message)
+		os.Exit(1)
+	}
 	events.completed(ctx)
+}
+
+func writeOperationResult(path string, result utilitycontract.Result) (bool, error) {
+	if err := utilitycontract.WriteResult(path, result); err != nil {
+		return false, err
+	}
+	return result.Outcome == "Succeeded", nil
 }
 
 func fail(resultPath, code string, err error) {
@@ -128,12 +141,18 @@ func (e runnerEvents) operationFailed(ctx context.Context, err error, duration t
 	e.append(ctx, "UtilityRunnerCompleted", "complete", "utility-runner", "failed", "UtilityOperationFailed", nil, map[string]string{"error": err.Error()})
 }
 
-func (e runnerEvents) operationSucceeded(ctx context.Context, duration time.Duration, result utilitycontract.Result) {
-	e.append(ctx, "UtilityOperationCompleted", "complete", e.input.Operation, "succeeded", "", nil, map[string]any{
+func (e runnerEvents) operationCompleted(ctx context.Context, duration time.Duration, result utilitycontract.Result) {
+	reason := ""
+	data := map[string]any{
 		"durationMillis": duration.Milliseconds(),
 		"artifactCount":  len(result.Artifacts),
 		"metadata":       result.Metadata,
-	})
+	}
+	if result.Error != nil {
+		reason = result.Error.Code
+		data["error"] = result.Error.Message
+	}
+	e.append(ctx, "UtilityOperationCompleted", "complete", e.input.Operation, strings.ToLower(result.Outcome), reason, nil, data)
 }
 
 func (e runnerEvents) resultRejected(ctx context.Context, err error) {
@@ -142,6 +161,16 @@ func (e runnerEvents) resultRejected(ctx context.Context, err error) {
 
 func (e runnerEvents) completed(ctx context.Context) {
 	e.append(ctx, "UtilityRunnerCompleted", "complete", "utility-runner", "succeeded", "", nil, nil)
+}
+
+func (e runnerEvents) completedWithResult(ctx context.Context, result utilitycontract.Result) {
+	reason := ""
+	data := map[string]string{"message": result.Message}
+	if result.Error != nil {
+		reason = result.Error.Code
+		data["error"] = result.Error.Message
+	}
+	e.append(ctx, "UtilityRunnerCompleted", "complete", "utility-runner", strings.ToLower(result.Outcome), reason, nil, data)
 }
 
 func (e runnerEvents) append(ctx context.Context, eventType, action, target, outcome, reason string, references map[string]string, data any) {

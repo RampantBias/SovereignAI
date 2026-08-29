@@ -41,6 +41,22 @@ type ToolFunctionDefinition struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
+type ToolChoiceMode string
+
+const (
+	ToolChoiceAuto     ToolChoiceMode = "auto"
+	ToolChoiceRequired ToolChoiceMode = "required"
+	ToolChoiceNone     ToolChoiceMode = "none"
+	ToolChoiceNamed    ToolChoiceMode = "named"
+)
+
+// ToolChoice represents the OpenAI tool_choice union without exposing raw JSON
+// construction to callers. Named choices force one specific function.
+type ToolChoice struct {
+	Mode         ToolChoiceMode
+	FunctionName string
+}
+
 type JSONSchema struct {
 	Name   string
 	Schema json.RawMessage
@@ -54,6 +70,7 @@ type ChatRequest struct {
 	RepetitionPenalty float64
 	OutputSchema      *JSONSchema
 	Tools             []ToolDefinition
+	ToolChoice        ToolChoice
 }
 
 type ChatResponse struct {
@@ -72,6 +89,16 @@ type chatCompletionPayload struct {
 	RepetitionPenalty float64          `json:"repetition_penalty,omitempty"`
 	ResponseFormat    *responseFormat  `json:"response_format,omitempty"`
 	Tools             []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice        any              `json:"tool_choice,omitempty"`
+}
+
+type namedToolChoice struct {
+	Type     string                  `json:"type"`
+	Function namedToolChoiceFunction `json:"function"`
+}
+
+type namedToolChoiceFunction struct {
+	Name string `json:"name"`
 }
 
 // OpenAI response format
@@ -137,10 +164,10 @@ func NewClient(
 
 // Submits POST to inference endpoint with given chat request content
 func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, error) {
-	if request.OutputSchema == nil {
-		return ChatResponse{}, fmt.Errorf("output schema is required")
+	if request.OutputSchema == nil && len(request.Tools) == 0 {
+		return ChatResponse{}, fmt.Errorf("output schema or tools are required")
 	}
-	if !json.Valid(request.OutputSchema.Schema) {
+	if request.OutputSchema != nil && !json.Valid(request.OutputSchema.Schema) {
 		return ChatResponse{}, fmt.Errorf("output schema is invalid JSON")
 	}
 	// Process chat request to request payload
@@ -152,6 +179,11 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		RepetitionPenalty: request.RepetitionPenalty,
 		Tools:             request.Tools,
 	}
+	toolChoice, err := request.ToolChoice.payload(request.Tools)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	payload.ToolChoice = toolChoice
 	if request.OutputSchema != nil {
 		payload.ResponseFormat = &responseFormat{
 			Type: "json_schema",
@@ -213,6 +245,39 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResponse, e
 		CompletionTokens: decoded.Usage.CompletionTokens,
 		ToolCalls:        choice.Message.ToolCalls,
 	}, nil
+}
+
+func (choice ToolChoice) payload(tools []ToolDefinition) (any, error) {
+	switch choice.Mode {
+	case "":
+		if choice.FunctionName != "" {
+			return nil, fmt.Errorf("named tool choice mode is required for function %q", choice.FunctionName)
+		}
+		return nil, nil
+	case ToolChoiceAuto, ToolChoiceRequired, ToolChoiceNone:
+		if choice.FunctionName != "" {
+			return nil, fmt.Errorf("tool choice %q cannot name a function", choice.Mode)
+		}
+		if len(tools) == 0 && choice.Mode != ToolChoiceNone {
+			return nil, fmt.Errorf("tool choice %q requires tools", choice.Mode)
+		}
+		return string(choice.Mode), nil
+	case ToolChoiceNamed:
+		if choice.FunctionName == "" {
+			return nil, fmt.Errorf("named tool choice requires a function name")
+		}
+		for _, tool := range tools {
+			if tool.Function.Name == choice.FunctionName {
+				return namedToolChoice{
+					Type:     "function",
+					Function: namedToolChoiceFunction{Name: choice.FunctionName},
+				}, nil
+			}
+		}
+		return nil, fmt.Errorf("named tool choice %q is not present in tools", choice.FunctionName)
+	default:
+		return nil, fmt.Errorf("unsupported tool choice %q", choice.Mode)
+	}
 }
 
 func validateEndpoint(inferenceURL string) (*url.URL, error) {

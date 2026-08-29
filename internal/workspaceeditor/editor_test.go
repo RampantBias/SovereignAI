@@ -2,6 +2,7 @@ package workspaceeditor
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,11 +83,44 @@ func TestEditorDeletionPreservesMissingNewlineMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(changes.Patch, "+++ /dev/null\n") || !strings.Contains(changes.Patch, "\\ No newline at end of file\n") {
+	if !strings.Contains(changes.Patch, "deleted file mode 100644\n") || !strings.Contains(changes.Patch, "+++ /dev/null\n") || !strings.Contains(changes.Patch, "\\ No newline at end of file\n") {
 		t.Fatalf("unexpected deletion patch:\n%s", changes.Patch)
 	}
 	if _, _, err := artifactcontract.DerivePatchMetadata(changes.Patch); err != nil {
 		t.Fatalf("invalid deletion patch: %v", err)
+	}
+}
+
+func TestEditorCreateAndDeletePatchesPassGitApplyCheck(t *testing.T) {
+	base, overlay := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "old.txt"), []byte("old\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, base, "init", "--quiet")
+	runGit(t, base, "add", "old.txt")
+
+	editor := Editor{BaseRoot: base, OverlayRoot: overlay}
+	if _, err := editor.Write("new.txt", "new\n", AbsentDigest); err != nil {
+		t.Fatal(err)
+	}
+	current, err := editor.Read("old.txt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := editor.Delete("old.txt", current.Digest); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := editor.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(changes.Patch, "new file mode 100644\n") || !strings.Contains(changes.Patch, "deleted file mode 100644\n") {
+		t.Fatalf("patch is missing create/delete mode metadata:\n%s", changes.Patch)
+	}
+	command := exec.Command("git", "-C", base, "apply", "--check", "--index", "-")
+	command.Stdin = strings.NewReader(changes.Patch)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generated patch failed git apply --check --index: %v: %s\n%s", err, output, changes.Patch)
 	}
 }
 
@@ -112,4 +146,51 @@ func TestEditorTreeAndSearchUseOverlay(t *testing.T) {
 	}
 }
 
+func TestEditorPreservesExistingLineEndingsAndUsesLFForNewFiles(t *testing.T) {
+	base, overlay := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "main.go"), []byte("package main\r\n\r\nfunc main() {}\r\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	editor := Editor{BaseRoot: base, OverlayRoot: overlay}
+	current, err := editor.Read("main.go", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := editor.Replace("main.go", "func main() {}\r\n", "func main() {\r\n}\r\n", current.Digest, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.Content != "package main\r\n\r\nfunc main() {\r\n}\r\n" {
+		t.Fatalf("replacement did not preserve CRLF: %q", replaced.Content)
+	}
+	created, err := editor.Write("created.go", "package main\r\n", AbsentDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Content != "package main\n" {
+		t.Fatalf("write was not normalized: %q", created.Content)
+	}
+	changes, err := editor.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes.Added != 3 || changes.Deleted != 1 {
+		t.Fatalf("unexpected line counts: %#v\n%s", changes, changes.Patch)
+	}
+	if !strings.Contains(changes.Patch, "-func main() {}\r\n") || !strings.Contains(changes.Patch, "+func main() {\r\n") {
+		t.Fatalf("patch did not preserve CRLF hunk content:\n%q", changes.Patch)
+	}
+	if _, _, err := artifactcontract.DerivePatchMetadata(changes.Patch); err != nil {
+		t.Fatalf("CRLF hunk patch was rejected: %v\n%q", err, changes.Patch)
+	}
+}
+
 func bytesEqual(first, second []byte) bool { return string(first) == string(second) }
+
+func runGit(t *testing.T, directory string, arguments ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", directory}, arguments...)...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v: %s", strings.Join(arguments, " "), err, output)
+	}
+}

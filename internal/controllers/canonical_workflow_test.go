@@ -126,6 +126,9 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 			if slices.Contains(agent.Capabilities, agentcontract.CapabilityCandidateWrite) {
 				t.Errorf("step %q unexpectedly has candidate-write authority", workflow.Spec.Steps[index].Name)
 			}
+			if slices.Contains(agent.Capabilities, agentcontract.CapabilityWorkspaceReplace) {
+				t.Errorf("step %q unexpectedly exposes workspace_replace", workflow.Spec.Steps[index].Name)
+			}
 			for _, expected := range []string{"directly in the attempt workspace", "Do not generate or return a diff or patchLines", "trusted code derives"} {
 				if !strings.Contains(agent.Responsibility, expected) {
 					t.Errorf("step %q responsibility does not contain %q", workflow.Spec.Steps[index].Name, expected)
@@ -147,6 +150,12 @@ func TestCanonicalWorkflowMatchesPlan4Spine(t *testing.T) {
 		t.Errorf("test-author responsibility does not carry test-only authority: %q", responsibility)
 	}
 	developerResponsibility := workflow.Spec.Steps[3].Agent.Responsibility
+	if !slices.Contains(workflow.Spec.Steps[3].Agent.Capabilities, agentcontract.CapabilityWorkspaceCreate) {
+		t.Error("developer is missing explicit workspace_create authority for implementation-plan add actions")
+	}
+	if slices.Contains(workflow.Spec.Steps[2].Agent.Capabilities, agentcontract.CapabilityWorkspaceCreate) {
+		t.Error("test-author unexpectedly has workspace_create authority")
+	}
 	for _, expected := range []string{"production-code changes", "accepted test change set", "files discovered in the repository", "never select or modify a recognized test path", "smallest targeted workspace changes"} {
 		if !strings.Contains(developerResponsibility, expected) {
 			t.Errorf("developer responsibility does not contain %q", expected)

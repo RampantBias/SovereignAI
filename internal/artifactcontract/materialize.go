@@ -46,10 +46,13 @@ type SourceArtifact struct {
 // Candidate is model-authored evidence. Summary and Patch are runtime-derived
 // workspace evidence. A binding accepts only the evidence kind it declares.
 type MaterializationEvidence struct {
-	Candidate []byte
-	Summary   string
-	Patch     string
-	Sources   []SourceArtifact
+	Candidate              []byte
+	Summary                string
+	Patch                  string
+	Sources                []SourceArtifact
+	WorkspacePaths         []string
+	WorkspacePathsObserved bool
+	WorkspacePathsComplete bool
 }
 
 type RejectionDiagnostic struct {
@@ -187,6 +190,9 @@ func materializeImplementationPlan(evidence MaterializationEvidence) ([]byte, er
 		Assumptions         []string            `json:"assumptions"`
 	}
 	if err := decodeCandidate(evidence.Candidate, &candidate); err != nil {
+		return nil, err
+	}
+	if err := validateAffectedWorkspacePaths(candidate.AffectedPaths, evidence.WorkspacePaths, evidence.WorkspacePathsObserved, evidence.WorkspacePathsComplete); err != nil {
 		return nil, err
 	}
 	changeRequest, err := requiredMaterializationSource(evidence.Sources, ChangeRequestContract)
@@ -388,7 +394,8 @@ func DiagnoseMaterialization(err error) RejectionDiagnostic {
 	case strings.Contains(message, "recognized test path"):
 		code = "TestPathNotRecognized"
 	case strings.Contains(message, "affectedPaths") &&
-		(strings.Contains(message, "forbidden path segment") || strings.Contains(message, "repository-relative path")):
+		(strings.Contains(message, "forbidden path segment") || strings.Contains(message, "repository-relative path") ||
+			strings.Contains(message, "workspace_tree") || strings.Contains(message, "already exists")):
 		code = "InvalidRepositoryPath"
 	case strings.Contains(message, "decode candidate"):
 		code = "CandidateSchemaViolation"

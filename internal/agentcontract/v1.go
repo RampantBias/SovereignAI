@@ -19,6 +19,7 @@ const (
 
 	CapabilityWorkspaceRead    = "workspace_read"
 	CapabilityWorkspaceWrite   = "workspace_write"
+	CapabilityWorkspaceCreate  = "workspace_create"
 	CapabilityWorkspaceSearch  = "workspace_search"
 	CapabilityWorkspaceReplace = "workspace_replace"
 	CapabilityWorkspaceDelete  = "workspace_delete"

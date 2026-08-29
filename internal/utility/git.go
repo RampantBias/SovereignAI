@@ -374,8 +374,8 @@ func gitCommitResult(ctx context.Context, input utilitycontract.Input, message, 
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
-		if prepared.CandidateTree != tree || report.CandidateTree != tree || report.Outcome != "passed" || prepared.Branch != branch {
-			return utilitycontract.Result{}, fmt.Errorf("candidate-revision inputs do not describe the committed branch and tested tree")
+		if err := validateCandidateRevisionState(prepared, report, branch, tree); err != nil {
+			return utilitycontract.Result{}, err
 		}
 		commitMessage, err := gitOutput(ctx, input.WorkspacePath, "show", "-s", "--format=%B", commit)
 		if err != nil {
@@ -406,8 +406,21 @@ func validateCommitInputs(ctx context.Context, input utilitycontract.Input, tree
 	if err != nil {
 		return err
 	}
-	if prepared.CandidateTree != tree || report.CandidateTree != tree || report.Outcome != "passed" || prepared.Branch != branch {
-		return fmt.Errorf("candidate-revision inputs do not describe the current branch and tested tree")
+	return validateCandidateRevisionState(prepared, report, branch, tree)
+}
+
+func validateCandidateRevisionState(prepared artifactcontract.PreparedCandidate, report artifactcontract.TestReport, branch, tree string) error {
+	if prepared.Branch != branch {
+		return fmt.Errorf("prepared-candidate branch %q does not match current branch %q", prepared.Branch, branch)
+	}
+	if prepared.CandidateTree != tree {
+		return fmt.Errorf("prepared-candidate tree %s does not match current tree %s", prepared.CandidateTree, tree)
+	}
+	if report.CandidateTree != tree {
+		return fmt.Errorf("test-report candidate tree %s does not match current tree %s", report.CandidateTree, tree)
+	}
+	if report.Outcome != "passed" {
+		return fmt.Errorf("test-report outcome %q does not authorize candidate commit; expected %q", report.Outcome, "passed")
 	}
 	return nil
 }

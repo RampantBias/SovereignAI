@@ -84,7 +84,7 @@ spec:
           the workspace.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace", "agent_complete"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
@@ -117,7 +117,7 @@ spec:
           patchLines; trusted code derives the change-set from the workspace.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "workspace_replace", "agent_complete"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"

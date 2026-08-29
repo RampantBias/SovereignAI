@@ -173,8 +173,8 @@ func (v ChangeSet) Validate() error {
 	if len(patchBytes) == 0 || len(patchBytes) > MaxPatchBytes {
 		return fmt.Errorf("patch must contain 1 through %d UTF-8 bytes", MaxPatchBytes)
 	}
-	if !utf8.ValidString(v.Patch) || strings.ContainsRune(v.Patch, '\x00') || strings.Contains(v.Patch, "\r") {
-		return fmt.Errorf("patch must be UTF-8 with LF line endings and no NUL")
+	if !utf8.ValidString(v.Patch) || strings.ContainsRune(v.Patch, '\x00') {
+		return fmt.Errorf("patch must be UTF-8 text without NUL")
 	}
 	if v.ByteCount != len(patchBytes) {
 		return fmt.Errorf("byteCount does not match patch bytes")
@@ -522,6 +522,14 @@ func (v MergeRevision) Validate() error {
 }
 
 func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
+	if !utf8.ValidString(patch) || strings.ContainsRune(patch, '\x00') {
+		return nil, 0, 0, fmt.Errorf("patch must be UTF-8 text without NUL")
+	}
+	for index := 0; index < len(patch); index++ {
+		if patch[index] == '\r' && (index+1 == len(patch) || patch[index+1] != '\n') {
+			return nil, 0, 0, fmt.Errorf("patch contains a bare carriage return")
+		}
+	}
 	if strings.Contains(patch, "```") {
 		return nil, 0, 0, fmt.Errorf("patch contains Markdown fencing")
 	}
@@ -596,6 +604,9 @@ func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
 				}
 				continue
 			}
+		}
+		if strings.HasSuffix(line, "\r") {
+			return nil, 0, 0, fmt.Errorf("patch line %d uses CRLF outside hunk content", lineNumber)
 		}
 		if index == len(lines)-1 && line == "" {
 			continue

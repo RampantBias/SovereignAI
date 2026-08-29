@@ -547,6 +547,35 @@ func TestUtilityOperationCannotActWithoutStepAttemptAuthority(t *testing.T) {
 	}
 }
 
+func TestUtilityCollectionPreservesDeclaredJobFailure(t *testing.T) {
+	scheme := attemptScheme(t)
+	operation := &v1alpha1.UtilityOperation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-candidate-001", Namespace: "wf"},
+		Status: v1alpha1.UtilityOperationStatus{
+			Phase: v1alpha1.PhaseCollecting, CollectorJobRef: "test-candidate-001-collect",
+			FailureReason: "UtilityJobFailed", Retryable: true,
+		},
+	}
+	collector := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: operation.Status.CollectorJobRef, Namespace: operation.Namespace},
+		Status:     batchv1.JobStatus{Succeeded: 1},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.UtilityOperation{}).
+		WithObjects(operation, collector).Build()
+	reconciler := &UtilityOperationReconciler{Client: client, Scheme: scheme}
+	if _, err := reconciler.reconcileCollection(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	var updated v1alpha1.UtilityOperation
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: operation.Namespace, Name: operation.Name}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Phase != v1alpha1.PhaseFailed || updated.Status.FailureReason != "UtilityJobFailed" || !updated.Status.Retryable {
+		t.Fatalf("collected failed result advanced as success: %#v", updated.Status)
+	}
+}
+
 func attemptScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()

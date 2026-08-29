@@ -157,6 +157,13 @@ func TestChatSendsToolsAndDecodesToolCalls(t *testing.T) {
 		if len(payload.Tools) != 1 || payload.Tools[0].Function.Name != "workspace_read" {
 			t.Fatalf("tools = %#v", payload.Tools)
 		}
+		if payload.ResponseFormat != nil {
+			t.Fatalf("tool-only request unexpectedly has response format %#v", payload.ResponseFormat)
+		}
+		choice, ok := payload.ToolChoice.(string)
+		if !ok || choice != string(ToolChoiceRequired) {
+			t.Fatalf("tool choice = %#v, want required", payload.ToolChoice)
+		}
 		if len(payload.Messages) != 1 || payload.Messages[0].Role != "user" {
 			t.Fatalf("messages = %#v", payload.Messages)
 		}
@@ -171,16 +178,47 @@ func TestChatSendsToolsAndDecodesToolCalls(t *testing.T) {
 	response, err := client.Chat(context.Background(), ChatRequest{
 		Model: "ex", Messages: []Message{{Role: "user", Content: "edit"}},
 		MaxOutputTokens: 128,
-		OutputSchema:    &JSONSchema{Name: "completion", Schema: json.RawMessage(`{"type":"object"}`)},
 		Tools: []ToolDefinition{{Type: "function", Function: ToolFunctionDefinition{
 			Name: "workspace_read", Parameters: json.RawMessage(`{"type":"object"}`),
 		}}},
+		ToolChoice: ToolChoice{Mode: ToolChoiceRequired},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "workspace_read" || response.FinishReason != "tool_calls" {
 		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestChatSendsNamedToolChoice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			ToolChoice namedToolChoice `json:"tool_choice"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.ToolChoice.Type != "function" || payload.ToolChoice.Function.Name != "workspace_tree" {
+			t.Fatalf("tool choice = %#v", payload.ToolChoice)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"choices":[{"message":{"tool_calls":[{"id":"tree-1","type":"function","function":{"name":"workspace_tree","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, time.Second, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Chat(context.Background(), ChatRequest{
+		Model: "ex", Messages: []Message{{Role: "user", Content: "inspect"}}, MaxOutputTokens: 128,
+		Tools: []ToolDefinition{{Type: "function", Function: ToolFunctionDefinition{
+			Name: "workspace_tree", Parameters: json.RawMessage(`{"type":"object"}`),
+		}}},
+		ToolChoice: ToolChoice{Mode: ToolChoiceNamed, FunctionName: "workspace_tree"},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
