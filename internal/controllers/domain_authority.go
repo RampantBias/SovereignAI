@@ -11,11 +11,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// validateDomainAuthority proves the bidirectional relationship between a
+// ValidateDomainAuthority proves the bidirectional relationship between a
 // workflow attempt and the domain primitive that is allowed to act for it.
 // A false result without an error means the workflow controller has not yet
 // published status.executionRef and reconciliation should wait.
-func validateDomainAuthority(ctx context.Context, reader client.Reader, object client.Object, attemptRef string, expectedKind v1alpha1.ExecutionKind, workflowRef v1alpha1.UIDReference, stepName string, attemptNumber int32) (bool, error) {
+func ValidateDomainAuthority(ctx context.Context, reader client.Reader, object client.Object, attemptRef string, expectedKind v1alpha1.ExecutionKind, workflowRef v1alpha1.UIDReference, stepName string, attemptNumber int32) (bool, error) {
 	var attempt v1alpha1.StepAttempt
 	if err := reader.Get(ctx, types.NamespacedName{Namespace: object.GetNamespace(), Name: attemptRef}, &attempt); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -29,7 +29,7 @@ func validateDomainAuthority(ctx context.Context, reader client.Reader, object c
 	if attempt.Status.ExecutionRef == nil {
 		return false, nil
 	}
-	wantKind := domainKind(expectedKind)
+	wantKind := DomainKind(expectedKind)
 	if attempt.Status.ExecutionRef.APIVersion != v1alpha1.GroupVersion.String() || attempt.Status.ExecutionRef.Kind != wantKind || attempt.Status.ExecutionRef.Name != object.GetName() {
 		return false, fmt.Errorf("StepAttempt %s does not authorize %s/%s", attempt.Name, wantKind, object.GetName())
 	}
@@ -51,7 +51,7 @@ func validateDomainBinding(attempt *v1alpha1.StepAttempt, object client.Object, 
 	return nil
 }
 
-func domainKind(kind v1alpha1.ExecutionKind) string {
+func DomainKind(kind v1alpha1.ExecutionKind) string {
 	switch kind {
 	case v1alpha1.ExecutionKindAgent:
 		return "AgentRun"

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/controllermeta"
@@ -25,9 +24,10 @@ import (
 func TestStepAttemptMirrorsOwnedAgentRunStatus(t *testing.T) {
 	scheme := attemptScheme(t)
 	attempt := authorizedAttempt("architect-001", "wf", "architect", v1alpha1.ExecutionKindAgent)
+	workflow := workflowFixture()
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace},
-		Spec:       v1alpha1.AgentRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRefFixture(), StepName: "architect", Attempt: 1, Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
+		Spec:       v1alpha1.AgentRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRef(workflow), StepName: "architect", Attempt: 1, Responsibility: "plan", Image: "agent", Executable: []string{"/agent"}},
 		Status:     v1alpha1.AgentRunStatus{Phase: v1alpha1.PhaseRunning},
 	}
 	ownByAttempt(run, attempt)
@@ -53,9 +53,10 @@ func TestStepAttemptMirrorsOwnedAgentRunStatus(t *testing.T) {
 func TestStepAttemptMirrorsOwnedAgentFailureDiagnostic(t *testing.T) {
 	scheme := attemptScheme(t)
 	attempt := authorizedAttempt("test-author-001", "wf", "test-author", v1alpha1.ExecutionKindAgent)
+	workflow := workflowFixture()
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace},
-		Spec:       v1alpha1.AgentRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRefFixture(), StepName: "test-author", Attempt: 1, Responsibility: "write tests", Image: "agent", Executable: []string{"/agent"}},
+		Spec:       v1alpha1.AgentRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRef(workflow), StepName: "test-author", Attempt: 1, Responsibility: "write tests", Image: "agent", Executable: []string{"/agent"}},
 		Status: v1alpha1.AgentRunStatus{
 			Phase:          v1alpha1.PhaseFailed,
 			FailureReason:  "TestPathNotRecognized",
@@ -80,113 +81,6 @@ func TestStepAttemptMirrorsOwnedAgentFailureDiagnostic(t *testing.T) {
 	}
 }
 
-func TestAgentRunCreatesRestrictedPod(t *testing.T) {
-	scheme := attemptScheme(t)
-	workflow := workflowFixture()
-	attempt := authorizedAttempt("architect-001", "wf", "architect", v1alpha1.ExecutionKindAgent)
-	inputArtifact := acceptedAgentInputArtifact(
-		"initialize-repository-a1-repository-revision-v1-00",
-		"repository-revision",
-		"v1",
-		"sha256:repository-revision",
-		"/workspace/.sovereign/artifacts/repository-revision.json",
-		workflowRefFixture(),
-	)
-	run := &v1alpha1.AgentRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "architect-001", Namespace: "wf", UID: "architect-run-uid", Labels: map[string]string{controllermeta.LabelWorkflow: "wf"}},
-		Spec: v1alpha1.AgentRunSpec{
-			AttemptRef:      "architect-001",
-			WorkflowRef:     workflowRefFixture(),
-			StepName:        "architect",
-			Attempt:         1,
-			Responsibility:  "plan",
-			Image:           "agent@sha256:test",
-			Executable:      []string{"/domain-agent", "--role", "architect"},
-			PriorAttemptRef: &v1alpha1.FailedAgentAttempt{PreviousAttemptRef: "architect-000", Code: "InvalidRepositoryPath", Message: "affected path was invalid"},
-			Inputs:          []v1alpha1.ArtifactReference{{Name: "repository-revision", Digest: "sha256:repository-revision"}},
-			OutputContracts: []v1alpha1.ContractReference{{Name: "implementation-plan", Version: "v1"}},
-		},
-		Status: v1alpha1.AgentRunStatus{Phase: v1alpha1.PhasePending},
-	}
-	ownByAttempt(run, attempt)
-	client := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.AgentRun{}).
-		WithObjects(workflow, workspaceLeaseFixture(), attempt, run, inputArtifact).Build()
-	reconciler := &AgentRunReconciler{Client: client, Scheme: scheme}
-	if _, err := reconciler.Reconcile(context.Background(), requestFor(run)); err != nil {
-		t.Fatal(err)
-	}
-	var pod corev1.Pod
-	if err := client.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, &pod); err != nil {
-		t.Fatal(err)
-	}
-	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
-		t.Fatal("agent pod must not automount a service-account token")
-	}
-	security := pod.Spec.Containers[0].SecurityContext
-	if security == nil || security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation {
-		t.Fatal("agent pod permits privilege escalation")
-	}
-	if security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem {
-		t.Fatal("agent root filesystem is writable")
-	}
-	if len(pod.Spec.InitContainers) != 1 || pod.Spec.InitContainers[0].Name != "mcp" {
-		t.Fatalf("agent pod MCP sidecar = %#v", pod.Spec.InitContainers)
-	}
-	sidecar := pod.Spec.InitContainers[0]
-	if sidecar.RestartPolicy == nil || *sidecar.RestartPolicy != corev1.ContainerRestartPolicyAlways {
-		t.Fatalf("MCP container is not a native sidecar: %#v", sidecar.RestartPolicy)
-	}
-	if len(sidecar.VolumeMounts) != 3 || !sidecar.VolumeMounts[0].ReadOnly ||
-		sidecar.VolumeMounts[0].MountPath != "/repository" || sidecar.VolumeMounts[1].MountPath != "/workspace" ||
-		!sidecar.VolumeMounts[2].ReadOnly || sidecar.VolumeMounts[2].MountPath != "/control" {
-		t.Fatalf("unexpected MCP mounts: %#v", sidecar.VolumeMounts)
-	}
-	foundAgentInput := false
-	for _, variable := range sidecar.Env {
-		if variable.Name == "SOVEREIGN_AGENT_INPUT" && variable.Value == "/control/input.json" {
-			foundAgentInput = true
-			break
-		}
-	}
-	if !foundAgentInput {
-		t.Fatalf("MCP sidecar is missing SOVEREIGN_AGENT_INPUT: %#v", sidecar.Env)
-	}
-	if pod.Annotations[AnnotationWorkspaceWriterEpoch] != "1" {
-		t.Fatalf("agent pod writer epoch = %q, want 1", pod.Annotations[AnnotationWorkspaceWriterEpoch])
-	}
-	var input corev1.ConfigMap
-	if err := client.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name + "-input"}, &input); err != nil {
-		t.Fatal(err)
-	}
-	var contract agentcontract.Input
-	if err := json.Unmarshal([]byte(input.Data["input.json"]), &contract); err != nil {
-		t.Fatal(err)
-	}
-	if contract.Responsibility != "plan" || len(contract.Outputs) != 1 || len(contract.Inputs) != 1 {
-		t.Fatalf("unexpected agent contract: %#v", contract)
-	}
-	if contract.RetryFeedback == nil || contract.RetryFeedback.PreviousAttemptRef != "architect-000" ||
-		contract.RetryFeedback.Code != "InvalidRepositoryPath" || contract.RetryFeedback.Message != "affected path was invalid" {
-		t.Fatalf("agent contract lost retry feedback: %#v", contract.RetryFeedback)
-	}
-	if !contract.Outputs[0].Required || contract.Outputs[0].MediaType != "application/json" {
-		t.Fatalf("agent output obligation is not required JSON: %#v", contract.Outputs[0])
-	}
-	if contract.Inputs[0].Name != "repository-revision" ||
-		contract.Inputs[0].Contract != "repository-revision/v1" ||
-		contract.Inputs[0].Digest != inputArtifact.Spec.Digest ||
-		contract.Inputs[0].Path != inputArtifact.Spec.Path {
-		t.Fatalf("agent contract did not resolve the logical artifact input: %#v", contract.Inputs[0])
-	}
-	if contract.WorkspaceWrite.WriterEpoch != 1 || contract.WorkspaceWrite.LeaseName != workflow.Status.WorkspaceWriterLeaseRef {
-		t.Fatalf("agent contract lost workspace writer authority: %#v", contract.WorkspaceWrite)
-	}
-	if contract.MCPServer != "http://127.0.0.1:8080/mcp" {
-		t.Fatalf("agent contract MCP endpoint = %q", contract.MCPServer)
-	}
-}
-
 func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) {
 	scheme := attemptScheme(t)
 	workflow := workflowFixture()
@@ -195,7 +89,7 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "tests-001", Namespace: "wf", UID: "tests-operation-uid", Labels: map[string]string{controllermeta.LabelWorkflow: "wf"}},
 		Spec: v1alpha1.UtilityOperationSpec{
-			AttemptRef: "tests-001", WorkflowRef: workflowRefFixture(), StepName: "tests", Attempt: 1,
+			AttemptRef: "tests-001", WorkflowRef: workflowRef(workflow), StepName: "tests", Attempt: 1,
 			Operation:       v1alpha1.UtilityOperationRequest{Name: "test.run"},
 			OutputContracts: []v1alpha1.ContractReference{{Name: "test-report", Version: "v1"}},
 		},
@@ -250,9 +144,10 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 func TestPrivilegedUtilityOperationFailsClosedWithoutPolicy(t *testing.T) {
 	scheme := attemptScheme(t)
 	attempt := authorizedAttempt("commit-001", "wf", "commit", v1alpha1.ExecutionKindUtility)
+	workflow := workflowFixture()
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "commit-001", Namespace: "wf"},
-		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "commit-001", WorkflowRef: workflowRefFixture(), StepName: "commit", Attempt: 1,
+		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "commit-001", WorkflowRef: workflowRef(workflow), StepName: "commit", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "git.commit", Parameters: map[string]string{"message": "change"}}},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
 	}
@@ -285,7 +180,7 @@ func TestUtilityOperationScopesRegistryCredentialToUtilityContainer(t *testing.T
 	attempt := authorizedAttempt("build-001", "wf", "build", v1alpha1.ExecutionKindUtility)
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-001", Namespace: "wf", UID: "operation-uid"},
-		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "build-001", WorkflowRef: workflowRefFixture(), StepName: "build", Attempt: 1,
+		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "build-001", WorkflowRef: workflowRef(workflow), StepName: "build", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "build.image"}},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
 	}
@@ -439,7 +334,7 @@ func TestUtilityOperationScopesRepositoryCredentialToHTTPSGit(t *testing.T) {
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: "initialize-001", Namespace: "wf", UID: "initialize-operation-uid"},
 		Spec: v1alpha1.UtilityOperationSpec{
-			AttemptRef: "initialize-001", WorkflowRef: workflowRefFixture(), StepName: "initialize", Attempt: 1,
+			AttemptRef: "initialize-001", WorkflowRef: workflowRef(workflow), StepName: "initialize", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "repository.initialize"},
 		},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
@@ -497,10 +392,11 @@ func TestUtilityOperationScopesRepositoryCredentialToHTTPSGit(t *testing.T) {
 
 func TestApprovalRequestOwnsAwaitingApprovalState(t *testing.T) {
 	scheme := attemptScheme(t)
+	workflow := workflowFixture()
 	attempt := authorizedAttempt("approval-001", "wf", "approval", v1alpha1.ExecutionKindHumanGate)
 	approval := &v1alpha1.ApprovalRequest{
 		ObjectMeta: metav1.ObjectMeta{Name: "approval-001", Namespace: "wf"},
-		Spec: v1alpha1.ApprovalRequestSpec{AttemptRef: v1alpha1.UIDReference{Name: "approval-001"}, WorkflowRef: workflowRefFixture(), StepName: "approval", Attempt: 1,
+		Spec: v1alpha1.ApprovalRequestSpec{AttemptRef: v1alpha1.UIDReference{Name: "approval-001"}, WorkflowRef: workflowRef(workflow), StepName: "approval", Attempt: 1,
 			Approval: v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, RequiredGroups: []string{"maintainers"}, DenyBehavior: "Fail"}},
 	}
 	ownByAttempt(approval, attempt)
@@ -520,10 +416,11 @@ func TestApprovalRequestOwnsAwaitingApprovalState(t *testing.T) {
 
 func TestUtilityOperationCannotActWithoutStepAttemptAuthority(t *testing.T) {
 	scheme := attemptScheme(t)
+	workflow := workflowFixture()
 	attempt := authorizedAttempt("push-001", "wf", "push", v1alpha1.ExecutionKindUtility)
 	operation := &v1alpha1.UtilityOperation{
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace, UID: "unowned-operation"},
-		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRefFixture(), StepName: "push", Attempt: 1,
+		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRef(workflow), StepName: "push", Attempt: 1,
 			Operation: v1alpha1.UtilityOperationRequest{Name: "git.push", Parameters: map[string]string{"branch": "main"}}},
 		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
 	}
@@ -595,13 +492,6 @@ func attemptScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-func workflowRefFixture() v1alpha1.UIDReference {
-	return v1alpha1.UIDReference{
-		Name: "wf",
-		UID:  types.UID("workflow-uid"),
-	}
-}
-
 func workflowFixture() *v1alpha1.SovereignWorkflow {
 	return &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf", Namespace: "wf", UID: "workflow-uid"},
@@ -642,11 +532,18 @@ func authorizedAttempt(name, namespace, step string, kind v1alpha1.ExecutionKind
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID("uid-" + name)},
 		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}, StepName: step, Attempt: 1, Kind: kind},
 		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending, ExecutionRef: &v1alpha1.TypedLocalReference{
-			APIVersion: v1alpha1.GroupVersion.String(), Kind: domainKind(kind), Name: name,
+			APIVersion: v1alpha1.GroupVersion.String(), Kind: DomainKind(kind), Name: name,
 		}},
 	}
 }
 
 func ownByAttempt(object metav1.Object, attempt *v1alpha1.StepAttempt) {
 	object.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(attempt, v1alpha1.GroupVersion.WithKind("StepAttempt"))})
+}
+
+func workflowRef(workflow *v1alpha1.SovereignWorkflow) v1alpha1.UIDReference {
+	return v1alpha1.UIDReference{
+		Name: workflow.Name,
+		UID:  types.UID(workflow.UID),
+	}
 }

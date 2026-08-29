@@ -7,6 +7,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/domain/state"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,13 +54,13 @@ func (r *StepAttemptReconciler) Reconcile(ctx context.Context, request ctrl.Requ
 	if attempt.Status.Phase == "" {
 		return ctrl.Result{}, r.setPhase(ctx, &attempt, v1alpha1.PhasePending, "Initialized", "attempt initialized")
 	}
-	if terminalAttempt(attempt.Status.Phase) {
+	if state.IsTerminal(attempt.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
 	if attempt.Status.ExecutionRef == nil {
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
-	if attempt.Status.ExecutionRef.APIVersion != v1alpha1.GroupVersion.String() || attempt.Status.ExecutionRef.Kind != domainKind(attempt.Spec.Kind) {
+	if attempt.Status.ExecutionRef.APIVersion != v1alpha1.GroupVersion.String() || attempt.Status.ExecutionRef.Kind != DomainKind(attempt.Spec.Kind) {
 		return ctrl.Result{}, r.fail(ctx, &attempt, "InvalidExecutionReference", false)
 	}
 	phase, reason, failureMessage, retryable, err := r.domainStatus(ctx, &attempt)
@@ -161,7 +162,7 @@ func domainPhaseMessage(kind string, phase v1alpha1.ResourcePhase, failureMessag
 
 func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.StepAttempt, phase v1alpha1.ResourcePhase, reason, message string) error {
 	updated, changed, err := r.updateAttemptStatus(ctx, client.ObjectKeyFromObject(attempt), func(latest *v1alpha1.StepAttempt) bool {
-		if terminalAttempt(latest.Status.Phase) && latest.Status.Phase != phase {
+		if state.IsTerminal(latest.Status.Phase) && latest.Status.Phase != phase {
 			return false
 		}
 		condition := apiMeta.FindStatusCondition(latest.Status.Conditions, "Ready")
@@ -180,10 +181,10 @@ func (r *StepAttemptReconciler) setPhase(ctx context.Context, attempt *v1alpha1.
 		if phase == v1alpha1.PhaseRunning && latest.Status.StartedAt == nil {
 			latest.Status.StartedAt = &now
 		}
-		if terminalAttempt(phase) {
+		if state.IsTerminal(phase) {
 			latest.Status.CompletedAt = &now
 		}
-		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: conditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: latest.Generation})
+		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: state.ConditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: latest.Generation})
 		return true
 	})
 	if err != nil || !changed {
@@ -239,24 +240,4 @@ func (r *StepAttemptReconciler) appendPhaseEvent(ctx context.Context, attempt *v
 		Subject: audit.Subject{Namespace: attempt.Namespace, Workflow: attempt.Spec.WorkflowRef.Name, Step: attempt.Spec.StepName, Attempt: attempt.Spec.Attempt},
 		Action:  "observe", Target: attempt.Name, Outcome: string(phase), Reason: reason, References: references,
 	})
-}
-
-func terminalAttempt(phase v1alpha1.ResourcePhase) bool {
-	switch phase {
-	case v1alpha1.PhaseSucceeded, v1alpha1.PhaseFailed, v1alpha1.PhaseCancelled, v1alpha1.PhaseInterrupted:
-		return true
-	default:
-		return false
-	}
-}
-
-func conditionStatus(phase v1alpha1.ResourcePhase) metav1.ConditionStatus {
-	switch phase {
-	case v1alpha1.PhaseSucceeded:
-		return metav1.ConditionTrue
-	case v1alpha1.PhaseFailed, v1alpha1.PhaseCancelled, v1alpha1.PhaseInterrupted:
-		return metav1.ConditionFalse
-	default:
-		return metav1.ConditionUnknown
-	}
 }

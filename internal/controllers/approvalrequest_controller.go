@@ -6,6 +6,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/domain/state"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -32,7 +33,7 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if err := r.Get(ctx, request.NamespacedName, &approval); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if !approval.DeletionTimestamp.IsZero() || terminalAttempt(approval.Status.Phase) {
+	if !approval.DeletionTimestamp.IsZero() || state.IsTerminal(approval.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
 	terminating, err := NamespaceTerminating(ctx, r.Client, approval.Namespace)
@@ -42,7 +43,7 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if approval.Status.Phase == v1alpha1.PhaseAwaitingApproval {
 		return ctrl.Result{}, nil
 	}
-	authorized, err := validateDomainAuthority(ctx, r.Client, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt)
+	authorized, err := ValidateDomainAuthority(ctx, r.Client, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt)
 	if err != nil {
 		return ctrl.Result{}, r.setFailed(ctx, &approval, "InvalidStepAttemptAuthority")
 	}

@@ -60,7 +60,7 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		controllerutil.AddFinalizer(&run, ValidationFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &run)
 	}
-	authorized, err := validateDomainAuthority(ctx, r.Client, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt)
+	authorized, err := ValidateDomainAuthority(ctx, r.Client, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt)
 	if err != nil {
 		run.Status.Phase = v1alpha1.PhaseFailed
 		run.Status.FailureReason = "InvalidStepAttemptAuthority"

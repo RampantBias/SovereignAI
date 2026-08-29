@@ -8,6 +8,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
+	"github.com/SovereignAI/internal/domain/state"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -113,7 +114,7 @@ func (r *HumanSessionReconciler) Reconcile(ctx context.Context, request ctrl.Req
 		}
 		return ctrl.Result{}, r.appendHumanSessionEvent(ctx, &session, "HumanSessionCreated", "create", "created", "")
 	}
-	if terminalAttempt(session.Status.Phase) {
+	if state.IsTerminal(session.Status.Phase) {
 		return r.reconcileWorkspaceWriterRelease(ctx, &session)
 	}
 

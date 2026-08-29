@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
-	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/inference"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,133 +15,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-func TestTerminalAgentRunReleasesInferenceCapacityForNextAttempt(t *testing.T) {
-	ctx := context.Background()
-	scheme := inferenceScheme(t)
-	workflowNamespace := "workflow"
-	endpoint := &v1alpha1.InferenceEndpoint{
-		ObjectMeta: metav1.ObjectMeta{Name: "warm", Namespace: InferenceNamespace, Labels: map[string]string{"sovereign-ai.io/project": "project"}},
-		Spec: v1alpha1.InferenceEndpointSpec{
-			Model: "code", ModelRevision: "v1", Tenant: "team", Classification: "internal",
-			SharingScope: v1alpha1.SharingWithinProject, MaxKVRAMMiB: 8192, SafetyHeadroomMiB: 1024,
-		},
-		Status: v1alpha1.InferenceEndpointStatus{
-			Phase:             v1alpha1.PhaseRunning,
-			AllocatedKVRAMMiB: 6144,
-			ActiveLeaseCount:  3,
-			ActiveLeases: []v1alpha1.NamespacedReference{
-				{Namespace: workflowNamespace, Name: "architect-001-inference"},
-				{Namespace: workflowNamespace, Name: "test-author-001-inference"},
-				{Namespace: workflowNamespace, Name: "test-author-002-inference"},
-			},
-		},
-	}
-	completedLease := &v1alpha1.InferenceLease{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-author-002-inference", Namespace: workflowNamespace},
-		Spec: v1alpha1.InferenceLeaseSpec{
-			WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, AttemptRef: "test-author-002", ProjectRef: "project",
-			Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject,
-			Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2048,
-		},
-		Status: v1alpha1.InferenceLeaseStatus{
-			Phase:       v1alpha1.PhaseRunning,
-			EndpointRef: v1alpha1.NamespacedReference{Namespace: endpoint.Namespace, Name: endpoint.Name},
-			EndpointURL: "http://warm.sovereign-inference.svc:8000",
-		},
-	}
-	nextLease := &v1alpha1.InferenceLease{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-author-003-inference", Namespace: workflowNamespace},
-		Spec: v1alpha1.InferenceLeaseSpec{
-			WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, AttemptRef: "test-author-003", ProjectRef: "project",
-			Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject,
-			Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2048,
-		},
-	}
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: InferenceNamespace}}
-	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&v1alpha1.InferenceLease{}, &v1alpha1.InferenceEndpoint{}).
-		WithObjects(namespace, endpoint, completedLease, nextLease).Build()
-	recorder := audit.NewMemoryRecorder()
-	run := &v1alpha1.AgentRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-author-002", Namespace: workflowNamespace},
-		Spec: v1alpha1.AgentRunSpec{
-			WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, StepName: "test-author", Attempt: 2,
-		},
-		Status: v1alpha1.AgentRunStatus{
-			Phase: v1alpha1.PhaseFailed, InferenceLeaseRef: completedLease.Name,
-		},
-	}
-	agentReconciler := &AgentRunReconciler{Client: kubeClient, Scheme: scheme, Audit: recorder}
-	released, err := agentReconciler.reconcileInferenceLeaseRelease(ctx, run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if released {
-		t.Fatal("terminal AgentRun reported release before the InferenceLease acknowledged it")
-	}
-	var requested v1alpha1.InferenceLease
-	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: completedLease.Namespace, Name: completedLease.Name}, &requested); err != nil {
-		t.Fatal(err)
-	}
-	if requested.Annotations[InferenceLeaseReleaseRequestAnnotation] != "AgentRunFailed" {
-		t.Fatalf("release request annotation = %q", requested.Annotations[InferenceLeaseReleaseRequestAnnotation])
-	}
-
-	leaseReconciler := &InferenceLeaseReconciler{Client: kubeClient, Scheme: scheme, Audit: recorder}
-	completedRequest := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: completedLease.Namespace, Name: completedLease.Name}}
-	if _, err := leaseReconciler.Reconcile(ctx, completedRequest); err != nil {
-		t.Fatal(err)
-	}
-	var releasedLease v1alpha1.InferenceLease
-	if err := kubeClient.Get(ctx, completedRequest.NamespacedName, &releasedLease); err != nil {
-		t.Fatal(err)
-	}
-	if releasedLease.Status.Phase != v1alpha1.PhaseSucceeded || releasedLease.Status.Reason != "AgentRunFailed" {
-		t.Fatalf("lease release was not acknowledged: %#v", releasedLease.Status)
-	}
-	var releasedEndpoint v1alpha1.InferenceEndpoint
-	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: endpoint.Namespace, Name: endpoint.Name}, &releasedEndpoint); err != nil {
-		t.Fatal(err)
-	}
-	if releasedEndpoint.Status.AllocatedKVRAMMiB != 4096 || releasedEndpoint.Status.ActiveLeaseCount != 2 ||
-		containsLeaseReference(releasedEndpoint.Status.ActiveLeases, completedLease.Namespace, completedLease.Name) {
-		t.Fatalf("endpoint reservation was not released: %#v", releasedEndpoint.Status)
-	}
-	released, err = agentReconciler.reconcileInferenceLeaseRelease(ctx, run)
-	if err != nil || !released {
-		t.Fatalf("terminal AgentRun did not observe release acknowledgement: released=%t err=%v", released, err)
-	}
-	if _, err := leaseReconciler.Reconcile(ctx, completedRequest); err != nil {
-		t.Fatal(err)
-	}
-
-	nextRequest := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: nextLease.Namespace, Name: nextLease.Name}}
-	for range 2 {
-		if _, err := leaseReconciler.Reconcile(ctx, nextRequest); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var bound v1alpha1.InferenceLease
-	if err := kubeClient.Get(ctx, nextRequest.NamespacedName, &bound); err != nil {
-		t.Fatal(err)
-	}
-	if bound.Status.Phase != v1alpha1.PhaseRunning || bound.Status.EndpointRef.Name != endpoint.Name {
-		t.Fatalf("next attempt lease did not bind after release: %#v", bound.Status)
-	}
-	var reboundEndpoint v1alpha1.InferenceEndpoint
-	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: endpoint.Namespace, Name: endpoint.Name}, &reboundEndpoint); err != nil {
-		t.Fatal(err)
-	}
-	if reboundEndpoint.Status.AllocatedKVRAMMiB != 6144 || reboundEndpoint.Status.ActiveLeaseCount != 3 {
-		t.Fatalf("endpoint capacity was not reassigned exactly once: %#v", reboundEndpoint.Status)
-	}
-	for _, eventType := range []string{"InferenceLeaseReleaseRequested", "InferenceLeaseReleased", "InferenceLeaseBound"} {
-		if !recorder.Has(eventType) {
-			t.Errorf("missing %s audit event", eventType)
-		}
-	}
-}
 
 func containsLeaseReference(references []v1alpha1.NamespacedReference, namespace, name string) bool {
 	for _, reference := range references {
@@ -155,7 +28,7 @@ func containsLeaseReference(references []v1alpha1.NamespacedReference, namespace
 func TestInferenceLeaseBindsCompatibleWarmEndpoint(t *testing.T) {
 	scheme := inferenceScheme(t)
 	endpoint := &v1alpha1.InferenceEndpoint{
-		ObjectMeta: metav1.ObjectMeta{Name: "warm", Namespace: InferenceNamespace, Labels: map[string]string{"sovereign-ai.io/project": "project"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "warm", Namespace: controllermeta.InferenceNamespace, Labels: map[string]string{"sovereign-ai.io/project": "project"}},
 		Spec:       v1alpha1.InferenceEndpointSpec{Model: "code", ModelRevision: "v1", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, MaxKVRAMMiB: 10000, SafetyHeadroomMiB: 1000},
 		Status:     v1alpha1.InferenceEndpointStatus{Phase: v1alpha1.PhaseRunning},
 	}
@@ -163,7 +36,7 @@ func TestInferenceLeaseBindsCompatibleWarmEndpoint(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "lease", Namespace: "workflow"},
 		Spec:       v1alpha1.InferenceLeaseSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, AttemptRef: "developer-001", ProjectRef: "project", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2000},
 	}
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: InferenceNamespace}}
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controllermeta.InferenceNamespace}}
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.InferenceLease{}, &v1alpha1.InferenceEndpoint{}).
 		WithObjects(namespace, endpoint, lease).Build()
@@ -195,7 +68,7 @@ func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
 		Profile: testInferenceProfile(),
 	}
 	endpoint := &v1alpha1.InferenceEndpoint{
-		ObjectMeta: metav1.ObjectMeta{Name: "endpoint", Namespace: InferenceNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "endpoint", Namespace: controllermeta.InferenceNamespace},
 		Spec:       v1alpha1.InferenceEndpointSpec{Model: "code", ModelRevision: "v1", RuntimeImage: "vllm@sha256:test"},
 	}
 	pod, service := reconciler.buildInferenceWorkloads(endpoint)

@@ -1,4 +1,4 @@
-package controllers
+package agentrun
 
 import (
 	"os"
@@ -13,7 +13,7 @@ import (
 )
 
 func TestAgentRuntimeSmokeStopsAfterThreeSingleOutputAgents(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "resources", "smoke-agent-runtime-workflow.yaml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "resources", "smoke-agent-runtime-workflow.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

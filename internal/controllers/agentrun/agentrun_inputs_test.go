@@ -1,4 +1,4 @@
-package controllers
+package agentrun
 
 import (
 	"context"
@@ -41,7 +41,7 @@ func TestResolveAgentInputsSelectsAcceptedArtifactByLogicalNameAndDigest(t *test
 		"v1",
 		"sha256:wanted",
 		"/workspace/.sovereign/artifacts/wanted.json",
-		workflowRefFixture(),
+		workflowRef(workflowFixture()),
 	)
 	otherDigest := acceptedAgentInputArtifact(
 		"initialize-repository-a2-repository-revision-v1-00",
@@ -49,7 +49,7 @@ func TestResolveAgentInputsSelectsAcceptedArtifactByLogicalNameAndDigest(t *test
 		"v1",
 		"sha256:other",
 		"/workspace/.sovereign/artifacts/other.json",
-		workflowRefFixture(),
+		workflowRef(workflowFixture()),
 	)
 	wrongWorkflow := acceptedAgentInputArtifact(
 		"other-workflow-repository-revision-v1-00",
@@ -66,7 +66,7 @@ func TestResolveAgentInputsSelectsAcceptedArtifactByLogicalNameAndDigest(t *test
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "architect-a1", Namespace: "wf"},
 		Spec: v1alpha1.AgentRunSpec{
-			WorkflowRef: workflowRefFixture(),
+			WorkflowRef: workflowRef(workflowFixture()),
 			Inputs: []v1alpha1.ArtifactReference{{
 				Name:   "repository-revision",
 				Digest: "sha256:wanted",
@@ -102,7 +102,7 @@ func TestResolveAgentInputsRejectsAmbiguousAcceptedArtifacts(t *testing.T) {
 		"v1",
 		"sha256:first",
 		"/workspace/.sovereign/artifacts/first.json",
-		workflowRefFixture(),
+		workflowRef(workflowFixture()),
 	)
 	second := acceptedAgentInputArtifact(
 		"architect-a2-implementation-plan-v1-00",
@@ -110,14 +110,14 @@ func TestResolveAgentInputsRejectsAmbiguousAcceptedArtifacts(t *testing.T) {
 		"v1",
 		"sha256:second",
 		"/workspace/.sovereign/artifacts/second.json",
-		workflowRefFixture(),
+		workflowRef(workflowFixture()),
 	)
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(first, second).Build()
 	reconciler := &AgentRunReconciler{Client: kubeClient, Scheme: scheme}
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-author-a1", Namespace: "wf"},
 		Spec: v1alpha1.AgentRunSpec{
-			WorkflowRef: workflowRefFixture(),
+			WorkflowRef: workflowRef(workflowFixture()),
 			Inputs:      []v1alpha1.ArtifactReference{{Name: "implementation-plan"}},
 		},
 	}
@@ -139,7 +139,7 @@ func TestResolveAgentInputsWaitsForAcceptanceAndIgnoresOtherWorkflows(t *testing
 		"v1",
 		"sha256:pending",
 		"/workspace/.sovereign/artifacts/pending.json",
-		workflowRefFixture(),
+		workflowRef(workflowFixture()),
 	)
 	pending.Status = v1alpha1.ArtifactStatus{Phase: v1alpha1.PhasePending}
 	wrongWorkflow := acceptedAgentInputArtifact(
@@ -155,7 +155,7 @@ func TestResolveAgentInputsWaitsForAcceptanceAndIgnoresOtherWorkflows(t *testing
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-author-a1", Namespace: "wf"},
 		Spec: v1alpha1.AgentRunSpec{
-			WorkflowRef: workflowRefFixture(),
+			WorkflowRef: workflowRef(workflowFixture()),
 			Inputs:      []v1alpha1.ArtifactReference{{Name: "implementation-plan"}},
 		},
 	}
@@ -185,7 +185,7 @@ func TestResolveAgentInputsRejectsDigestMismatchAndRejectedArtifact(t *testing.T
 				"v1",
 				"sha256:other",
 				"/workspace/.sovereign/artifacts/other.json",
-				workflowRefFixture(),
+				workflowRef(workflowFixture()),
 			),
 			want: "no accepted artifact with digest",
 		},
@@ -199,7 +199,7 @@ func TestResolveAgentInputsRejectsDigestMismatchAndRejectedArtifact(t *testing.T
 					"v1",
 					"sha256:rejected",
 					"/workspace/.sovereign/artifacts/rejected.json",
-					workflowRefFixture(),
+					workflowRef(workflowFixture()),
 				)
 				artifact.Status = v1alpha1.ArtifactStatus{Phase: v1alpha1.PhaseFailed}
 				return artifact
@@ -216,7 +216,7 @@ func TestResolveAgentInputsRejectsDigestMismatchAndRejectedArtifact(t *testing.T
 			run := &v1alpha1.AgentRun{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-author-a1", Namespace: "wf"},
 				Spec: v1alpha1.AgentRunSpec{
-					WorkflowRef: workflowRefFixture(),
+					WorkflowRef: workflowRef(workflowFixture()),
 					Inputs:      []v1alpha1.ArtifactReference{test.requested},
 				},
 			}
@@ -229,35 +229,5 @@ func TestResolveAgentInputsRejectsDigestMismatchAndRejectedArtifact(t *testing.T
 				t.Fatalf("resolution ready = %t, invalid reason = %q, want %q", ready, invalidReason, test.want)
 			}
 		})
-	}
-}
-
-func acceptedAgentInputArtifact(name, contractName, contractVersion, digest, path string, workflowRef v1alpha1.UIDReference) *v1alpha1.Artifact {
-	const generation = int64(1)
-	return &v1alpha1.Artifact{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:       name,
-			Namespace:  "wf",
-			Generation: generation,
-		},
-		Spec: v1alpha1.ArtifactSpec{
-			WorkflowRef: workflowRef,
-			Contract: v1alpha1.ContractReference{
-				Name:    contractName,
-				Version: contractVersion,
-			},
-			Digest: digest,
-			Path:   path,
-		},
-		Status: v1alpha1.ArtifactStatus{
-			ObservedGeneration: generation,
-			Phase:              v1alpha1.PhaseSucceeded,
-			Conditions: []metav1.Condition{{
-				Type:               "Valid",
-				Status:             metav1.ConditionTrue,
-				Reason:             "ContractAccepted",
-				ObservedGeneration: generation,
-			}},
-		},
 	}
 }

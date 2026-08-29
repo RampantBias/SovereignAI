@@ -9,6 +9,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllers"
+	"github.com/SovereignAI/internal/controllers/agentrun"
 	"github.com/SovereignAI/internal/controllers/workflow"
 	"github.com/SovereignAI/internal/inference"
 	"github.com/SovereignAI/internal/policy"
@@ -128,7 +129,7 @@ func main() {
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 			Audit:  recorder},
-		&controllers.AgentRunReconciler{
+		&agentrun.AgentRunReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,

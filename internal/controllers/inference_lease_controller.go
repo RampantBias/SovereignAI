@@ -8,6 +8,8 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllermeta"
+	"github.com/SovereignAI/internal/domain/state"
 	"github.com/SovereignAI/internal/inference"
 	admission "github.com/SovereignAI/internal/inference"
 	policyengine "github.com/SovereignAI/internal/policy"
@@ -19,11 +21,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-)
-
-const (
-	InferenceNamespace                     = "sovereign-inference"
-	InferenceLeaseReleaseRequestAnnotation = "sovereign-ai.io/inference-lease-release-request"
 )
 
 type InferenceLeaseReconciler struct {
@@ -49,10 +46,10 @@ func (r *InferenceLeaseReconciler) Reconcile(ctx context.Context, request ctrl.R
 	if err := r.Get(ctx, request.NamespacedName, &lease); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if reason := lease.Annotations[InferenceLeaseReleaseRequestAnnotation]; reason != "" && !terminalAttempt(lease.Status.Phase) {
+	if reason := lease.Annotations[controllermeta.InferenceLeaseReleaseRequestAnnotation]; reason != "" && !state.IsTerminal(lease.Status.Phase) {
 		return ctrl.Result{}, r.releaseLease(ctx, &lease, reason)
 	}
-	if lease.Status.Phase == v1alpha1.PhaseRunning || terminalAttempt(lease.Status.Phase) {
+	if lease.Status.Phase == v1alpha1.PhaseRunning || state.IsTerminal(lease.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
 
@@ -186,20 +183,20 @@ func inferencePolicyRequest(lease v1alpha1.InferenceLease) map[string]any {
 
 func (r *InferenceLeaseReconciler) ensureInferenceNamespace(ctx context.Context) error {
 	var namespace corev1.Namespace
-	err := r.Get(ctx, types.NamespacedName{Name: InferenceNamespace}, &namespace)
+	err := r.Get(ctx, types.NamespacedName{Name: controllermeta.InferenceNamespace}, &namespace)
 	if err == nil {
 		return nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
-	namespace = corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: InferenceNamespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sovereign-orchestrator", "istio-injection": "enabled"}}}
+	namespace = corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controllermeta.InferenceNamespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sovereign-orchestrator", "istio-injection": "enabled"}}}
 	return client.IgnoreAlreadyExists(r.Create(ctx, &namespace))
 }
 
 func (r *InferenceLeaseReconciler) snapshots(ctx context.Context) ([]admission.EndpointSnapshot, error) {
 	var endpoints v1alpha1.InferenceEndpointList
-	if err := r.List(ctx, &endpoints, client.InNamespace(InferenceNamespace)); err != nil {
+	if err := r.List(ctx, &endpoints, client.InNamespace(controllermeta.InferenceNamespace)); err != nil {
 		return nil, err
 	}
 	var leases v1alpha1.InferenceLeaseList
@@ -222,7 +219,7 @@ func (r *InferenceLeaseReconciler) snapshots(ctx context.Context) ([]admission.E
 func (r *InferenceLeaseReconciler) ensureEndpoint(ctx context.Context, lease *v1alpha1.InferenceLease) (*v1alpha1.InferenceEndpoint, error) {
 	name := endpointName(lease.Spec.Model, lease.Spec.ModelRevision, lease.Spec.Tenant, lease.Spec.Classification)
 	var endpoint v1alpha1.InferenceEndpoint
-	err := r.Get(ctx, types.NamespacedName{Namespace: InferenceNamespace, Name: name}, &endpoint)
+	err := r.Get(ctx, types.NamespacedName{Namespace: controllermeta.InferenceNamespace, Name: name}, &endpoint)
 	if err == nil {
 		return &endpoint, nil
 	}
@@ -238,7 +235,7 @@ func (r *InferenceLeaseReconciler) ensureEndpoint(ctx context.Context, lease *v1
 		maxKV = 8192
 	}
 	endpoint = v1alpha1.InferenceEndpoint{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: InferenceNamespace, Labels: map[string]string{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: controllermeta.InferenceNamespace, Labels: map[string]string{
 			"sovereign-ai.io/project": lease.Spec.ProjectRef, "sovereign-ai.io/tenant": lease.Spec.Tenant,
 			"sovereign-ai.io/classification": lease.Spec.Classification,
 		}},

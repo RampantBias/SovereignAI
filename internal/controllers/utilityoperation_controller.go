@@ -14,6 +14,7 @@ import (
 	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
+	"github.com/SovereignAI/internal/domain/state"
 	policyengine "github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/utility"
 	"github.com/SovereignAI/internal/utilitycontract"
@@ -72,10 +73,10 @@ func (r *UtilityOperationReconciler) Reconcile(ctx context.Context, request ctrl
 	if operation.Status.Phase == "" {
 		return ctrl.Result{}, r.setPhase(ctx, &operation, v1alpha1.PhasePending, "Initialized", "utility operation initialized")
 	}
-	if terminalAttempt(operation.Status.Phase) {
+	if state.IsTerminal(operation.Status.Phase) {
 		return r.reconcileWorkspaceWriterRelease(ctx, &operation)
 	}
-	authorized, err := validateDomainAuthority(ctx, r.Client, &operation, operation.Spec.AttemptRef, v1alpha1.ExecutionKindUtility, operation.Spec.WorkflowRef, operation.Spec.StepName, operation.Spec.Attempt)
+	authorized, err := ValidateDomainAuthority(ctx, r.Client, &operation, operation.Spec.AttemptRef, v1alpha1.ExecutionKindUtility, operation.Spec.WorkflowRef, operation.Spec.StepName, operation.Spec.Attempt)
 	if err != nil {
 		return ctrl.Result{}, r.fail(ctx, &operation, "InvalidStepAttemptAuthority", false)
 	}
@@ -552,7 +553,7 @@ func (r *UtilityOperationReconciler) startCollection(ctx context.Context, operat
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	objects := buildCollectorResources(operation, workflow, operation.Spec.StepName, r.collectorImage(), grant)
+	objects := BuildCollectorResources(operation, workflow, operation.Spec.StepName, r.collectorImage(), grant)
 	for _, object := range objects {
 		if err := controllerutil.SetControllerReference(operation, object, r.Scheme); err != nil {
 			return ctrl.Result{}, err
@@ -610,10 +611,10 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 			Parameters:       parameters,
 			Outputs:          outputs,
 			WorkspacePath:    "/workspace",
-			StagingPath:      executionStagingPath(operation.Name),
-			ControlPath:      executionControlPath(operation.Name),
-			ResultPath:       executionResultPath(operation.Name),
-			AuditEventsPath:  executionAuditEventsPath(operation.Name),
+			StagingPath:      ExecutionStagingPath(operation.Name),
+			ControlPath:      ExecutionControlPath(operation.Name),
+			ResultPath:       ExecutionResultPath(operation.Name),
+			AuditEventsPath:  ExecutionAuditEventsPath(operation.Name),
 			WorkspaceWrite:   utilitycontract.WorkspaceWriteAuthority{LeaseName: grant.LeaseName, HolderIdentity: grant.HolderIdentity, WriterEpoch: grant.Epoch},
 		},
 	}
@@ -703,7 +704,7 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 							Name:            "utility",
 							Image:           workload.executionImage,
 							Command:         []string{runnerPath},
-							Args:            []string{"--input", "/control/input.json", "--result", executionResultPath(operation.Name)},
+							Args:            []string{"--input", "/control/input.json", "--result", ExecutionResultPath(operation.Name)},
 							SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 							VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "input", MountPath: "/control", ReadOnly: true}},
 						}},
@@ -814,10 +815,10 @@ func (r *UtilityOperationReconciler) setPhase(ctx context.Context, operation *v1
 		if phase == v1alpha1.PhaseRunning && latest.Status.StartedAt == nil {
 			latest.Status.StartedAt = &now
 		}
-		if terminalAttempt(phase) {
+		if state.IsTerminal(phase) {
 			latest.Status.CompletedAt = &now
 		}
-		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: conditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: latest.Generation})
+		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: state.ConditionStatus(phase), Reason: reason, Message: message, ObservedGeneration: latest.Generation})
 		return true
 	})
 	if err != nil || !changed {

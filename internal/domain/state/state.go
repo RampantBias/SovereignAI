@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var transitions = map[v1alpha1.ResourcePhase]map[v1alpha1.ResourcePhase]struct{}{
@@ -84,7 +85,7 @@ func ValidateTransition(from, to v1alpha1.ResourcePhase) error {
 
 func IsTerminal(phase v1alpha1.ResourcePhase) bool {
 	switch phase {
-	case v1alpha1.PhaseSucceeded, v1alpha1.PhaseFailed, v1alpha1.PhaseCancelled:
+	case v1alpha1.PhaseSucceeded, v1alpha1.PhaseFailed, v1alpha1.PhaseCancelled, v1alpha1.PhaseInterrupted:
 		return true
 	default:
 		return false
@@ -99,4 +100,15 @@ func NextAttemptNumber(attempts []v1alpha1.StepAttempt, stepName string) int32 {
 		}
 	}
 	return max + 1
+}
+
+func ConditionStatus(phase v1alpha1.ResourcePhase) metav1.ConditionStatus {
+	switch phase {
+	case v1alpha1.PhaseSucceeded:
+		return metav1.ConditionTrue
+	case v1alpha1.PhaseFailed, v1alpha1.PhaseCancelled, v1alpha1.PhaseInterrupted:
+		return metav1.ConditionFalse
+	default:
+		return metav1.ConditionUnknown
+	}
 }
