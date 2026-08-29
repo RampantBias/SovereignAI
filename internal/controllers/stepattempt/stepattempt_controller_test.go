@@ -157,7 +157,7 @@ func (allowPolicy) Evaluate(context.Context, any) (policyengine.Decision, error)
 func authorizedAttempt(name, namespace, step string, kind v1alpha1.ExecutionKind) *v1alpha1.StepAttempt {
 	return &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID("uid-" + name)},
-		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}, StepName: step, Attempt: 1, Kind: kind},
+		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}, StepName: step, RetryNumber: 1, Kind: kind},
 		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending, ExecutionRef: &v1alpha1.TypedLocalReference{
 			APIVersion: v1alpha1.GroupVersion.String(), Kind: controllers.DomainKind(kind), Name: name,
 		}},

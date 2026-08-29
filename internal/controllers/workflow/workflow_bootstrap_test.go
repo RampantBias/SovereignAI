@@ -164,7 +164,7 @@ func TestWorkflowBootstrapGatesFirstAttemptUntilArtifactAcceptance(t *testing.T)
 	if err := kubeClient.List(ctx, &attempts); err != nil {
 		t.Fatal(err)
 	}
-	if len(attempts.Items) != 1 || attempts.Items[0].Spec.Attempt != 1 {
+	if len(attempts.Items) != 1 || attempts.Items[0].Spec.RetryNumber != 1 {
 		t.Fatalf("first StepAttempt was not created after acceptance: %#v", attempts.Items)
 	}
 	var updated v1alpha1.SovereignWorkflow

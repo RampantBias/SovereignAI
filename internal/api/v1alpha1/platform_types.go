@@ -74,6 +74,17 @@ type FailedAgentAttempt struct {
 	Message string `json:"message"`
 }
 
+// AgentCompletionStatus is the controller-observed durable terminal action
+// produced by agent_complete.
+type AgentCompletionStatus struct {
+	// +kubebuilder:validation:Enum=changed;no_change;contract_ambiguous
+	Disposition string `json:"disposition"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Summary string `json:"summary"`
+	Digest  string `json:"digest,omitempty"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=attempt
@@ -89,10 +100,11 @@ type StepAttempt struct {
 // StepAttemptSpec is a workflow lifecycle envelope. Domain execution intent is
 // held by the owned AgentRun, UtilityOperation, ApprovalRequest, or ValidationRun.
 type StepAttemptSpec struct {
-	WorkflowRef UIDReference  `json:"workflowRef"`
-	StepName    string        `json:"stepName"`
-	Attempt     int32         `json:"attempt"`
-	Kind        ExecutionKind `json:"kind"`
+	WorkflowRef     UIDReference  `json:"workflowRef"`
+	StepName        string        `json:"stepName"`
+	RetryNumber     int32         `json:"retryNumber"`
+	WorkflowAttempt int32         `json:"workflowAttempt"`
+	Kind            ExecutionKind `json:"kind"`
 }
 
 type InferenceRequestSpec struct {
@@ -110,11 +122,12 @@ type StepAttemptStatus struct {
 	ExecutionRef       *TypedLocalReference `json:"executionRef,omitempty"`
 	FailureReason      string               `json:"failureReason,omitempty"`
 	// +kubebuilder:validation:MaxLength=1024
-	FailureMessage string             `json:"failureMessage,omitempty"`
-	Retryable      bool               `json:"retryable,omitempty"`
-	StartedAt      *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt    *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions     []metav1.Condition `json:"conditions,omitempty"`
+	FailureMessage string                 `json:"failureMessage,omitempty"`
+	Retryable      bool                   `json:"retryable,omitempty"`
+	Completion     *AgentCompletionStatus `json:"completion,omitempty"`
+	StartedAt      *metav1.Time           `json:"startedAt,omitempty"`
+	CompletedAt    *metav1.Time           `json:"completedAt,omitempty"`
+	Conditions     []metav1.Condition     `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -163,11 +176,12 @@ type AgentRunStatus struct {
 	WorkspaceWriterReleased bool          `json:"workspaceWriterReleased,omitempty"`
 	FailureReason           string        `json:"failureReason,omitempty"`
 	// +kubebuilder:validation:MaxLength=1024
-	FailureMessage string             `json:"failureMessage,omitempty"`
-	Retryable      bool               `json:"retryable,omitempty"`
-	StartedAt      *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt    *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions     []metav1.Condition `json:"conditions,omitempty"`
+	FailureMessage string                 `json:"failureMessage,omitempty"`
+	Retryable      bool                   `json:"retryable,omitempty"`
+	Completion     *AgentCompletionStatus `json:"completion,omitempty"`
+	StartedAt      *metav1.Time           `json:"startedAt,omitempty"`
+	CompletedAt    *metav1.Time           `json:"completedAt,omitempty"`
+	Conditions     []metav1.Condition     `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

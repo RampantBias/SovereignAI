@@ -45,7 +45,7 @@ func ValidateDomainBinding(attempt *v1alpha1.StepAttempt, object client.Object, 
 		attempt.Spec.WorkflowRef.Name != workflowRef.Name ||
 		attempt.Spec.WorkflowRef.UID != workflowRef.UID ||
 		attempt.Spec.StepName != stepName ||
-		attempt.Spec.Attempt != attemptNumber {
+		attempt.Spec.RetryNumber != attemptNumber {
 		return fmt.Errorf("domain execution identity does not match StepAttempt %s", attempt.Name)
 	}
 	return nil

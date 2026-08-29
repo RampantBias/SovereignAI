@@ -95,8 +95,8 @@ func IsTerminal(phase v1alpha1.ResourcePhase) bool {
 func NextAttemptNumber(attempts []v1alpha1.StepAttempt, stepName string) int32 {
 	var max int32
 	for _, attempt := range attempts {
-		if attempt.Spec.StepName == stepName && attempt.Spec.Attempt > max {
-			max = attempt.Spec.Attempt
+		if attempt.Spec.StepName == stepName && attempt.Spec.RetryNumber > max {
+			max = attempt.Spec.RetryNumber
 		}
 	}
 	return max + 1

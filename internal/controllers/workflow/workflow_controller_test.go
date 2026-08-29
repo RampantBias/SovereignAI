@@ -56,7 +56,7 @@ func TestWorkflowCreatesFirstAttemptIdempotently(t *testing.T) {
 	if err := client.List(context.Background(), &attempts); err != nil {
 		t.Fatal(err)
 	}
-	if len(attempts.Items) != 1 || attempts.Items[0].Spec.Attempt != 1 {
+	if len(attempts.Items) != 1 || attempts.Items[0].Spec.RetryNumber != 1 {
 		t.Fatalf("expected one attempt, got %#v", attempts.Items)
 	}
 	var updated v1alpha1.SovereignWorkflow
@@ -134,8 +134,8 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 				Name: workflow.Name,
 				UID:  workflow.UID,
 			},
-			StepName: "test-author",
-			Attempt:  1,
+			StepName:    "test-author",
+			RetryNumber: 1,
 		},
 		Status: v1alpha1.StepAttemptStatus{
 			Phase:          v1alpha1.PhaseFailed,
@@ -185,7 +185,7 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 	}, &original); err != nil {
 		t.Fatal(err)
 	}
-	if original.Status.Phase != v1alpha1.PhaseFailed || original.Spec.Attempt != 1 {
+	if original.Status.Phase != v1alpha1.PhaseFailed || original.Spec.RetryNumber != 1 {
 		t.Fatal("original attempt was modified")
 	}
 
@@ -197,8 +197,8 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 	}, &retried); err != nil {
 		t.Fatal(err)
 	}
-	if retried.Spec.Attempt != 2 || retried.Spec.StepName != "test-author" {
-		t.Fatalf("unexpected retry attempt: #%d; name: %s", retried.Spec.Attempt, retried.Spec.StepName)
+	if retried.Spec.RetryNumber != 2 || retried.Spec.StepName != "test-author" {
+		t.Fatalf("unexpected retry attempt: #%d; name: %s", retried.Spec.RetryNumber, retried.Spec.StepName)
 	}
 
 	// test-author-002 is owned by new attempt

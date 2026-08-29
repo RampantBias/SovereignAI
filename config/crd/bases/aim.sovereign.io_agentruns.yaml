@@ -153,6 +153,27 @@ spec:
               completedAt:
                 format: date-time
                 type: string
+              completion:
+                description: |-
+                  AgentCompletionStatus is the controller-observed durable terminal action
+                  produced by agent_complete.
+                properties:
+                  digest:
+                    type: string
+                  disposition:
+                    enum:
+                    - changed
+                    - no_change
+                    - contract_ambiguous
+                    type: string
+                  summary:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                required:
+                - disposition
+                - summary
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

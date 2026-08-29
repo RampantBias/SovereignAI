@@ -160,11 +160,11 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		}
 
 		// If attempt is retryable append a recovery event and create a new attempt
-		if attempt.Status.Retryable && attempt.Spec.Attempt < maxAttempts {
-			if err := r.appendRecoveryEvents(ctx, &workflow, &attempt, step, attempt.Spec.Attempt+1); err != nil {
+		if attempt.Status.Retryable && attempt.Spec.RetryNumber < maxAttempts {
+			if err := r.appendRecoveryEvents(ctx, &workflow, &attempt, step, attempt.Spec.RetryNumber+1); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{}, r.createAttemptWithFeedback(ctx, &workflow, step, attempt.Spec.Attempt+1, retryFeedbackForAttempt(&attempt))
+			return ctrl.Result{}, r.createAttemptWithFeedback(ctx, &workflow, step, attempt.Spec.RetryNumber+1, retryFeedbackForAttempt(&attempt))
 		}
 		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepFailed", attempt.Status.FailureReason)
 	}
@@ -305,7 +305,7 @@ func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, work
 		Spec: v1alpha1.StepAttemptSpec{
 			WorkflowRef: v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.UID},
 			StepName:    step.Name,
-			Attempt:     number,
+			RetryNumber: number,
 			Kind:        step.Kind,
 		},
 	}
@@ -352,7 +352,7 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 			return nil, fmt.Errorf("agent step %s has no agent specification", step.Name)
 		}
 		object = &v1alpha1.AgentRun{ObjectMeta: metadata, Spec: v1alpha1.AgentRunSpec{
-			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.Attempt,
+			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.RetryNumber,
 			PriorAttemptRef: copyFailedAgentAttempt(feedback),
 			Responsibility:  step.Agent.Responsibility, Image: step.Agent.Image,
 			Executable: append([]string(nil), step.Agent.Executable...), Capabilities: append([]string(nil), step.Agent.Capabilities...),
@@ -365,7 +365,7 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 			return nil, fmt.Errorf("utility step %s has no utility operation", step.Name)
 		}
 		object = &v1alpha1.UtilityOperation{ObjectMeta: metadata, Spec: v1alpha1.UtilityOperationSpec{
-			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.Attempt,
+			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.RetryNumber,
 			Operation: copyUtilityOperation(*step.Utility), Inputs: append([]v1alpha1.ArtifactReference(nil), step.Inputs...),
 			OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...), Timeout: step.Timeout,
 		}}
@@ -376,7 +376,7 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 		}
 		object = &v1alpha1.ApprovalRequest{ObjectMeta: metadata, Spec: v1alpha1.ApprovalRequestSpec{
 			AttemptRef: v1alpha1.UIDReference{Name: attempt.Name}, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name,
-			Attempt: attempt.Spec.Attempt, Approval: copyApprovalSpec(*step.Approval),
+			Attempt: attempt.Spec.RetryNumber, Approval: copyApprovalSpec(*step.Approval),
 		}}
 		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ApprovalRequest", Name: attempt.Name}
 	case v1alpha1.ExecutionKindValidation:
@@ -384,7 +384,7 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 			return nil, fmt.Errorf("validation step %s has no validation specification", step.Name)
 		}
 		object = &v1alpha1.ValidationRun{ObjectMeta: metadata, Spec: v1alpha1.ValidationRunSpec{
-			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.Attempt,
+			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.RetryNumber,
 			Provider: step.Validation.Provider, Commit: step.Validation.Commit, ImageDigest: step.Validation.ImageDigest,
 			OverlayPath: step.Validation.OverlayPath, Destination: step.Validation.Destination,
 		}}
@@ -540,12 +540,12 @@ func (r *WorkflowReconciler) appendRecoveryEvents(ctx context.Context, workflow 
 	}
 	data := map[string]any{
 		"retryFrom":        step.Name,
-		"previousAttempt":  failedAttempt.Spec.Attempt,
+		"previousAttempt":  failedAttempt.Spec.RetryNumber,
 		"nextAttempt":      nextAttempt,
 		"failureReason":    failedAttempt.Status.FailureReason,
 		"interruptedPhase": failedAttempt.Status.Phase,
 	}
-	if err := r.appendWorkflowEvent(ctx, workflow, "RecoveryDecisionSelected", step.Name, failedAttempt.Spec.Attempt, "select", step.Name, "selected", failedAttempt.Status.FailureReason, references, data); err != nil {
+	if err := r.appendWorkflowEvent(ctx, workflow, "RecoveryDecisionSelected", step.Name, failedAttempt.Spec.RetryNumber, "select", step.Name, "selected", failedAttempt.Status.FailureReason, references, data); err != nil {
 		return err
 	}
 	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptRetried", step.Name, nextAttempt, "retry", attemptName(step.Name, nextAttempt), "created", failedAttempt.Status.FailureReason, references, data)

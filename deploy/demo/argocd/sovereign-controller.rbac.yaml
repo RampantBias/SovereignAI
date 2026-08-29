@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sovereign-controller
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sovereign-validation-provider
+subjects:
+- kind: ServiceAccount
+  name: sovereign-controller
+  namespace: sovereign-orchestrator-system

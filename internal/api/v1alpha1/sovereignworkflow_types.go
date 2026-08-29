@@ -93,21 +93,53 @@ type SovereignWorkflowSpec struct {
 	Classification      string                `json:"classification,omitempty"`
 	Steps               []StepConfig          `json:"steps"`
 	RequestedVolumeSize string                `json:"requestedVolumeSize"`
+	// MaxWorkflowAttempt bounds application-level test failure rewinds independently of infrastructure retries.
+	// +kubebuilder:validation:Minimum=1
+	MaxWorkflowAttempt int32 `json:"maxWorkflowAttempt,omitempty"`
+}
+
+// SelectedArtifact records the exact accepted artifact identity used for
+// subsequent workflow inputs. ProducerAttemptRef is empty for bootstrap
+// artifacts produced directly by the workflow.
+type SelectedArtifact struct {
+	Contract           ContractReference `json:"contract"`
+	Digest             string            `json:"digest"`
+	ProducerAttemptRef string            `json:"producerAttemptRef,omitempty"`
+}
+
+// WorkflowRefinementStatus records an application-level test failure that
+// rewound the workflow. It is distinct from infrastructure retry state.
+type WorkflowRefinementStatus struct {
+	Iteration         int32                       `json:"iteration"`
+	TriggerStepName   string                      `json:"triggerStep"`
+	TriggerAttemptRef string                      `json:"triggerAttemptRef"`
+	RestartStepName   string                      `json:"restartStep"`
+	TestReport        SelectedArtifact            `json:"testReport"`
+	AgentCompletions  []RefinementAgentCompletion `json:"agentCompletions,omitempty"`
+}
+
+type RefinementAgentCompletion struct {
+	StepName   string                `json:"stepName"`
+	AttemptRef string                `json:"attemptRef"`
+	Completion AgentCompletionStatus `json:"completion"`
 }
 
 // SovereignWorkflowStatus defines the observed state
 type SovereignWorkflowStatus struct {
-	Phase                   string             `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
-	ActiveStepName          string             `json:"activeStep,omitempty"`       // Currently executing step
-	ActiveAttemptRef        string             `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
-	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
-	PvcName                 string             `json:"pvcName,omitempty"`                 // Bound storage resource
-	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"` // Lease serializing writable workspace mounts
-	BootstrapJobRef         string             `json:"bootstrapJobRef,omitempty"`
-	BootstrapArtifactRef    *UIDReference      `json:"bootstrapArtifactRef,omitempty"`
-	BootstrapWriterEpoch    int32              `json:"bootstrapWriterEpoch,omitempty"`
-	BootstrapWriterReleased bool               `json:"bootstrapWriterReleased,omitempty"`
-	Conditions              []metav1.Condition `json:"conditions,omitempty"` // Standard K8s status conditions
+	Phase                   string                    `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
+	ActiveStepName          string                    `json:"activeStep,omitempty"`       // Currently executing step
+	ActiveAttemptRef        string                    `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
+	WorkflowAttempt         int                       `json:"workflowAttempt"`
+	ObservedGeneration      int64                     `json:"observedGeneration,omitempty"`
+	PvcName                 string                    `json:"pvcName,omitempty"`                 // Bound storage resource
+	WorkspaceWriterLeaseRef string                    `json:"workspaceWriterLeaseRef,omitempty"` // Lease serializing writable workspace mounts
+	BootstrapJobRef         string                    `json:"bootstrapJobRef,omitempty"`
+	BootstrapArtifactRef    *UIDReference             `json:"bootstrapArtifactRef,omitempty"`
+	BootstrapWriterEpoch    int32                     `json:"bootstrapWriterEpoch,omitempty"`
+	BootstrapWriterReleased bool                      `json:"bootstrapWriterReleased,omitempty"`
+	SelectedArtifacts       []SelectedArtifact        `json:"selectedArtifacts,omitempty"`
+	Refinement              *WorkflowRefinementStatus `json:"refinement,omitempty"`
+	Conditions              []metav1.Condition        `json:"conditions,omitempty"` // Standard K8s status conditions
 }
 
 // +kubebuilder:object:root=true

@@ -241,7 +241,7 @@ func (r *StepAttemptReconciler) appendPhaseEvent(ctx context.Context, attempt *v
 	}
 	return audit.AppendControllerEvent(ctx, r.Audit, "stepattempt-controller", r.Now, audit.EventOptions{
 		Type:    "StepAttempt" + string(phase),
-		Subject: audit.Subject{Namespace: attempt.Namespace, Workflow: attempt.Spec.WorkflowRef.Name, Step: attempt.Spec.StepName, Attempt: attempt.Spec.Attempt},
+		Subject: audit.Subject{Namespace: attempt.Namespace, Workflow: attempt.Spec.WorkflowRef.Name, Step: attempt.Spec.StepName, Attempt: attempt.Spec.RetryNumber},
 		Action:  "observe", Target: attempt.Name, Outcome: string(phase), Reason: reason, References: references,
 	})
 }

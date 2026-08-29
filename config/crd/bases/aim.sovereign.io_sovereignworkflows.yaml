@@ -89,6 +89,12 @@ spec:
                 type: string
               definitionRevision:
                 type: string
+              maxWorkflowAttempt:
+                description: MaxWorkflowAttempt bounds application-level test
+                  failure rewinds independently of infrastructure retries.
+                format: int32
+                minimum: 1
+                type: integer
               projectRef:
                 properties:
                   name:
@@ -379,6 +385,111 @@ spec:
                 type: string
               pvcName:
                 type: string
+              refinement:
+                description: |-
+                  WorkflowRefinementStatus records an application-level test failure that
+                  rewound the workflow. It is distinct from infrastructure retry state.
+                properties:
+                  agentCompletions:
+                    items:
+                      properties:
+                        attemptRef:
+                          type: string
+                        completion:
+                          description: |-
+                            AgentCompletionStatus is the controller-observed durable terminal action
+                            produced by agent_complete.
+                          properties:
+                            digest:
+                              type: string
+                            disposition:
+                              enum:
+                              - changed
+                              - no_change
+                              - contract_ambiguous
+                              type: string
+                            summary:
+                              maxLength: 1024
+                              minLength: 1
+                              type: string
+                          required:
+                          - disposition
+                          - summary
+                          type: object
+                        stepName:
+                          type: string
+                      required:
+                      - attemptRef
+                      - completion
+                      - stepName
+                      type: object
+                    type: array
+                  iteration:
+                    format: int32
+                    type: integer
+                  restartStep:
+                    type: string
+                  testReport:
+                    description: |-
+                      SelectedArtifact records the exact accepted artifact identity used for
+                      subsequent workflow inputs. ProducerAttemptRef is empty for bootstrap
+                      artifacts produced directly by the workflow.
+                    properties:
+                      contract:
+                        properties:
+                          name:
+                            type: string
+                          version:
+                            type: string
+                        required:
+                        - name
+                        - version
+                        type: object
+                      digest:
+                        type: string
+                      producerAttemptRef:
+                        type: string
+                    required:
+                    - contract
+                    - digest
+                    type: object
+                  triggerAttemptRef:
+                    type: string
+                  triggerStep:
+                    type: string
+                required:
+                - iteration
+                - restartStep
+                - testReport
+                - triggerAttemptRef
+                - triggerStep
+                type: object
+              selectedArtifacts:
+                items:
+                  description: |-
+                    SelectedArtifact records the exact accepted artifact identity used for
+                    subsequent workflow inputs. ProducerAttemptRef is empty for bootstrap
+                    artifacts produced directly by the workflow.
+                  properties:
+                    contract:
+                      properties:
+                        name:
+                          type: string
+                        version:
+                          type: string
+                      required:
+                      - name
+                      - version
+                      type: object
+                    digest:
+                      type: string
+                    producerAttemptRef:
+                      type: string
+                  required:
+                  - contract
+                  - digest
+                  type: object
+                type: array
               workspaceWriterLeaseRef:
                 type: string
             required:
