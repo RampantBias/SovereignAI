@@ -39,6 +39,68 @@ spec:
             type: object
           spec:
             properties:
+              claims:
+                description: |-
+                  ArtifactClaims is the small, non-secret projection of validated artifact
+                  content that control-plane reconcilers are allowed to consume without
+                  mounting the workflow artifact store. Exactly one member is populated for a
+                  contract that defines controller-readable claims.
+                properties:
+                  candidateRemoteProof:
+                    properties:
+                      candidateRevisionDigest:
+                        type: string
+                      observedCommit:
+                        type: string
+                      ref:
+                        type: string
+                      repositoryURL:
+                        type: string
+                      verifiedAt:
+                        type: string
+                    required:
+                    - candidateRevisionDigest
+                    - observedCommit
+                    - ref
+                    - repositoryURL
+                    - verifiedAt
+                    type: object
+                  candidateRevision:
+                    properties:
+                      branch:
+                        type: string
+                      commit:
+                        type: string
+                      repositoryURL:
+                        type: string
+                      tree:
+                        type: string
+                    required:
+                    - branch
+                    - commit
+                    - repositoryURL
+                    - tree
+                    type: object
+                  imageDigest:
+                    properties:
+                      candidateCommit:
+                        type: string
+                      candidateRevisionDigest:
+                        type: string
+                      candidateTree:
+                        type: string
+                      imageRepository:
+                        type: string
+                      ociDigest:
+                        type: string
+                    required:
+                    - candidateCommit
+                    - candidateRevisionDigest
+                    - candidateTree
+                    - imageRepository
+                    - ociDigest
+                    type: object
+                type: object
               classification:
                 type: string
               contract:

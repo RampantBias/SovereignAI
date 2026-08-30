@@ -333,6 +333,40 @@ type ArtifactSpec struct {
 	Path             string              `json:"path"`
 	Classification   string              `json:"classification,omitempty"`
 	SourceRevision   string              `json:"sourceRevision,omitempty"`
+	Claims           *ArtifactClaims     `json:"claims,omitempty"`
+}
+
+// lightweight container for summary of artifact content, for validation provider
+type ArtifactClaims struct {
+	CandidateRevision    *CandidateRevisionClaims    `json:"candidateRevision,omitempty"`
+	CandidateRemoteProof *CandidateRemoteProofClaims `json:"candidateRemoteProof,omitempty"`
+	ImageDigest          *ImageDigestClaims          `json:"imageDigest,omitempty"`
+}
+
+// identity of revision
+type CandidateRevisionClaims struct {
+	RepositoryURL string `json:"repositoryURL"`
+	Branch        string `json:"branch"`
+	Commit        string `json:"commit"`
+	Tree          string `json:"tree"`
+}
+
+// revision content and metadata
+type CandidateRemoteProofClaims struct {
+	CandidateRevisionDigest string `json:"candidateRevisionDigest"`
+	RepositoryURL           string `json:"repositoryURL"`
+	Ref                     string `json:"ref"`
+	ObservedCommit          string `json:"observedCommit"`
+	VerifiedAt              string `json:"verifiedAt"`
+}
+
+// candidate image linked to revision
+type ImageDigestClaims struct {
+	CandidateRevisionDigest string `json:"candidateRevisionDigest"`
+	ImageRepository         string `json:"imageRepository"`
+	OCIDigest               string `json:"ociDigest"`
+	CandidateCommit         string `json:"candidateCommit"`
+	CandidateTree           string `json:"candidateTree"`
 }
 
 type ArtifactStatus struct {
