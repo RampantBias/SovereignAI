@@ -202,6 +202,10 @@ spec:
                 type: integer
               phase:
                 type: string
+              validationProviderRef:
+                description: ValidationProviderRef is the provisioned Argo AppProject
+                  name.
+                type: string
             type: object
         required:
         - spec

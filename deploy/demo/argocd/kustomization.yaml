@@ -6,7 +6,7 @@ namespace: argocd
 resources:
   - namespace.yaml
   - rbac.yaml
-  - sovereign-controller-rbac.yaml
+  - sovereign-controller.rbac.yaml
   - https://raw.githubusercontent.com/argoproj/argo-cd/0dc6b1b57dd5bb925d5b03c3d09419ab9fb4225e/manifests/install.yaml
 
 patches:

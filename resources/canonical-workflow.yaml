@@ -51,7 +51,7 @@ spec:
           version: v1
       timeout: 15m
       maxAttempts: 2
-    - name: test-author
+    - name: developer
       kind: Agent
       order: 3
       agent:
@@ -83,7 +83,7 @@ spec:
           version: v1
       timeout: 15m
       maxAttempts: 2
-    - name: developer
+    - name: test-author
       kind: Agent
       order: 4
       agent:

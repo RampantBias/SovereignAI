@@ -5,8 +5,5 @@ metadata:
   namespace: argocd
 rules:
   - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
-    verbs: ["create", "get", "patch", "delete"]
-  - apiGroups: ["argoproj.io"]
-    resources: ["appprojects"]
-    verbs: ["create", "get", "patch"]
+    resources: ["applications", "appprojects"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
