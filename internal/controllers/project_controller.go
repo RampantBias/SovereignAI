@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	pathpkg "path"
 	"regexp"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/validation"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,12 +23,16 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
-	ProjectConditionConfigurationValid = "ConfigurationValid"
+	ProjectConditionConfigurationValid      = v1alpha1.ProjectConditionConfigurationValid
+	ProjectConditionValidationProviderReady = v1alpha1.ProjectConditionValidationProviderReady
+	ProjectFinalizer                        = "sovereign-ai.io/project-validation-cleanup"
+	projectDriftInterval                    = 5 * time.Minute
 
 	projectReasonConfigurationValid   = "ConfigurationValid"
 	projectReasonInvalidConfiguration = "InvalidConfiguration"
@@ -38,8 +45,9 @@ var fullGitSHA1 = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type SovereignProjectReconciler struct {
 	client.Client
-	Audit audit.Recorder
-	Now   func() time.Time
+	Provisioner validation.ProjectProvisioner
+	Audit       audit.Recorder
+	Now         func() time.Time
 }
 
 func (r *SovereignProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -62,14 +70,103 @@ func (r *SovereignProjectReconciler) Reconcile(ctx context.Context, request ctrl
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// SovereignProject currently owns no external resource that requires
-	// cleanup. In particular, workflow namespaces must not be cascaded or
-	// retained by a Project finalizer.
 	if !project.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		return r.cleanupValidationProject(ctx, &project)
 	}
 
-	return ctrl.Result{}, r.updateConfigurationStatus(ctx, request.NamespacedName)
+	if err := r.updateConfigurationStatus(ctx, request.NamespacedName); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Refresh the spec and resource version after updating configuration status.
+	if err := r.Get(ctx, request.NamespacedName, &project); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !project.DeletionTimestamp.IsZero() {
+		return r.cleanupValidationProject(ctx, &project)
+	}
+	if len(ValidateSovereignProjectSpec(&project)) > 0 {
+		return ctrl.Result{}, r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "InvalidConfiguration", "Project configuration must be valid before provisioning validation")
+	}
+	if r.Provisioner == nil {
+		return ctrl.Result{RequeueAfter: projectDriftInterval}, r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "ProviderUnavailable", "Validation project provisioner is not configured")
+	}
+	if !controllerutil.ContainsFinalizer(&project, ProjectFinalizer) {
+		controllerutil.AddFinalizer(&project, ProjectFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &project)
+	}
+	reference, err := r.Provisioner.EnsureProject(ctx, validationProjectRequest(&project))
+	if err != nil {
+		reason := "AppProjectProvisioningFailed"
+		if apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) {
+			reason = "AppProjectConflict"
+		}
+		if statusErr := r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, reason, err.Error()); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+		return ctrl.Result{}, err
+	}
+	if reference == "" {
+		return ctrl.Result{}, fmt.Errorf("validation provisioner returned an empty AppProject reference")
+	}
+	return ctrl.Result{RequeueAfter: projectDriftInterval}, r.updateValidationProviderStatus(ctx, &project, reference, metav1.ConditionTrue, "AppProjectReady", "Argo AppProject policy is provisioned")
+}
+
+func validationProjectRequest(project *v1alpha1.SovereignProject) validation.ProjectRequest {
+	return validation.ProjectRequest{Name: project.Name, UID: project.UID, InfrastructureRepo: project.Spec.Validation.InfrastructureRepo}
+}
+
+func (r *SovereignProjectReconciler) cleanupValidationProject(ctx context.Context, project *v1alpha1.SovereignProject) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(project, ProjectFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.updateValidationProviderStatus(ctx, project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "ProjectTerminating", "Waiting for referencing Applications and AppProject cleanup; workflow environments are not deleted automatically"); err != nil {
+		return ctrl.Result{}, err
+	}
+	if r.Provisioner == nil {
+		return ctrl.Result{}, fmt.Errorf("validation project provisioner is unavailable for cleanup")
+	}
+	done, err := r.Provisioner.DestroyProject(ctx, validationProjectRequest(project))
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !done {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	// Read again after the status write; remove only our finalizer.
+	var latest v1alpha1.SovereignProject
+	if err := r.Get(ctx, client.ObjectKeyFromObject(project), &latest); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if latest.UID != project.UID {
+		return ctrl.Result{}, fmt.Errorf("project identity changed during cleanup")
+	}
+	controllerutil.RemoveFinalizer(&latest, ProjectFinalizer)
+	return ctrl.Result{}, r.Update(ctx, &latest)
+}
+
+func (r *SovereignProjectReconciler) updateValidationProviderStatus(ctx context.Context, project *v1alpha1.SovereignProject, reference string, status metav1.ConditionStatus, reason, message string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.SovereignProject
+		if err := r.Get(ctx, client.ObjectKeyFromObject(project), &latest); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if latest.UID != project.UID || latest.Generation != project.Generation {
+			return fmt.Errorf("project changed while provisioning validation; reconcile the current generation")
+		}
+		if status == metav1.ConditionTrue && !latest.DeletionTimestamp.IsZero() {
+			return fmt.Errorf("project is terminating")
+		}
+		if len(message) > maxProjectConditionMessageBytes {
+			message = message[:maxProjectConditionMessageBytes]
+		}
+		condition := metav1.Condition{Type: ProjectConditionValidationProviderReady, Status: status, Reason: reason, Message: message, ObservedGeneration: project.Generation, LastTransitionTime: r.now()}
+		if latest.Status.ValidationProviderRef == reference && conditionsEqual(apiMeta.FindStatusCondition(latest.Status.Conditions, condition.Type), condition) {
+			return nil
+		}
+		latest.Status.ValidationProviderRef = reference
+		apiMeta.SetStatusCondition(&latest.Status.Conditions, condition)
+		return r.Status().Update(ctx, &latest)
+	})
 }
 
 // ValidateSovereignProjectSpec validates the Project-owned authority that the
@@ -82,6 +179,10 @@ func ValidateSovereignProjectSpec(project *v1alpha1.SovereignProject) field.Erro
 
 	var errors field.ErrorList
 	specPath := field.NewPath("spec")
+	// This name is used verbatim in workflow namespace prefixes and Argo labels.
+	for _, problem := range k8svalidation.IsDNS1123Label(project.Name) {
+		errors = append(errors, field.Invalid(field.NewPath("metadata", "name"), project.Name, problem))
+	}
 
 	// validate tenant and policy profile names
 	if err := validateTenant(project.Spec.Tenant, specPath.Child("tenant")); err != nil {

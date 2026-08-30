@@ -119,8 +119,9 @@ func main() {
 	// Controller initialization
 	reconcilers := []interface{ SetupWithManager(ctrl.Manager) error }{
 		&controllers.SovereignProjectReconciler{
-			Client: mgr.GetClient(),
-			Audit:  recorder},
+			Client:      mgr.GetClient(),
+			Provisioner: validationProvider,
+			Audit:       recorder},
 		&workflow.WorkflowReconciler{
 			Client:         mgr.GetClient(),
 			Reader:         mgr.GetAPIReader(),

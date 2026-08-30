@@ -183,9 +183,11 @@ type SovereignProjectSpec struct {
 }
 
 type SovereignProjectStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase      `json:"phase,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	// ValidationProviderRef is the provisioned Argo AppProject name.
+	ValidationProviderRef string             `json:"validationProviderRef,omitempty"`
+	ObservedGeneration    int64              `json:"observedGeneration,omitempty"`
+	Phase                 ResourcePhase      `json:"phase,omitempty"`
+	Conditions            []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

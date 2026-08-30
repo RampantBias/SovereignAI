@@ -247,6 +247,13 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		}
 		return nil, status.Errorf(codes.Internal, "failed to read project: %v", err)
 	}
+	if !v1alpha1.ProjectReady(&project) {
+		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
+			"submit", workflowCRD.Name, "rejected", "ProjectNotReady", projectName, nil, nil); auditErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
+		}
+		return nil, status.Error(codes.FailedPrecondition, "project must have current ConfigurationValid and ValidationProviderReady conditions before workflow submission")
+	}
 	// Verify workflow has at least 1 step
 	if len(workflowCRD.Spec.Steps) == 0 {
 		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},

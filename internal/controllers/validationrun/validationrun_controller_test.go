@@ -12,6 +12,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -30,6 +31,7 @@ func TestValidationRunProviderRequestUsesCalculatorOverlay(t *testing.T) {
 
 	var project v1alpha1.SovereignProject
 	readYAMLFixture(t, projectPath, &project)
+	setProjectReady(&project)
 
 	workflow := &v1alpha1.SovereignWorkflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "workflow", Namespace: "workflow"},
@@ -80,6 +82,9 @@ func TestValidationRunProviderRequestUsesCalculatorOverlay(t *testing.T) {
 	}
 	if request.InfrastructureRepo != project.Spec.Validation.InfrastructureRepo {
 		t.Fatalf("infrastructure repository = %q, want %q", request.InfrastructureRepo, project.Spec.Validation.InfrastructureRepo)
+	}
+	if request.Project != "sov-"+project.Name {
+		t.Fatalf("request must use the provisioned AppProject: %q", request.Project)
 	}
 	if request.OverlayPath != project.Spec.Validation.OverlayPath {
 		t.Fatalf("overlay path = %q, want %q", request.OverlayPath, project.Spec.Validation.OverlayPath)
@@ -137,6 +142,7 @@ func TestValidationRunProviderRequestRejectsBrokenArtifactLineage(t *testing.T) 
 		},
 	}
 	commit := strings.Repeat("c", 40)
+	setProjectReady(project)
 	artifacts := validationArtifactFixtures(
 		workflow,
 		project,
@@ -190,6 +196,7 @@ func TestValidationRunProviderRequestWaitsForUnacceptedArtifact(t *testing.T) {
 			Project: v1alpha1.UIDReference{Name: project.Name},
 		},
 	}
+	setProjectReady(project)
 	artifacts := validationArtifactFixtures(
 		workflow,
 		project,
@@ -227,7 +234,7 @@ func TestValidationRunProviderRequestWaitsForUnacceptedArtifact(t *testing.T) {
 }
 
 func TestValidationRunReconcileInputResolution(t *testing.T) {
-	for _, outcome := range []string{"pending", "invalid", "operational error"} {
+	for _, outcome := range []string{"pending", "invalid", "operational error", "provider pending", "provider stale"} {
 		t.Run(outcome, func(t *testing.T) {
 			project := &v1alpha1.SovereignProject{
 				ObjectMeta: metav1.ObjectMeta{Name: "project"},
@@ -262,7 +269,12 @@ func TestValidationRunReconcileInputResolution(t *testing.T) {
 				Spec: v1alpha1.ValidationRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRef, StepName: "validation", Attempt: 1},
 			}
 			artifacts := validationArtifactFixtures(workflow, project, strings.Repeat("c", 40), strings.Repeat("d", 40), "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("e", 64))
+			setProjectReady(project)
 			switch outcome {
+			case "provider pending":
+				project.Status.ValidationProviderRef = ""
+			case "provider stale":
+				project.Generation++
 			case "pending":
 				artifacts[0].Status = v1alpha1.ArtifactStatus{}
 			case "invalid":
@@ -300,7 +312,7 @@ func TestValidationRunReconcileInputResolution(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			if (result.RequeueAfter > 0) != (outcome == "pending") {
+			if (result.RequeueAfter > 0) != (outcome == "pending" || strings.HasPrefix(outcome, "provider")) {
 				t.Fatalf("unexpected requeue for %s: %#v", outcome, result)
 			}
 			var updated v1alpha1.ValidationRun
@@ -314,7 +326,21 @@ func TestValidationRunReconcileInputResolution(t *testing.T) {
 			} else if updated.Status.Phase == v1alpha1.PhaseFailed {
 				t.Fatalf("%s must not fail validation: %#v", outcome, updated.Status)
 			}
+			if strings.HasPrefix(outcome, "provider") {
+				condition := apiMeta.FindStatusCondition(updated.Status.Conditions, v1alpha1.ProjectConditionValidationProviderReady)
+				if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "ProviderNotReady" {
+					t.Fatalf("expected provider-not-ready condition: %#v", condition)
+				}
+			}
 		})
+	}
+}
+
+func setProjectReady(project *v1alpha1.SovereignProject) {
+	project.Status.ValidationProviderRef = "sov-" + project.Name
+	project.Status.Conditions = []metav1.Condition{
+		{Type: v1alpha1.ProjectConditionConfigurationValid, Status: metav1.ConditionTrue, Reason: "ConfigurationValid", ObservedGeneration: project.Generation},
+		{Type: v1alpha1.ProjectConditionValidationProviderReady, Status: metav1.ConditionTrue, Reason: "AppProjectReady", ObservedGeneration: project.Generation},
 	}
 }
 

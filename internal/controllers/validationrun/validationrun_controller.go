@@ -80,6 +80,23 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 
 	if run.Status.ProviderRef == "" {
+		project, err := r.validationProject(ctx, &run)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		ready := v1alpha1.ProjectReady(project)
+		condition := metav1.Condition{Type: v1alpha1.ProjectConditionValidationProviderReady, Status: metav1.ConditionFalse, Reason: "ProviderNotReady", Message: "Waiting for the project's current configuration and Argo AppProject policy", ObservedGeneration: run.Generation}
+		if ready {
+			condition.Status, condition.Reason, condition.Message = metav1.ConditionTrue, "AppProjectReady", "Project validation policy is ready"
+		}
+		if apiMeta.SetStatusCondition(&run.Status.Conditions, condition) {
+			if err := r.Status().Update(ctx, &run); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		if !ready {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		request, resolution, message, err := r.providerRequest(ctx, &run)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -159,24 +176,38 @@ func (r *ValidationRunReconciler) appendValidationEvent(ctx context.Context, run
 // providerRequest returns a ready, pending, or invalid resolution with an
 // explanatory message. Only operational failures are returned as errors.
 func (r *ValidationRunReconciler) providerRequest(ctx context.Context, run *v1alpha1.ValidationRun) (request validation.Request, resolution, message string, err error) {
-	var workflow v1alpha1.SovereignWorkflow
-	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
+	project, err := r.validationProject(ctx, run)
+	if err != nil {
 		return validation.Request{}, "", "", err
 	}
-	var project v1alpha1.SovereignProject
-	if err := r.Get(ctx, types.NamespacedName{Name: workflow.Spec.Project.Name}, &project); err != nil {
-		return validation.Request{}, "", "", err
+	if !v1alpha1.ProjectReady(project) {
+		return validation.Request{}, "pending", "project validation provider is not ready", nil
 	}
-	subject, resolution, message, err := r.resolveValidationSubject(ctx, run, &project)
+	subject, resolution, message, err := r.resolveValidationSubject(ctx, run, project)
 	if err != nil || resolution != "ready" {
 		return validation.Request{}, resolution, message, err
 	}
 	return validation.Request{
-		Name: run.Name, WorkflowNamespace: run.Namespace, Project: project.Name,
+		Name: run.Name, WorkflowNamespace: run.Namespace, Project: project.Status.ValidationProviderRef,
 		InfrastructureRepo: project.Spec.Validation.InfrastructureRepo, InfrastructureRevision: subject.commit,
 		OverlayPath: project.Spec.Validation.OverlayPath, ImageName: project.Spec.Validation.ImageName,
 		ImageDigest: subject.imageReference, Commit: subject.commit,
 	}, "ready", "", nil
+}
+
+func (r *ValidationRunReconciler) validationProject(ctx context.Context, run *v1alpha1.ValidationRun) (*v1alpha1.SovereignProject, error) {
+	var workflow v1alpha1.SovereignWorkflow
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
+		return nil, err
+	}
+	var project v1alpha1.SovereignProject
+	if err := r.Get(ctx, types.NamespacedName{Name: workflow.Spec.Project.Name}, &project); err != nil {
+		return nil, err
+	}
+	if workflow.Spec.Project.UID != "" && workflow.Spec.Project.UID != project.UID {
+		return nil, fmt.Errorf("workflow references a different SovereignProject UID")
+	}
+	return &project, nil
 }
 
 type resolvedValidationSubject struct {
