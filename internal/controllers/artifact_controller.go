@@ -81,6 +81,9 @@ func (r *ArtifactReconciler) validateStoredArtifact(ctx context.Context, artifac
 	if artifact.Spec.Contract.Name == "" || artifact.Spec.Contract.Version == "" || artifact.Spec.Path == "" {
 		return "InvalidMetadata", "artifact requires a versioned contract and content path"
 	}
+	if err := artifacts.ValidateClaims(artifact.Spec.Contract, artifact.Spec.Claims); err != nil {
+		return "InvalidClaims", err.Error()
+	}
 	if artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" {
 		return r.validateBootstrapArtifact(ctx, artifact)
 	}

@@ -62,6 +62,21 @@ func TestArtifactReconcilerRejectsIncompleteMetadata(t *testing.T) {
 	}
 }
 
+func TestArtifactReconcilerRejectsMissingRequiredClaims(t *testing.T) {
+	content := validChangeRequestContent(t)
+	artifact := artifactFixture(t, content, artifactcontract.DigestBytes(content), v1alpha1.ContractReference{
+		Name: "candidate-revision", Version: "v1",
+	})
+
+	reconciled := reconcileArtifactFixture(t, artifact)
+	if reconciled.Status.Phase != v1alpha1.PhaseFailed {
+		t.Fatalf("phase = %s, want Failed", reconciled.Status.Phase)
+	}
+	if reason := conditionReason(reconciled.Status.Conditions); reason != "InvalidClaims" {
+		t.Fatalf("condition reason = %q, want InvalidClaims", reason)
+	}
+}
+
 func validChangeRequestContent(t *testing.T) []byte {
 	t.Helper()
 	data, err := json.Marshal(artifactcontract.ChangeRequest{
