@@ -9,6 +9,7 @@ spec:
   definitionRevision: plan4-v1
   classification: internal
   requestedVolumeSize: 1Gi
+  maxWorkflowAttempt: 3
   steps:
     - name: initialize-repository
       kind: Utility
@@ -50,60 +51,18 @@ spec:
           version: v1
       timeout: 15m
       maxAttempts: 2
-    - name: test-author
+    - name: developer
       kind: Agent
       order: 3
       agent:
         responsibility: >
-          You are a Test-Driven-Development test writer. You will analyze the change 
-          request, implementation plan, and repository revision. You are responsible 
-          for reading the test files relevant to the change request and implementation 
-          plan, and you will modify the test files to provide test coverage. 
-          The test will not natively succeed because the implementation change has not 
-          been made. Your result must be compilable and include any relevant packages.
-          Implement the concrete test-code changes directly in the attempt workspace 
-          to verify the requested behavior, including relevant success, failure, and 
-          edge cases.  Production paths in the implementation plan describe the 
-          behavior to test; they do not authorize production changes. Modify or add 
-          only recognized test paths and never modify production code.
-
-          For Golang, a recognized test path must end in _test.go and must be selected from 
-          an exact _test.go path discovered in the repository. Inspect current content 
-          before editing, do not invent a test directory or production path, and make 
-          the smallest targeted workspace changes. Do not generate or return a diff or 
-          patchLines; trusted code derives the test-change-set from the workspace. 
-        image: sovereign-reference-agent:dev
-        executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
-        inference:
-          model: code-small
-          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
-          estimatedKVRAMMiB: 2048
-          sharingScope: SharedWithinWorkflow
-      inputs:
-        - name: change-request
-        - name: implementation-plan
-        - name: repository-revision
-      outputs:
-        - name: test-change-set
-          version: v1
-      timeout: 15m
-      maxAttempts: 2
-    - name: developer
-      kind: Agent
-      order: 4
-      agent:
-        responsibility: >
-          Analyze the change request, implementation plan, repository revision, and
-          test change set. Implement the concrete production-code changes directly in
-          the attempt workspace to satisfy the change request, follow the implementation
-          plan, and pass the proposed tests. Treat the accepted test change set as
-          read-only requirements and do not repeat or modify it. Select production paths
-          only from affectedPaths entries that exactly match files discovered in the
+          Analyze the change request, implementation plan, and repository revision.
+          Implement the concrete production-code changes directly in
+          the attempt workspace to satisfy the change request and follow the implementation
+          plan. Select production paths only from affectedPaths entries that exactly 
+          match files discovered in the
           repository, and never select or modify a recognized test path. Inspect current
-          content before editing and make the smallest targeted workspace changes. Do
-          not generate or return a diff or patchLines; trusted code derives the
-          change-set from the workspace.
+          content before editing and make the smallest targeted workspace changes.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
         capabilities: ["workspace_read", "workspace_write", "workspace_create", "workspace_tree", "workspace_search", "agent_complete"]
@@ -116,9 +75,47 @@ spec:
         - name: change-request
         - name: implementation-plan
         - name: repository-revision
-        - name: test-change-set
       outputs:
         - name: change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: test-author
+      kind: Agent
+      order: 4
+      agent:
+        responsibility: >
+          You are a unit test author. You will analyze the change 
+          request, implementation plan, repository revision, and developer change request. You are responsible 
+          for reading the test files relevant to the change request and implementation 
+          plan, and you will modify the test files to provide test coverage for the developer's changes. 
+          Current tests verify the current behavior, they may not verify the target behavior.
+          Your result must be compilable and include any relevant packages.
+          Implement the concrete test-code changes directly in the attempt workspace 
+          to verify the requested behavior, including relevant success, failure, and 
+          edge cases. Production paths in the implementation plan describe the 
+          behavior to test; they do not authorize production changes. Modify or add 
+          only to files under recognized test paths, specifically files with _test.go in the name.
+
+          For Golang, a recognized test path must end in _test.go and must be selected from 
+          an exact _test.go path discovered in the repository. Inspect current content 
+          before editing, do not invent a test directory or production path, and make 
+          the smallest targeted workspace changes.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
+        inference:
+          model: code-small
+          modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+          estimatedKVRAMMiB: 2048
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+        - name: change-set
+      outputs:
+        - name: test-change-set
           version: v1
       timeout: 15m
       maxAttempts: 2
