@@ -114,7 +114,7 @@ type WorkflowRefinementStatus struct {
 	TriggerStepName   string                      `json:"triggerStep"`
 	TriggerAttemptRef string                      `json:"triggerAttemptRef"`
 	RestartStepName   string                      `json:"restartStep"`
-	TestReport        SelectedArtifact            `json:"testReport"`
+	TestReport        *SelectedArtifact           `json:"testReport,omitempty"`
 	AgentCompletions  []RefinementAgentCompletion `json:"agentCompletions,omitempty"`
 }
 
@@ -129,7 +129,7 @@ type SovereignWorkflowStatus struct {
 	Phase                   string                    `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
 	ActiveStepName          string                    `json:"activeStep,omitempty"`       // Currently executing step
 	ActiveAttemptRef        string                    `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
-	WorkflowAttempt         int                       `json:"workflowAttempt"`
+	WorkflowAttempt         int32                     `json:"workflowAttempt"`
 	ObservedGeneration      int64                     `json:"observedGeneration,omitempty"`
 	PvcName                 string                    `json:"pvcName,omitempty"`                 // Bound storage resource
 	WorkspaceWriterLeaseRef string                    `json:"workspaceWriterLeaseRef,omitempty"` // Lease serializing writable workspace mounts

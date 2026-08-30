@@ -31,9 +31,9 @@ func TestValidateTransition(t *testing.T) {
 
 func TestNextAttemptNumberDoesNotOverwriteHistory(t *testing.T) {
 	attempts := []v1alpha1.StepAttempt{
-		{Spec: v1alpha1.StepAttemptSpec{StepName: "developer", RetryNumber: 1}},
-		{Spec: v1alpha1.StepAttemptSpec{StepName: "architect", RetryNumber: 1}},
-		{Spec: v1alpha1.StepAttemptSpec{StepName: "developer", RetryNumber: 2}},
+		{Spec: v1alpha1.StepAttemptSpec{StepName: "developer", RetryNumber: 1, WorkflowAttempt: 1}},
+		{Spec: v1alpha1.StepAttemptSpec{StepName: "architect", RetryNumber: 1, WorkflowAttempt: 1}},
+		{Spec: v1alpha1.StepAttemptSpec{StepName: "developer", RetryNumber: 2, WorkflowAttempt: 1}},
 	}
 	if got := NextAttemptNumber(attempts, "developer"); got != 3 {
 		t.Fatalf("NextAttemptNumber() = %d, want 3", got)

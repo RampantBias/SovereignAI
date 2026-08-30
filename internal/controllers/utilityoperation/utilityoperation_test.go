@@ -420,7 +420,7 @@ func workflowFixture() *v1alpha1.SovereignWorkflow {
 func authorizedAttempt(name, namespace, step string, kind v1alpha1.ExecutionKind) *v1alpha1.StepAttempt {
 	return &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID("uid-" + name)},
-		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}, StepName: step, RetryNumber: 1, Kind: kind},
+		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}, StepName: step, RetryNumber: 1, Kind: kind, WorkflowAttempt: 1},
 		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending, ExecutionRef: &v1alpha1.TypedLocalReference{
 			APIVersion: v1alpha1.GroupVersion.String(), Kind: controllers.DomainKind(kind), Name: name,
 		}},
@@ -462,4 +462,83 @@ type allowPolicy struct{}
 
 func (allowPolicy) Evaluate(context.Context, any) (policyengine.Decision, error) {
 	return policyengine.Decision{ID: "allow-test", Allowed: true}, nil
+}
+func TestResolveUtilityInputsUsesPinnedArtifactWithPreservedHistory(t *testing.T) {
+	scheme := attemptScheme(t)
+	workflowRef := v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}
+	const generation = int64(1)
+
+	acceptedArtifact := func(name string, uid types.UID, digest, path, producer string) *v1alpha1.Artifact {
+		return &v1alpha1.Artifact{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "wf", UID: uid, Generation: generation,
+			},
+			Spec: v1alpha1.ArtifactSpec{
+				WorkflowRef: workflowRef,
+				ProducerRef: v1alpha1.TypedLocalReference{
+					APIVersion: v1alpha1.GroupVersion.String(),
+					Kind:       "AgentRun",
+					Name:       producer,
+				},
+				Contract: v1alpha1.ContractReference{Name: "change-set", Version: "v1"},
+				Digest:   digest,
+				Path:     path,
+			},
+			Status: v1alpha1.ArtifactStatus{
+				ObservedGeneration: generation,
+				Phase:              v1alpha1.PhaseSucceeded,
+				Conditions: []metav1.Condition{{
+					Type:               "Valid",
+					Status:             metav1.ConditionTrue,
+					Reason:             "ContractAccepted",
+					ObservedGeneration: generation,
+				}},
+			},
+		}
+	}
+
+	oldArtifact := acceptedArtifact(
+		"changes-old",
+		"changes-old-uid",
+		"sha256:old",
+		"/workspace/.sovereign/artifacts/old",
+		"developer-w000-r002",
+	)
+	currentArtifact := acceptedArtifact(
+		"changes-current",
+		"changes-current-uid",
+		"sha256:current",
+		"/workspace/.sovereign/artifacts/current",
+		"developer-w001-r001",
+	)
+	operation := &v1alpha1.UtilityOperation{
+		ObjectMeta: metav1.ObjectMeta{Name: "prepare-candidate-w001-r001", Namespace: "wf"},
+		Spec: v1alpha1.UtilityOperationSpec{
+			WorkflowRef: workflowRef,
+			Inputs: []v1alpha1.ArtifactReference{{
+				Name:   "change-set",
+				Digest: currentArtifact.Spec.Digest,
+				ArtifactRef: &v1alpha1.UIDReference{
+					Name: currentArtifact.Name,
+					UID:  currentArtifact.UID,
+				},
+				ProducerAttemptRef: currentArtifact.Spec.ProducerRef.Name,
+			}},
+		},
+	}
+
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(oldArtifact, currentArtifact).
+		Build()
+	reconciler := &UtilityOperationReconciler{Client: kubeClient, Scheme: scheme}
+
+	inputs, err := reconciler.resolveUtilityInputs(context.Background(), operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 1 ||
+		inputs[0].Digest != currentArtifact.Spec.Digest ||
+		inputs[0].Path != currentArtifact.Spec.Path {
+		t.Fatalf("utility consumed the wrong preserved artifact: %#v", inputs)
+	}
 }

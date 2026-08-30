@@ -90,8 +90,8 @@ spec:
               definitionRevision:
                 type: string
               maxWorkflowAttempt:
-                description: MaxWorkflowAttempt bounds application-level test
-                  failure rewinds independently of infrastructure retries.
+                description: MaxWorkflowAttempt bounds application-level test failure
+                  rewinds independently of infrastructure retries.
                 format: int32
                 minimum: 1
                 type: integer
@@ -186,9 +186,25 @@ spec:
                     inputs:
                       items:
                         properties:
+                          artifactRef:
+                            properties:
+                              name:
+                                type: string
+                              uid:
+                                description: |-
+                                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                  intent and helps make sure that UIDs and names do not get conflated.
+                                type: string
+                            required:
+                            - name
+                            - uid
+                            type: object
                           digest:
                             type: string
                           name:
+                            type: string
+                          producerAttemptRef:
                             type: string
                         required:
                         - name
@@ -460,7 +476,6 @@ spec:
                 required:
                 - iteration
                 - restartStep
-                - testReport
                 - triggerAttemptRef
                 - triggerStep
                 type: object
@@ -490,10 +505,14 @@ spec:
                   - digest
                   type: object
                 type: array
+              workflowAttempt:
+                format: int32
+                type: integer
               workspaceWriterLeaseRef:
                 type: string
             required:
             - phase
+            - workflowAttempt
             type: object
         type: object
     served: true

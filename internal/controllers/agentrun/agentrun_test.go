@@ -333,7 +333,13 @@ func requestFor(object metav1.Object) ctrl.Request {
 func authorizedAttempt(name, namespace, step string, kind v1alpha1.ExecutionKind) *v1alpha1.StepAttempt {
 	return &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: types.UID("uid-" + name)},
-		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}, StepName: step, RetryNumber: 1, Kind: kind},
+		Spec: v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{
+			Name: "wf",
+			UID:  "workflow-uid"},
+			StepName:        step,
+			RetryNumber:     1,
+			Kind:            kind,
+			WorkflowAttempt: 1},
 		Status: v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhasePending, ExecutionRef: &v1alpha1.TypedLocalReference{
 			APIVersion: v1alpha1.GroupVersion.String(), Kind: controllers.DomainKind(kind), Name: name,
 		}},
@@ -370,4 +376,72 @@ func containsLeaseReference(references []v1alpha1.NamespacedReference, namespace
 		}
 	}
 	return false
+}
+func TestResolveAgentInputsUsesPinnedArtifactWithPreservedHistory(t *testing.T) {
+	scheme := attemptScheme(t)
+	workflowRef := v1alpha1.UIDReference{Name: "wf", UID: "workflow-uid"}
+
+	oldArtifact := acceptedAgentInputArtifact(
+		"tests-old",
+		"test-change-set",
+		"v1",
+		"sha256:old",
+		"/workspace/.sovereign/artifacts/old",
+		workflowRef,
+	)
+	oldArtifact.UID = "tests-old-uid"
+	oldArtifact.Spec.ProducerRef = v1alpha1.TypedLocalReference{
+		APIVersion: v1alpha1.GroupVersion.String(),
+		Kind:       "AgentRun",
+		Name:       "test-author-w000-r002",
+	}
+
+	currentArtifact := acceptedAgentInputArtifact(
+		"tests-current",
+		"test-change-set",
+		"v1",
+		"sha256:current",
+		"/workspace/.sovereign/artifacts/current",
+		workflowRef,
+	)
+	currentArtifact.UID = "tests-current-uid"
+	currentArtifact.Spec.ProducerRef = v1alpha1.TypedLocalReference{
+		APIVersion: v1alpha1.GroupVersion.String(),
+		Kind:       "AgentRun",
+		Name:       "test-author-w001-r001",
+	}
+
+	run := &v1alpha1.AgentRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "developer-w001-r001", Namespace: "wf"},
+		Spec: v1alpha1.AgentRunSpec{
+			WorkflowRef: workflowRef,
+			Inputs: []v1alpha1.ArtifactReference{{
+				Name:   "test-change-set",
+				Digest: currentArtifact.Spec.Digest,
+				ArtifactRef: &v1alpha1.UIDReference{
+					Name: currentArtifact.Name,
+					UID:  currentArtifact.UID,
+				},
+				ProducerAttemptRef: currentArtifact.Spec.ProducerRef.Name,
+			}},
+		},
+	}
+
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(oldArtifact, currentArtifact).
+		Build()
+	reconciler := &AgentRunReconciler{Client: kubeClient, Scheme: scheme}
+
+	inputs, ready, invalidReason, err := reconciler.resolveAgentInputs(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready || invalidReason != "" {
+		t.Fatalf("pinned input was not ready: ready=%v reason=%q", ready, invalidReason)
+	}
+	if len(inputs) != 1 ||
+		inputs[0].Digest != currentArtifact.Spec.Digest ||
+		inputs[0].Path != currentArtifact.Spec.Path {
+		t.Fatalf("agent consumed the wrong preserved artifact: %#v", inputs)
+	}
 }

@@ -103,7 +103,25 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 
 	// Check if workflow is being retried
 	if workflow.Status.ActiveAttemptRef == "" {
-		return ctrl.Result{}, r.createAttempt(ctx, &workflow, workflow.Spec.Steps[0], 1)
+		step := workflow.Spec.Steps[0]
+
+		if workflow.Status.ActiveStepName != "" {
+			var found bool
+			step, found = findStep(
+				workflow.Spec.Steps,
+				workflow.Status.ActiveStepName,
+			)
+			if !found {
+				return ctrl.Result{}, r.failWorkflow(
+					ctx,
+					&workflow,
+					"StepMissing",
+					workflow.Status.ActiveStepName,
+				)
+			}
+		}
+
+		return ctrl.Result{}, r.createAttempt(ctx, &workflow, step, 1)
 	}
 
 	// Get current step attempt based on current step in workflow
@@ -153,20 +171,59 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 			return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepMissing", attempt.Spec.StepName)
 		}
 
-		// Catch-all for max attempt count to be minimum 1
-		maxAttempts := step.MaxAttempts
-		if maxAttempts == 0 {
-			maxAttempts = 1
+		decision, err := decideFailure(workflow.Spec.Steps, step, attempt.Status.Phase)
+		if err != nil {
+			return ctrl.Result{}, r.failWorkflow(
+				ctx,
+				&workflow,
+				"InvalidRecoveryPolicy",
+				err.Error(),
+			)
 		}
 
-		// If attempt is retryable append a recovery event and create a new attempt
-		if attempt.Status.Retryable && attempt.Spec.RetryNumber < maxAttempts {
-			if err := r.appendRecoveryEvents(ctx, &workflow, &attempt, step, attempt.Spec.RetryNumber+1); err != nil {
-				return ctrl.Result{}, err
+		switch decision.Action {
+		case failureActionRetryWorkflow:
+			if workflow.Spec.MaxWorkflowAttempt == 0 ||
+				workflow.Status.WorkflowAttempt >= workflow.Spec.MaxWorkflowAttempt {
+				return ctrl.Result{}, r.failWorkflow(
+					ctx,
+					&workflow,
+					"WorkflowRetriesExhausted",
+					attempt.Status.FailureReason,
+				)
 			}
-			return ctrl.Result{}, r.createAttemptWithFeedback(ctx, &workflow, step, attempt.Spec.RetryNumber+1, retryFeedbackForAttempt(&attempt))
+
+			return ctrl.Result{}, r.beginWorkflowRetry(
+				ctx,
+				&workflow,
+				&attempt,
+				decision.RestartStep,
+			)
+
+		case failureActionFailWorkflow:
+			return ctrl.Result{}, r.failWorkflow(
+				ctx,
+				&workflow,
+				"StepFailed",
+				attempt.Status.FailureReason,
+			)
+
+		case failureActionRetryStep:
+			// Catch-all for max attempt count to be minimum 1
+			maxAttempts := step.MaxAttempts
+			if maxAttempts == 0 {
+				maxAttempts = 1
+			}
+
+			// If attempt is retryable append a recovery event and create a new attempt
+			if attempt.Status.Retryable && attempt.Spec.RetryNumber < maxAttempts {
+				if err := r.appendRecoveryEvents(ctx, &workflow, &attempt, step, attempt.Spec.RetryNumber+1); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, r.createAttemptWithFeedback(ctx, &workflow, step, attempt.Spec.RetryNumber+1, retryFeedbackForAttempt(&attempt))
+			}
+			return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepFailed", attempt.Status.FailureReason)
 		}
-		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepFailed", attempt.Status.FailureReason)
 	}
 	return ctrl.Result{}, nil
 }
@@ -292,8 +349,36 @@ func (r *WorkflowReconciler) createAttempt(ctx context.Context, workflow *v1alph
 	return r.createAttemptWithFeedback(ctx, workflow, step, number, nil)
 }
 
+func (r *WorkflowReconciler) beginWorkflowRetry(
+	ctx context.Context,
+	workflow *v1alpha1.SovereignWorkflow,
+	failed *v1alpha1.StepAttempt,
+	restartStep string,
+) error {
+	expectedWorkflowAttempt := failed.Spec.WorkflowAttempt
+
+	_, err := r.updateWorkflowStatus(
+		ctx,
+		client.ObjectKeyFromObject(workflow),
+		func(latest *v1alpha1.SovereignWorkflow) {
+			// Makes repeated reconciles idempotent.
+			if latest.Status.ActiveAttemptRef != failed.Name ||
+				latest.Status.WorkflowAttempt != expectedWorkflowAttempt {
+				return
+			}
+
+			latest.Status.WorkflowAttempt++
+			latest.Status.ActiveStepName = restartStep
+			latest.Status.ActiveAttemptRef = ""
+			latest.Status.Phase = string(v1alpha1.PhaseRunning)
+			latest.Status.ObservedGeneration = latest.Generation
+		},
+	)
+	return err
+}
+
 func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, step v1alpha1.StepConfig, number int32, feedback *v1alpha1.FailedAgentAttempt) error {
-	name := attemptName(step.Name, number)
+	name := attemptName(step.Name, workflow.Status.WorkflowAttempt, number)
 	attempt := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -303,10 +388,11 @@ func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, work
 				controllermeta.LabelStep:     step.Name},
 		},
 		Spec: v1alpha1.StepAttemptSpec{
-			WorkflowRef: v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.UID},
-			StepName:    step.Name,
-			RetryNumber: number,
-			Kind:        step.Kind,
+			WorkflowRef:     v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.UID},
+			StepName:        step.Name,
+			RetryNumber:     number,
+			Kind:            step.Kind,
+			WorkflowAttempt: workflow.Status.WorkflowAttempt,
 		},
 	}
 	if err := controllerutil.SetControllerReference(workflow, attempt, r.Scheme); err != nil {
@@ -339,7 +425,8 @@ func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, work
 
 func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig, feedback *v1alpha1.FailedAgentAttempt) (*v1alpha1.TypedLocalReference, error) {
 	metadata := metav1.ObjectMeta{
-		Name: attempt.Name, Namespace: attempt.Namespace,
+		Name:      attempt.Name,
+		Namespace: attempt.Namespace,
 		Labels: map[string]string{
 			controllermeta.LabelWorkflow: attempt.Labels[controllermeta.LabelWorkflow],
 			controllermeta.LabelStep:     step.Name},
@@ -351,14 +438,23 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, attempt 
 		if step.Agent == nil {
 			return nil, fmt.Errorf("agent step %s has no agent specification", step.Name)
 		}
-		object = &v1alpha1.AgentRun{ObjectMeta: metadata, Spec: v1alpha1.AgentRunSpec{
-			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.RetryNumber,
-			PriorAttemptRef: copyFailedAgentAttempt(feedback),
-			Responsibility:  step.Agent.Responsibility, Image: step.Agent.Image,
-			Executable: append([]string(nil), step.Agent.Executable...), Capabilities: append([]string(nil), step.Agent.Capabilities...),
-			Inputs: append([]v1alpha1.ArtifactReference(nil), step.Inputs...), OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...),
-			Inference: copyInferenceRequest(step.Agent.Inference), Timeout: step.Timeout,
-		}}
+		object = &v1alpha1.AgentRun{
+			ObjectMeta: metadata,
+			Spec: v1alpha1.AgentRunSpec{
+				AttemptRef:      attempt.Name,
+				WorkflowRef:     attempt.Spec.WorkflowRef,
+				StepName:        step.Name,
+				Attempt:         attempt.Spec.RetryNumber,
+				PriorAttemptRef: copyFailedAgentAttempt(feedback),
+				Responsibility:  step.Agent.Responsibility,
+				Image:           step.Agent.Image,
+				Executable:      append([]string(nil), step.Agent.Executable...),
+				Capabilities:    append([]string(nil), step.Agent.Capabilities...),
+				Inputs:          append([]v1alpha1.ArtifactReference(nil), step.Inputs...),
+				OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...),
+				Inference:       copyInferenceRequest(step.Agent.Inference),
+				Timeout:         step.Timeout,
+			}}
 		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "AgentRun", Name: attempt.Name}
 	case v1alpha1.ExecutionKindUtility:
 		if step.Utility == nil {
@@ -536,7 +632,7 @@ func (r *WorkflowReconciler) updateWorkflowStatus(ctx context.Context, key types
 func (r *WorkflowReconciler) appendRecoveryEvents(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, failedAttempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig, nextAttempt int32) error {
 	references := map[string]string{
 		"failedAttempt": failedAttempt.Name,
-		"retryAttempt":  attemptName(step.Name, nextAttempt),
+		"retryAttempt":  attemptName(step.Name, workflow.Status.WorkflowAttempt, nextAttempt),
 	}
 	data := map[string]any{
 		"retryFrom":        step.Name,
@@ -548,7 +644,7 @@ func (r *WorkflowReconciler) appendRecoveryEvents(ctx context.Context, workflow 
 	if err := r.appendWorkflowEvent(ctx, workflow, "RecoveryDecisionSelected", step.Name, failedAttempt.Spec.RetryNumber, "select", step.Name, "selected", failedAttempt.Status.FailureReason, references, data); err != nil {
 		return err
 	}
-	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptRetried", step.Name, nextAttempt, "retry", attemptName(step.Name, nextAttempt), "created", failedAttempt.Status.FailureReason, references, data)
+	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptRetried", step.Name, nextAttempt, "retry", attemptName(step.Name, workflow.Status.WorkflowAttempt, nextAttempt), "created", failedAttempt.Status.FailureReason, references, data)
 }
 
 func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, eventType, step string, attempt int32, action, target, outcome, reason string, references map[string]string, data any) error {
@@ -571,13 +667,20 @@ func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *
 	})
 }
 
-func attemptName(step string, number int32) string {
+func attemptName(step string, workflowAttempt, retryNumber int32) string {
 	clean := strings.Trim(strings.ToLower(step), "-")
 	clean = strings.ReplaceAll(clean, "_", "-")
+
 	if len(clean) > 45 {
 		clean = clean[:45]
 	}
-	return fmt.Sprintf("%s-%03d", clean, number)
+
+	return fmt.Sprintf(
+		"%s-w%03d-r%03d",
+		clean,
+		workflowAttempt,
+		retryNumber,
+	)
 }
 
 func findStep(steps []v1alpha1.StepConfig, name string) (v1alpha1.StepConfig, bool) {

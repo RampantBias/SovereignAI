@@ -435,6 +435,32 @@ func (r *UtilityOperationReconciler) resolveUtilityInputs(ctx context.Context, o
 	}
 	resolved := make([]utilitycontract.ArtifactInput, 0, len(operation.Spec.Inputs))
 	for _, requested := range operation.Spec.Inputs {
+		if requested.ArtifactRef != nil {
+			artifact, ready, invalidReason, err := artifacts.ResolvePinnedInput(
+				ctx,
+				r.Client,
+				operation.Namespace,
+				operation.Spec.WorkflowRef,
+				requested,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if invalidReason != "" {
+				return nil, fmt.Errorf("%s", invalidReason)
+			}
+			if !ready {
+				return nil, fmt.Errorf("input artifact %q is not accepted yet", requested.Name)
+			}
+			resolved = append(resolved, utilitycontract.ArtifactInput{
+				Name:     requested.Name,
+				Contract: artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version,
+				Digest:   artifact.Spec.Digest,
+				Path:     artifact.Spec.Path,
+			})
+			continue
+		}
+
 		matches := make([]v1alpha1.Artifact, 0, 1)
 		for index := range artifactList.Items {
 			artifact := artifactList.Items[index]

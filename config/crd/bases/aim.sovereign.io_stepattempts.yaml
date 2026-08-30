@@ -42,13 +42,16 @@ spec:
               StepAttemptSpec is a workflow lifecycle envelope. Domain execution intent is
               held by the owned AgentRun, UtilityOperation, ApprovalRequest, or ValidationRun.
             properties:
-              attempt:
-                format: int32
-                type: integer
               kind:
                 type: string
+              retryNumber:
+                format: int32
+                type: integer
               stepName:
                 type: string
+              workflowAttempt:
+                format: int32
+                type: integer
               workflowRef:
                 properties:
                   name:
@@ -64,9 +67,10 @@ spec:
                 - uid
                 type: object
             required:
-            - attempt
             - kind
+            - retryNumber
             - stepName
+            - workflowAttempt
             - workflowRef
             type: object
           status:

@@ -2,13 +2,11 @@ package workflow
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
-	"github.com/SovereignAI/internal/controllers"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -134,8 +132,9 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 				Name: workflow.Name,
 				UID:  workflow.UID,
 			},
-			StepName:    "test-author",
-			RetryNumber: 1,
+			StepName:        "test-author",
+			RetryNumber:     1,
+			WorkflowAttempt: 1,
 		},
 		Status: v1alpha1.StepAttemptStatus{
 			Phase:          v1alpha1.PhaseFailed,
@@ -344,58 +343,5 @@ func TestWorkflowCreatesOneTypedDomainPrimitivePerAttemptKind(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func changeRequestArtifact(workflow *v1alpha1.SovereignWorkflow) *v1alpha1.Artifact {
-	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.ObjectMeta.UID}
-	controller := true
-
-	return &v1alpha1.Artifact{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "change-request", Namespace: workflow.Namespace, UID: "artifact-uid",
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow",
-				Name: workflow.Name, UID: workflow.UID, Controller: &controller,
-			}},
-		},
-		Spec: v1alpha1.ArtifactSpec{
-			WorkflowRef: workflowRef,
-			ProducerRef: v1alpha1.TypedLocalReference{
-				APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: workflow.Name,
-			},
-			Contract: workflow.Spec.Bootstrap.Contract,
-			Digest:   workflow.Spec.Bootstrap.ExpectedDigest,
-			Path:     controllers.BootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest),
-		},
-		Status: v1alpha1.ArtifactStatus{
-			Phase: v1alpha1.PhaseSucceeded,
-			Conditions: []metav1.Condition{{
-				Type: "Valid", Status: metav1.ConditionTrue, Reason: "ContractAccepted",
-			}},
-		},
-	}
-}
-
-func changeRequestWorkflow() *v1alpha1.SovereignWorkflow {
-	return &v1alpha1.SovereignWorkflow{
-		ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "wf-1", UID: "uid-1", Finalizers: []string{controllermeta.WorkflowFinalizer}},
-		Spec: v1alpha1.SovereignWorkflowSpec{
-			Project: v1alpha1.UIDReference{Name: "project"}, WorkflowID: "wf-1",
-			Bootstrap: v1alpha1.WorkflowBootstrapSpec{
-				SourceRef:      v1alpha1.UIDReference{Name: "wf-1-bootstrap-input", UID: "source-uid"},
-				Key:            "change-request.json",
-				ExpectedDigest: "sha256:" + strings.Repeat("a", 64),
-				Contract:       v1alpha1.ContractReference{Name: "change-request", Version: "v1"},
-				ArtifactName:   "change-request",
-			},
-		},
-		Status: v1alpha1.SovereignWorkflowStatus{
-			BootstrapArtifactRef: &v1alpha1.UIDReference{Name: "change-request", UID: "artifact-uid"},
-			Conditions: []metav1.Condition{{
-				Type: "BootstrapReady", Status: metav1.ConditionTrue, Reason: "ChangeRequestAccepted",
-			}},
-			PvcName: "aaa",
-		},
 	}
 }

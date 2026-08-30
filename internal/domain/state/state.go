@@ -102,6 +102,20 @@ func NextAttemptNumber(attempts []v1alpha1.StepAttempt, stepName string) int32 {
 	return max + 1
 }
 
+// NextRetryNumber returns the next retry number within one workflow attempt.
+// Workflow retries intentionally restart step retry numbering at one.
+func NextRetryNumber(attempts []v1alpha1.StepAttempt, stepName string, workflowAttempt int32) int32 {
+	var max int32
+	for _, attempt := range attempts {
+		if attempt.Spec.StepName == stepName &&
+			attempt.Spec.WorkflowAttempt == workflowAttempt &&
+			attempt.Spec.RetryNumber > max {
+			max = attempt.Spec.RetryNumber
+		}
+	}
+	return max + 1
+}
+
 func ConditionStatus(phase v1alpha1.ResourcePhase) metav1.ConditionStatus {
 	switch phase {
 	case v1alpha1.PhaseSucceeded:

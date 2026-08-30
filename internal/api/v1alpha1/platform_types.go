@@ -52,8 +52,10 @@ type ContractReference struct {
 }
 
 type ArtifactReference struct {
-	Name   string `json:"name"`
-	Digest string `json:"digest,omitempty"`
+	Name               string        `json:"name"`
+	Digest             string        `json:"digest,omitempty"`
+	ArtifactRef        *UIDReference `json:"artifactRef,omitempty"`
+	ProducerAttemptRef string        `json:"producerAttemptRef,omitempty"`
 }
 
 // TypedLocalReference identifies the domain primitive owned by a StepAttempt.

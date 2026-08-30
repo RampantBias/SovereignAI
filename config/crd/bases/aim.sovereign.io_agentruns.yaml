@@ -79,9 +79,25 @@ spec:
               inputs:
                 items:
                   properties:
+                    artifactRef:
+                      properties:
+                        name:
+                          type: string
+                        uid:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                      required:
+                      - name
+                      - uid
+                      type: object
                     digest:
                       type: string
                     name:
+                      type: string
+                    producerAttemptRef:
                       type: string
                   required:
                   - name
