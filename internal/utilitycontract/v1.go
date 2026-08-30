@@ -11,6 +11,10 @@ import (
 
 const Version = "sovereign.ai/utility-contract/v1"
 
+// TestRunCodeError identifies filtered output from a failed Go test command.
+// It is diagnostic evidence, not proof that the failure is in application code.
+const TestRunCodeError = "TestRunCodeError"
+
 type ArtifactInput struct {
 	Name     string `json:"name"`
 	Contract string `json:"contract"`

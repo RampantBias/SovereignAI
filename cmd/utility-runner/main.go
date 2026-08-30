@@ -60,6 +60,9 @@ func main() {
 	}
 	if !succeeded {
 		events.completedWithResult(context.Background(), result)
+		if err := writeUtilityFailureTerminationMessage(terminationMessagePath, result); err != nil {
+			log.Print(err)
+		}
 		log.Print(result.Message)
 		os.Exit(1)
 	}
@@ -83,6 +86,9 @@ func fail(resultPath, code string, err error) {
 	}
 	if writeErr := utilitycontract.WriteResult(resultPath, result); writeErr != nil && !errors.Is(writeErr, os.ErrPermission) {
 		log.Printf("write utility failure result: %v", writeErr)
+	}
+	if writeErr := writeUtilityFailureTerminationMessage(terminationMessagePath, result); writeErr != nil {
+		log.Print(writeErr)
 	}
 	os.Exit(1)
 }

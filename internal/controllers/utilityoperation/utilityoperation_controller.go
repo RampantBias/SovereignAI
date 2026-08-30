@@ -36,6 +36,7 @@ import (
 // platform operations. StepAttempt observes this resource but cannot execute it.
 type UtilityOperationReconciler struct {
 	client.Client
+	Reader         client.Reader
 	Scheme         *runtime.Scheme
 	Audit          audit.Recorder
 	Now            func() time.Time
@@ -45,6 +46,11 @@ type UtilityOperationReconciler struct {
 }
 
 func (r *UtilityOperationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Read terminal pod diagnostics directly; the Job watch can precede the
+	// pod informer update, and collection must not persist a stale fallback.
+	if r.Reader == nil {
+		r.Reader = mgr.GetAPIReader()
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.UtilityOperation{}).
 		Owns(&batchv1.Job{}).
@@ -121,7 +127,9 @@ func (r *UtilityOperationReconciler) Reconcile(ctx context.Context, request ctrl
 		return r.startCollection(ctx, &operation)
 	}
 	if job.Status.Failed > 0 {
-		operation.Status.FailureReason, operation.Status.Retryable = "UtilityJobFailed", true
+		if err := r.recordJobFailure(ctx, &operation, &job); err != nil {
+			return ctrl.Result{}, err
+		}
 		return r.startCollection(ctx, &operation)
 	}
 	if job.Status.Active > 0 {
@@ -841,7 +849,8 @@ func (r *UtilityOperationReconciler) utilityImage() string {
 func (r *UtilityOperationReconciler) setPhase(ctx context.Context, operation *v1alpha1.UtilityOperation, phase v1alpha1.ResourcePhase, reason, message string) error {
 	updated, changed, err := r.updateStatus(ctx, client.ObjectKeyFromObject(operation), func(latest *v1alpha1.UtilityOperation) bool {
 		condition := apiMeta.FindStatusCondition(latest.Status.Conditions, "Ready")
-		if latest.Status.Phase == phase && condition != nil && condition.Reason == reason && condition.Message == message {
+		if latest.Status.Phase == phase && condition != nil && condition.Reason == reason && condition.Message == message &&
+			latest.Status.FailureReason == operation.Status.FailureReason && latest.Status.FailureMessage == operation.Status.FailureMessage {
 			return false
 		}
 		now := metav1.Now()
@@ -856,6 +865,7 @@ func (r *UtilityOperationReconciler) setPhase(ctx context.Context, operation *v1
 		latest.Status.WorkspaceWriterEpoch = operation.Status.WorkspaceWriterEpoch
 		latest.Status.WorkspaceWriterReleased = operation.Status.WorkspaceWriterReleased
 		latest.Status.FailureReason = operation.Status.FailureReason
+		latest.Status.FailureMessage = operation.Status.FailureMessage
 		latest.Status.Retryable = operation.Status.Retryable
 		latest.Status.ObservedGeneration = latest.Generation
 		if phase == v1alpha1.PhaseRunning && latest.Status.StartedAt == nil {
@@ -874,11 +884,15 @@ func (r *UtilityOperationReconciler) setPhase(ctx context.Context, operation *v1
 }
 
 func (r *UtilityOperationReconciler) fail(ctx context.Context, operation *v1alpha1.UtilityOperation, reason string, retryable bool) error {
+	if operation.Status.FailureReason != reason {
+		operation.Status.FailureMessage = ""
+	}
 	operation.Status.FailureReason, operation.Status.Retryable = reason, retryable
 	return r.setPhase(ctx, operation, v1alpha1.PhaseFailed, reason, "utility operation failed")
 }
 
 func (r *UtilityOperationReconciler) interrupt(ctx context.Context, operation *v1alpha1.UtilityOperation, reason string, retryable bool) error {
+	operation.Status.FailureMessage = ""
 	operation.Status.FailureReason, operation.Status.Retryable = reason, retryable
 	return r.setPhase(ctx, operation, v1alpha1.PhaseInterrupted, reason, "utility operation interrupted")
 }

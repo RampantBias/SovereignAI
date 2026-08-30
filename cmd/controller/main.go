@@ -12,6 +12,7 @@ import (
 	"github.com/SovereignAI/internal/controllers/agentrun"
 	"github.com/SovereignAI/internal/controllers/stepattempt"
 	"github.com/SovereignAI/internal/controllers/utilityoperation"
+	"github.com/SovereignAI/internal/controllers/validationrun"
 	"github.com/SovereignAI/internal/controllers/workflow"
 	"github.com/SovereignAI/internal/inference"
 	"github.com/SovereignAI/internal/policy"
@@ -150,7 +151,7 @@ func main() {
 			Scheme:          mgr.GetScheme(),
 			Audit:           recorder,
 			CodeServerImage: env("SOVEREIGN_CODE_SERVER_IMAGE", "ghcr.io/coder/code-server:4.99.4")},
-		&controllers.ValidationRunReconciler{
+		&validationrun.ValidationRunReconciler{
 			Client:   mgr.GetClient(),
 			Provider: validationProvider,
 			Audit:    recorder},

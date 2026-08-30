@@ -196,6 +196,8 @@ spec:
                   - type
                   type: object
                 type: array
+              failureMessage:
+                type: string
               failureReason:
                 type: string
               jobRef:

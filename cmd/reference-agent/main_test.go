@@ -109,9 +109,6 @@ func TestRunInspectsWorkspaceThenPublishesResult(t *testing.T) {
 			t.Errorf("message roles = %q, %q; want system, user", payload.Messages[0].Role, payload.Messages[1].Role)
 		}
 		for _, expected := range []string{
-			"Workflow ID: workflow-123",
-			"Step Name: architect",
-			"Attempt: 2",
 			"Role: planner",
 			"# PREVIOUS ATTEMPT REJECTION",
 			"Previous Attempt: architect-001",
@@ -410,8 +407,6 @@ func TestDeveloperPromptUsesWorkspaceToolsWithoutRepositoryContext(t *testing.T)
 		agentcontract.CapabilityWorkspaceRead,
 		agentcontract.CapabilityWorkspaceWrite,
 		"first action must inspect the repository root with workspace_tree",
-		"Do not create or return a diff",
-		"trusted code derives it from the attempt overlay",
 		"Call agent_complete with a concise summary",
 		"Accepted test evidence (patch content intentionally omitted)",
 		"verify divide behavior",

@@ -130,6 +130,12 @@ func (TestRun) Run(ctx context.Context, input utilitycontract.Input) (utilitycon
 		result.Message = message
 		failureCode := map[string]string{"failed": "Failed", "timed-out": "TimedOut", "environment-error": "EnvironmentError", "tree-drift": "TreeDrift"}[outcome]
 		result.Error = &utilitycontract.ResultError{Code: "TestRun" + failureCode, Message: message}
+		if outcome == "failed" {
+			if diagnostic := goTestDiagnostic(input, output); diagnostic != "" {
+				result.Message = diagnostic
+				result.Error = &utilitycontract.ResultError{Code: utilitycontract.TestRunCodeError, Message: diagnostic}
+			}
+		}
 	}
 	return result, nil
 }

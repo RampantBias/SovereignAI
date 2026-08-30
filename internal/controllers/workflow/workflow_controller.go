@@ -12,6 +12,7 @@ import (
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/domain/state"
+	"github.com/SovereignAI/internal/utilitycontract"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -384,6 +385,13 @@ func (r *WorkflowReconciler) beginWorkflowRetry(
 }
 
 func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, step v1alpha1.StepConfig, number int32, feedback *v1alpha1.FailedAgentAttempt) error {
+	if feedback == nil && number == 1 {
+		var err error
+		feedback, err = r.workflowRetryFeedback(ctx, workflow, step)
+		if err != nil {
+			return err
+		}
+	}
 	name := attemptName(step.Name, workflow.Status.WorkflowAttempt, number)
 	attempt := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{
@@ -509,7 +517,11 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, workflow
 }
 
 func retryFeedbackForAttempt(attempt *v1alpha1.StepAttempt) *v1alpha1.FailedAgentAttempt {
-	if attempt.Spec.Kind != v1alpha1.ExecutionKindAgent || attempt.Status.FailureReason == "" || attempt.Status.FailureMessage == "" {
+	if attempt.Spec.Kind != v1alpha1.ExecutionKindAgent &&
+		!(attempt.Spec.Kind == v1alpha1.ExecutionKindUtility && attempt.Status.FailureReason == utilitycontract.TestRunCodeError) {
+		return nil
+	}
+	if attempt.Status.FailureReason == "" || attempt.Status.FailureMessage == "" {
 		return nil
 	}
 	feedback := agentcontract.RetryFeedback{

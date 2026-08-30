@@ -226,6 +226,7 @@ type UtilityOperationStatus struct {
 	WorkspaceWriterEpoch    int32              `json:"workspaceWriterEpoch,omitempty"`
 	WorkspaceWriterReleased bool               `json:"workspaceWriterReleased,omitempty"`
 	FailureReason           string             `json:"failureReason,omitempty"`
+	FailureMessage          string             `json:"failureMessage,omitempty"`
 	Retryable               bool               `json:"retryable,omitempty"`
 	StartedAt               *metav1.Time       `json:"startedAt,omitempty"`
 	CompletedAt             *metav1.Time       `json:"completedAt,omitempty"`

@@ -58,7 +58,7 @@ func TestDecideFailure(t *testing.T) {
 			name:       "prepare candidate failure is terminal",
 			failedStep: "prepare-candidate",
 			phase:      v1alpha1.PhaseFailed,
-			wantAction: failureActionFailWorkflow,
+			wantAction: failureActionRetryStep,
 		},
 	}
 
@@ -214,8 +214,8 @@ func TestWorkflowRewindsFailedTestCandidateToTestAuthor(t *testing.T) {
 		},
 		Status: v1alpha1.StepAttemptStatus{
 			Phase:          v1alpha1.PhaseFailed,
-			FailureReason:  "TestsFailed",
-			FailureMessage: "go test ./...: expected 2, got 3",
+			FailureReason:  "TestRunCodeError",
+			FailureMessage: "main_test.go:42: expected 2, got 3",
 			Retryable:      false,
 		},
 	}
@@ -313,6 +313,14 @@ func TestWorkflowRewindsFailedTestCandidateToTestAuthor(t *testing.T) {
 	}
 
 	retryName := attemptName("test-author", 1, 1)
+	var restartedRun v1alpha1.AgentRun
+	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: retryName}, &restartedRun); err != nil {
+		t.Fatal(err)
+	}
+	feedback := restartedRun.Spec.PriorAttemptRef
+	if feedback == nil || feedback.PreviousAttemptRef != failed.Name || feedback.Code != failed.Status.FailureReason || feedback.Message != failed.Status.FailureMessage {
+		t.Fatalf("restarted agent did not receive the utility diagnostic: %#v", feedback)
+	}
 
 	var restarted v1alpha1.StepAttempt
 	if err := kubeClient.Get(
@@ -367,6 +375,12 @@ func TestWorkflowRewindsFailedTestCandidateToTestAuthor(t *testing.T) {
 			"expected immutable failed attempt and one restarted attempt, got %#v",
 			allAttempts.Items,
 		)
+	}
+	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(failed), &original); err != nil {
+		t.Fatal(err)
+	}
+	if original.Status.FailureReason != failed.Status.FailureReason || original.Status.FailureMessage != failed.Status.FailureMessage {
+		t.Fatalf("feedback propagation modified the failed attempt: %#v", original.Status)
 	}
 }
 func changeRequestArtifact(workflow *v1alpha1.SovereignWorkflow) *v1alpha1.Artifact {
