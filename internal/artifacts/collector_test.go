@@ -99,6 +99,111 @@ func TestCollectRejectsTamperedExistingStoredContent(t *testing.T) {
 	}
 }
 
+func TestCollectProjectsControllerReadableClaims(t *testing.T) {
+	digestA := "sha256:" + strings.Repeat("a", 64)
+	digestB := "sha256:" + strings.Repeat("b", 64)
+	commit := strings.Repeat("c", 40)
+	tree := strings.Repeat("d", 40)
+	repository := "https://git.example.test/calculator.git"
+
+	tests := []struct {
+		name     string
+		contract string
+		value    any
+		assert   func(*testing.T, *v1alpha1.ArtifactClaims)
+	}{
+		{
+			name:     "candidate revision",
+			contract: artifactcontract.CandidateRevisionContract,
+			value: artifactcontract.CandidateRevision{
+				RepositoryURL: repository, PreparedCandidateDigest: digestA,
+				TestReportDigest: digestB, ChangeSetDigest: digestA,
+				SourceCommit: strings.Repeat("a", 40), Branch: "sovereign/workflow-1",
+				Commit: commit, Tree: tree, CommitMessageDigest: digestB,
+			},
+			assert: func(t *testing.T, claims *v1alpha1.ArtifactClaims) {
+				t.Helper()
+				if claims == nil || claims.CandidateRevision == nil ||
+					claims.CandidateRevision.Commit != commit ||
+					claims.CandidateRevision.Tree != tree ||
+					claims.CandidateRevision.RepositoryURL != repository {
+					t.Fatalf("unexpected candidate revision claims: %#v", claims)
+				}
+			},
+		},
+		{
+			name:     "candidate remote proof",
+			contract: artifactcontract.CandidateRemoteProofContract,
+			value: artifactcontract.CandidateRemoteProof{
+				CandidateRevisionDigest: digestA, RepositoryURL: repository,
+				Ref: "refs/heads/sovereign/workflow-1", ObservedCommit: commit,
+				VerifiedAt: "2026-08-29T12:00:00Z",
+			},
+			assert: func(t *testing.T, claims *v1alpha1.ArtifactClaims) {
+				t.Helper()
+				if claims == nil || claims.CandidateRemoteProof == nil ||
+					claims.CandidateRemoteProof.CandidateRevisionDigest != digestA ||
+					claims.CandidateRemoteProof.ObservedCommit != commit {
+					t.Fatalf("unexpected candidate remote proof claims: %#v", claims)
+				}
+			},
+		},
+		{
+			name:     "image digest",
+			contract: artifactcontract.ImageDigestContract,
+			value: artifactcontract.ImageDigest{
+				CandidateRevisionDigest: digestA,
+				ImageRepository:         "registry.example.test/sovereign/calculator",
+				Digest:                  digestB,
+				CandidateCommit:         commit,
+				CandidateTree:           tree,
+				BuilderImageDigest:      digestA,
+				BuildCommandDigest:      digestB,
+				DockerfileDigest:        digestA,
+				ContextTree:             tree,
+			},
+			assert: func(t *testing.T, claims *v1alpha1.ArtifactClaims) {
+				t.Helper()
+				if claims == nil || claims.ImageDigest == nil ||
+					claims.ImageDigest.ImageRepository != "registry.example.test/sovereign/calculator" ||
+					claims.ImageDigest.OCIDigest != digestB ||
+					claims.ImageDigest.CandidateCommit != commit {
+					t.Fatalf("unexpected image digest claims: %#v", claims)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			staging := t.TempDir()
+			content, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(staging, "artifact.json")
+			if err := os.WriteFile(path, content, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			collected, err := Collect(
+				staging,
+				t.TempDir(),
+				v1alpha1.UIDReference{Name: "wf", UID: "wf-uid"},
+				v1alpha1.TypedLocalReference{Kind: "UtilityOperation", Name: "attempt"},
+				commit,
+				[]agentcontract.ArtifactOutput{{Contract: test.contract, Path: path}},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(collected) != 1 {
+				t.Fatalf("collected %d artifacts, want 1", len(collected))
+			}
+			test.assert(t, collected[0].Spec.Claims)
+		})
+	}
+}
+
 func validImplementationPlan(t *testing.T) []byte {
 	t.Helper()
 	value := artifactcontract.ImplementationPlan{

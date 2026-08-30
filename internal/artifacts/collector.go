@@ -53,6 +53,13 @@ func Collect(stagingRoot, artifactRoot string, workflow v1alpha1.UIDReference, p
 		if err := artifactcontract.DefaultRegistry().Validate(contract.Name, contract.Version, stored.Bytes); err != nil {
 			return nil, fmt.Errorf("validate stored artifact %q: %w", stored.Path, err)
 		}
+		claims, err := projectClaims(contract, stored.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("project stored artifact %q claims: %w", stored.Path, err)
+		}
+		if err := ValidateClaims(contract, claims); err != nil {
+			return nil, fmt.Errorf("validate stored artifact %q claims: %w", stored.Path, err)
+		}
 		collected = append(collected, Collected{Spec: v1alpha1.ArtifactSpec{
 			WorkflowRef:    workflow,
 			ProducerRef:    producer,
@@ -60,6 +67,7 @@ func Collect(stagingRoot, artifactRoot string, workflow v1alpha1.UIDReference, p
 			Digest:         stored.Digest,
 			Path:           stored.Path,
 			SourceRevision: sourceRevision,
+			Claims:         claims,
 		}})
 	}
 	return collected, nil
