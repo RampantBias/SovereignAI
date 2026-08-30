@@ -23,6 +23,7 @@ import (
 // authority belong to the domain resource referenced by status.executionRef.
 type StepAttemptReconciler struct {
 	client.Client
+	Reader client.Reader
 	Scheme *runtime.Scheme
 	Audit  audit.Recorder
 	Now    func() time.Time
@@ -91,7 +92,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 			return "", "", "", false, fmt.Errorf("agent attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var run v1alpha1.AgentRun
-		if err := r.Get(ctx, key, &run); err != nil {
+		if err := r.Reader.Get(ctx, key, &run); err != nil {
 			return "", "", "", false, err
 		}
 		if err := controllers.ValidateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindAgent, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {
@@ -103,19 +104,19 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 			return "", "", "", false, fmt.Errorf("utility attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var operation v1alpha1.UtilityOperation
-		if err := r.Get(ctx, key, &operation); err != nil {
+		if err := r.Reader.Get(ctx, key, &operation); err != nil {
 			return "", "", "", false, err
 		}
 		if err := controllers.ValidateDomainBinding(attempt, &operation, operation.Spec.AttemptRef, v1alpha1.ExecutionKindUtility, operation.Spec.WorkflowRef, operation.Spec.StepName, operation.Spec.Attempt); err != nil {
 			return v1alpha1.PhaseFailed, "InvalidDomainAuthority", "", false, nil
 		}
-		return operation.Status.Phase, operation.Status.FailureReason, "", operation.Status.Retryable, nil
+		return operation.Status.Phase, operation.Status.FailureReason, operation.Status.FailureMessage, operation.Status.Retryable, nil
 	case v1alpha1.ExecutionKindHumanGate:
 		if attempt.Status.ExecutionRef.Kind != "ApprovalRequest" {
 			return "", "", "", false, fmt.Errorf("human gate attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var approval v1alpha1.ApprovalRequest
-		if err := r.Get(ctx, key, &approval); err != nil {
+		if err := r.Reader.Get(ctx, key, &approval); err != nil {
 			return "", "", "", false, err
 		}
 		if err := controllers.ValidateDomainBinding(attempt, &approval, approval.Spec.AttemptRef.Name, v1alpha1.ExecutionKindHumanGate, approval.Spec.WorkflowRef, approval.Spec.StepName, approval.Spec.Attempt); err != nil {
@@ -127,7 +128,7 @@ func (r *StepAttemptReconciler) domainStatus(ctx context.Context, attempt *v1alp
 			return "", "", "", false, fmt.Errorf("validation attempt references %s", attempt.Status.ExecutionRef.Kind)
 		}
 		var run v1alpha1.ValidationRun
-		if err := r.Get(ctx, key, &run); err != nil {
+		if err := r.Reader.Get(ctx, key, &run); err != nil {
 			return "", "", "", false, err
 		}
 		if err := controllers.ValidateDomainBinding(attempt, &run, run.Spec.AttemptRef, v1alpha1.ExecutionKindValidation, run.Spec.WorkflowRef, run.Spec.StepName, run.Spec.Attempt); err != nil {

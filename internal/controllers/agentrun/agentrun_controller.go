@@ -410,6 +410,32 @@ func (r *AgentRunReconciler) resolveAgentInputs(ctx context.Context, run *v1alph
 		}
 		seen[requested.Name] = struct{}{}
 
+		if requested.ArtifactRef != nil {
+			artifact, ready, invalidReason, err := artifacts.ResolvePinnedInput(
+				ctx,
+				r.Client,
+				run.Namespace,
+				run.Spec.WorkflowRef,
+				requested,
+			)
+			if err != nil {
+				return nil, false, "", err
+			}
+			if invalidReason != "" {
+				return nil, false, invalidReason, nil
+			}
+			if !ready {
+				return nil, false, "", nil
+			}
+			resolved = append(resolved, agentcontract.ArtifactInput{
+				Name:     requested.Name,
+				Contract: artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version,
+				Digest:   artifact.Spec.Digest,
+				Path:     artifact.Spec.Path,
+			})
+			continue
+		}
+
 		matchingContract := make([]v1alpha1.Artifact, 0)
 		matchingIdentity := make([]v1alpha1.Artifact, 0)
 		for index := range artifactList.Items {

@@ -30,7 +30,9 @@ func TestStepAttemptMirrorsOwnedAgentRunStatus(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.StepAttempt{}, &v1alpha1.AgentRun{}).
 		WithObjects(attempt, run).Build()
-	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme}
+	apiReader := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(attempt, run).Build()
+	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme, Reader: apiReader}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(attempt)); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +45,52 @@ func TestStepAttemptMirrorsOwnedAgentRunStatus(t *testing.T) {
 	}
 	if updated.Status.ExecutionRef == nil || updated.Status.ExecutionRef.Kind != "AgentRun" {
 		t.Fatalf("execution reference was not preserved: %#v", updated.Status.ExecutionRef)
+	}
+}
+
+func TestStepAttemptUsesAPIReaderForNewExecutionPrimitive(t *testing.T) {
+	scheme := attemptScheme(t)
+	attempt := authorizedAttempt("initialize-repository-w000-r001", "wf", "initialize-repository", v1alpha1.ExecutionKindUtility)
+	operation := &v1alpha1.UtilityOperation{
+		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: attempt.Namespace},
+		Spec: v1alpha1.UtilityOperationSpec{
+			AttemptRef:  attempt.Name,
+			WorkflowRef: attempt.Spec.WorkflowRef,
+			StepName:    attempt.Spec.StepName,
+			Attempt:     attempt.Spec.RetryNumber,
+			Operation:   v1alpha1.UtilityOperationRequest{Name: "repository.initialize"},
+		},
+		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhaseRunning},
+	}
+	ownByAttempt(operation, attempt)
+
+	cachedClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.StepAttempt{}).
+		WithObjects(attempt).Build()
+	apiReader := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(operation).Build()
+	reconciler := &StepAttemptReconciler{
+		Client: cachedClient,
+		Reader: apiReader,
+		Scheme: scheme,
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(attempt)); err != nil {
+		t.Fatal(err)
+	}
+
+	var updated v1alpha1.StepAttempt
+	if err := cachedClient.Get(context.Background(), types.NamespacedName{
+		Namespace: attempt.Namespace,
+		Name:      attempt.Name,
+	}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Phase != v1alpha1.PhaseRunning {
+		t.Fatalf("attempt phase = %s, want Running", updated.Status.Phase)
+	}
+	if updated.Status.FailureReason == "ExecutionPrimitiveLost" {
+		t.Fatal("cache lag was treated as a lost execution primitive")
 	}
 }
 
@@ -64,7 +112,9 @@ func TestStepAttemptMirrorsOwnedAgentFailureDiagnostic(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.StepAttempt{}, &v1alpha1.AgentRun{}).
 		WithObjects(attempt, run).Build()
-	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme}
+	apiReader := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(attempt, run).Build()
+	reconciler := &StepAttemptReconciler{Client: client, Scheme: scheme, Reader: apiReader}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(attempt)); err != nil {
 		t.Fatal(err)
 	}

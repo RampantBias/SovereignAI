@@ -39,3 +39,19 @@ func TestNextAttemptNumberDoesNotOverwriteHistory(t *testing.T) {
 		t.Fatalf("NextAttemptNumber() = %d, want 3", got)
 	}
 }
+
+func TestNextRetryNumberResetsForWorkflowAttempt(t *testing.T) {
+	attempts := []v1alpha1.StepAttempt{
+		{Spec: v1alpha1.StepAttemptSpec{StepName: "test-author", RetryNumber: 1, WorkflowAttempt: 0}},
+		{Spec: v1alpha1.StepAttemptSpec{StepName: "test-author", RetryNumber: 2, WorkflowAttempt: 0}},
+		{Spec: v1alpha1.StepAttemptSpec{StepName: "test-author", RetryNumber: 1, WorkflowAttempt: 1}},
+		{Spec: v1alpha1.StepAttemptSpec{StepName: "developer", RetryNumber: 4, WorkflowAttempt: 1}},
+	}
+
+	if got := NextRetryNumber(attempts, "test-author", 1); got != 2 {
+		t.Fatalf("NextRetryNumber(workflow attempt 1) = %d, want 2", got)
+	}
+	if got := NextRetryNumber(attempts, "test-author", 2); got != 1 {
+		t.Fatalf("NextRetryNumber(workflow attempt 2) = %d, want reset to 1", got)
+	}
+}

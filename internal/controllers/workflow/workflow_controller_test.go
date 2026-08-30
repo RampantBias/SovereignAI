@@ -109,13 +109,13 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 	}}
 	workflow.Status.Phase = string(v1alpha1.PhaseRunning)
 	workflow.Status.ActiveStepName = "test-author"
-	workflow.Status.ActiveAttemptRef = "test-author-001"
+	workflow.Status.ActiveAttemptRef = "test-author-w000-r001"
 
 	// fail step attempt to trigger retry
 	controller := true
 	failed := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-author-001",
+			Name:      "test-author-w000-r001",
 			Namespace: workflow.Namespace,
 			Labels: map[string]string{
 				controllermeta.LabelWorkflow: workflow.Spec.WorkflowID,
@@ -134,7 +134,7 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 			},
 			StepName:        "test-author",
 			RetryNumber:     1,
-			WorkflowAttempt: 1,
+			WorkflowAttempt: 0,
 		},
 		Status: v1alpha1.StepAttemptStatus{
 			Phase:          v1alpha1.PhaseFailed,
@@ -166,7 +166,7 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 	}
 
 	// 1 -> create workspace writer lease
-	// 2 -> create test-author-002
+	// 2 -> create test-author-w000-r002
 	// 3 -> observe new attempt
 	for range 3 {
 		if _, err := reconciler.Reconcile(
@@ -176,11 +176,11 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 		}
 	}
 
-	// test-author-001 still exists and remains failed
+	// test-author-w000-r001 still exists and remains failed
 	var original v1alpha1.StepAttempt
 	if err := kubeClient.Get(ctx, types.NamespacedName{
 		Namespace: workflow.Namespace,
-		Name:      "test-author-001",
+		Name:      "test-author-w000-r001",
 	}, &original); err != nil {
 		t.Fatal(err)
 	}
@@ -188,11 +188,11 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 		t.Fatal("original attempt was modified")
 	}
 
-	// test-author-002 exists with matching attempt #
+	// test-author-w000-r002 exists with matching attempt #
 	var retried v1alpha1.StepAttempt
 	if err := kubeClient.Get(ctx, types.NamespacedName{
 		Namespace: workflow.Namespace,
-		Name:      "test-author-002",
+		Name:      "test-author-w000-r002",
 	}, &retried); err != nil {
 		t.Fatal(err)
 	}
@@ -200,10 +200,10 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 		t.Fatalf("unexpected retry attempt: #%d; name: %s", retried.Spec.RetryNumber, retried.Spec.StepName)
 	}
 
-	// test-author-002 is owned by new attempt
+	// test-author-w000-r002 is owned by new attempt
 	var retriedRun v1alpha1.AgentRun
 	if err := kubeClient.Get(ctx, types.NamespacedName{
-		Name:      "test-author-002",
+		Name:      "test-author-w000-r002",
 		Namespace: workflow.Namespace,
 	}, &retriedRun); err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestWorkflowCreatesOneTypedDomainPrimitivePerAttemptKind(t *testing.T) {
 				t.Fatal(err)
 			}
 			var attempt v1alpha1.StepAttempt
-			if err := client.Get(context.Background(), types.NamespacedName{Namespace: workflow.Namespace, Name: "work-001"}, &attempt); err != nil {
+			if err := client.Get(context.Background(), types.NamespacedName{Namespace: workflow.Namespace, Name: "work-w000-r001"}, &attempt); err != nil {
 				t.Fatal(err)
 			}
 			if attempt.Status.ExecutionRef == nil || attempt.Status.ExecutionRef.Kind != test.wantKind || attempt.Status.ExecutionRef.Name != attempt.Name {

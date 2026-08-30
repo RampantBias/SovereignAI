@@ -129,6 +129,7 @@ func main() {
 			BootstrapImage: env("SOVEREIGN_BOOTSTRAP_IMAGE", "sovereign-artifact-bootstrap:dev")},
 		&stepattempt.StepAttemptReconciler{
 			Client: mgr.GetClient(),
+			Reader: mgr.GetAPIReader(),
 			Scheme: mgr.GetScheme(),
 			Audit:  recorder},
 		&agentrun.AgentRunReconciler{
