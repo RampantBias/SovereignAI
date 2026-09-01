@@ -86,6 +86,7 @@ spec:
                     - git.commit
                     - git.push
                     - git.merge
+                    - git.mergeRequest
                     - test.run
                     - build.image
                     type: string

@@ -474,36 +474,62 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, workflow
 				Inference:       copyInferenceRequest(step.Agent.Inference),
 				Timeout:         step.Timeout,
 			}}
-		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "AgentRun", Name: attempt.Name}
+		reference = v1alpha1.TypedLocalReference{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "AgentRun",
+			Name:       attempt.Name}
 	case v1alpha1.ExecutionKindUtility:
 		if step.Utility == nil {
 			return nil, fmt.Errorf("utility step %s has no utility operation", step.Name)
 		}
 		object = &v1alpha1.UtilityOperation{ObjectMeta: metadata, Spec: v1alpha1.UtilityOperationSpec{
-			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.RetryNumber,
-			Operation: copyUtilityOperation(*step.Utility), Inputs: inputs,
-			OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...), Timeout: step.Timeout,
+			AttemptRef:      attempt.Name,
+			WorkflowRef:     attempt.Spec.WorkflowRef,
+			StepName:        step.Name,
+			Attempt:         attempt.Spec.RetryNumber,
+			Operation:       copyUtilityOperation(*step.Utility),
+			Inputs:          inputs,
+			OutputContracts: append([]v1alpha1.ContractReference(nil), step.Outputs...),
+			Timeout:         step.Timeout,
 		}}
 		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "UtilityOperation", Name: attempt.Name}
 	case v1alpha1.ExecutionKindHumanGate:
 		if step.Approval == nil {
 			return nil, fmt.Errorf("human gate %s has no approval specification", step.Name)
 		}
-		object = &v1alpha1.ApprovalRequest{ObjectMeta: metadata, Spec: v1alpha1.ApprovalRequestSpec{
-			AttemptRef: v1alpha1.UIDReference{Name: attempt.Name}, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name,
-			Attempt: attempt.Spec.RetryNumber, Approval: copyApprovalSpec(*step.Approval), Inputs: inputs,
-		}}
+		object = &v1alpha1.ApprovalRequest{
+			ObjectMeta: metadata,
+			Spec: v1alpha1.ApprovalRequestSpec{
+				AttemptRef:  v1alpha1.UIDReference{Name: attempt.Name, UID: attempt.UID},
+				WorkflowRef: attempt.Spec.WorkflowRef,
+				StepName:    step.Name,
+				Attempt:     attempt.Spec.RetryNumber,
+				Approval:    copyApprovalSpec(*step.Approval),
+				Inputs:      inputs,
+			}}
 		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ApprovalRequest", Name: attempt.Name}
 	case v1alpha1.ExecutionKindValidation:
 		if step.Validation == nil {
 			return nil, fmt.Errorf("validation step %s has no validation specification", step.Name)
 		}
-		object = &v1alpha1.ValidationRun{ObjectMeta: metadata, Spec: v1alpha1.ValidationRunSpec{
-			AttemptRef: attempt.Name, WorkflowRef: attempt.Spec.WorkflowRef, StepName: step.Name, Attempt: attempt.Spec.RetryNumber,
-			Provider: step.Validation.Provider, Commit: step.Validation.Commit, ImageDigest: step.Validation.ImageDigest,
-			OverlayPath: step.Validation.OverlayPath, Destination: step.Validation.Destination, Inputs: inputs,
-		}}
-		reference = v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ValidationRun", Name: attempt.Name}
+		object = &v1alpha1.ValidationRun{
+			ObjectMeta: metadata,
+			Spec: v1alpha1.ValidationRunSpec{
+				AttemptRef:  attempt.Name,
+				WorkflowRef: attempt.Spec.WorkflowRef,
+				StepName:    step.Name,
+				Attempt:     attempt.Spec.RetryNumber,
+				Provider:    step.Validation.Provider,
+				Commit:      step.Validation.Commit,
+				ImageDigest: step.Validation.ImageDigest,
+				OverlayPath: step.Validation.OverlayPath,
+				Destination: step.Validation.Destination,
+				Inputs:      inputs,
+			}}
+		reference = v1alpha1.TypedLocalReference{
+			APIVersion: v1alpha1.GroupVersion.String(),
+			Kind:       "ValidationRun",
+			Name:       attempt.Name}
 	default:
 		return nil, fmt.Errorf("unsupported execution kind %q", step.Kind)
 	}
