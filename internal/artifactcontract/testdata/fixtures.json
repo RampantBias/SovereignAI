@@ -217,5 +217,27 @@
         "verifiedAt": "2026-07-24T12:05:00Z"
       }
     }
+  },
+  {
+    "contract": "merge-request/v1",
+    "document": {
+      "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "candidateRemoteProofDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "validationResultDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "repositoryURL": "https://github.com/example/calculator.git",
+      "provider": "github",
+      "number": 42,
+      "url": "https://github.com/example/calculator/pull/42",
+      "sourceBranch": "sovereign/workflow-uid",
+      "targetBranch": "main",
+      "candidateCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "open",
+      "utilityOperation": {
+        "namespace": "workflow",
+        "name": "request-001",
+        "uid": "request-uid"
+      },
+      "idempotencyKey": "workflow/workflow-uid/request"
+    }
   }
 ]
