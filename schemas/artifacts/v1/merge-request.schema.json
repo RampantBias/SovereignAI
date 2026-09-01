@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/merge-request.schema.json",
+  "title": "merge-request/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidateRevisionDigest",
+    "candidateRemoteProofDigest",
+    "validationResultDigest",
+    "repositoryURL",
+    "provider",
+    "number",
+    "url",
+    "sourceBranch",
+    "targetBranch",
+    "candidateCommit",
+    "state",
+    "utilityOperation",
+    "idempotencyKey"
+  ],
+  "properties": {
+    "candidateRevisionDigest": {
+      "$ref": "common.schema.json#/$defs/Digest"
+    },
+    "candidateRemoteProofDigest": {
+      "$ref": "common.schema.json#/$defs/Digest"
+    },
+    "validationResultDigest": {
+      "$ref": "common.schema.json#/$defs/Digest"
+    },
+    "repositoryURL": {
+      "$ref": "common.schema.json#/$defs/RepositoryURL"
+    },
+    "provider": {
+      "const": "github"
+    },
+    "number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "url": {
+      "type": "string",
+      "pattern": "^https://github\\.com/[^/]+/[^/]+/pull/[1-9][0-9]*$",
+      "maxLength": 2048
+    },
+    "sourceBranch": {
+      "$ref": "common.schema.json#/$defs/Branch"
+    },
+    "targetBranch": {
+      "$ref": "common.schema.json#/$defs/Branch"
+    },
+    "candidateCommit": {
+      "$ref": "common.schema.json#/$defs/GitOID"
+    },
+    "state": {
+      "enum": [
+        "open",
+        "merged"
+      ]
+    },
+    "utilityOperation": {
+      "$ref": "common.schema.json#/$defs/ObjectIdentity"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    }
+  }
+}
