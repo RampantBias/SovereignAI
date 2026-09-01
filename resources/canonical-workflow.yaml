@@ -215,17 +215,17 @@ spec:
         - name: validation-result
       timeout: 24h
       maxAttempts: 1
-    - name: merge-candidate
+    - name: request-merge
       kind: Utility
       order: 12
       utility:
-        name: git.merge
+        name: git.mergeRequest
       inputs:
         - name: candidate-remote-proof
         - name: candidate-revision
         - name: validation-result
       outputs:
-        - name: merge-revision
+        - name: merge-request
           version: v1
       timeout: 10m
       maxAttempts: 2

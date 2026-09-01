@@ -14,7 +14,7 @@ flowchart TB
 
     subgraph P3["3 — Build & Release"]
         direction LR
-        I[Build Image] --> J[Argo Validation] --> K[Human Approval] --> L[Git Merge]
+        I[Build Image] --> J[Argo Validation] --> K[Human Approval] --> L[Merge Request]
     end
 
     P1 --> P2 --> P3

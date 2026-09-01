@@ -68,3 +68,12 @@ decision := {"allowed": true, "reasons": [], "evict": []} if {
   input.request.parameters.approvalDecisionRef != ""
   input.request.parameters.validationRunRef != ""
 }
+
+# Request creation is separate from permission to merge. The runner verifies
+# the accepted candidate, remote proof, and validation artifacts before POST.
+decision := {"allowed": true, "reasons": [], "evict": []} if {
+  input.operation == "utility.execute"
+  input.request.operation == "git.mergeRequest"
+  input.request.credentialClass == "repository"
+  input.request.hasCredential
+}

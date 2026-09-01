@@ -14,6 +14,7 @@ const (
 	ImageDigestContract          = "image-digest/v1"
 	ValidationResultContract     = "validation-result/v1"
 	MergeRevisionContract        = "merge-revision/v1"
+	MergeRequestContract         = "merge-request/v1"
 	MaxArtifactBytes             = 1 << 20
 	MaxPatchBytes                = 256 << 10
 	MaxCapturedTestOutputBytes   = 1 << 20

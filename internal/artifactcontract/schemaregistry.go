@@ -21,6 +21,7 @@ var contractSchemaFiles = map[string]string{
 	ImageDigestContract:          "image-digest.schema.json",
 	ValidationResultContract:     "validation-result.schema.json",
 	MergeRevisionContract:        "merge-revision.schema.json",
+	MergeRequestContract:         "merge-request.schema.json",
 }
 
 type SchemaRegistry = contractschema.Registry

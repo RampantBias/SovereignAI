@@ -32,6 +32,7 @@ func NewRegistry() *Registry {
 	register[ImageDigest](registry, ImageDigestContract)
 	register[ValidationResult](registry, ValidationResultContract)
 	register[MergeRevision](registry, MergeRevisionContract)
+	register[MergeRequest](registry, MergeRequestContract)
 	return registry
 }
 

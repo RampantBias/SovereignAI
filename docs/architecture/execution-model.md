@@ -275,7 +275,10 @@ Agents may inspect repository material through read-only context capabilities an
 
 Every utility step receives a typed request, a least-privilege credential, a restricted network policy, and a terminal output contract.
 
-The workflow declares a named utility request, not a shell command. The workflow controller creates an immutable `UtilityOperation` CRD. Its controller derives one stable idempotency key per workflow step, evaluates policy, resolves the Project repository and test/build templates, and mounts an operation-scoped credential only when the admitted operation requires it. `repository.initialize`, `git.createBranch`, `git.commit`, `git.push`, `git.merge`, `test.run`, and `build.image` are the MVP operation vocabulary.
+The workflow declares a named utility request, not a shell command. The workflow controller creates an immutable `UtilityOperation` CRD. Its controller derives one stable idempotency key per workflow step, evaluates policy, resolves the Project repository and test/build templates, and mounts an operation-scoped credential only when the admitted operation requires it. `repository.initialize`, `git.createBranch`, `git.commit`, `git.push`, `git.merge`, `git.mergeRequest`, `test.run`, and `build.image` are the MVP operation vocabulary.
+
+The canonical workflow uses a `git.mergeRequest` to finish the workflow with a pull request,
+without merging the target. No useful message is currently included with the merge at this time.
 
 ## Human gates and intervention
 
@@ -314,4 +317,3 @@ Dynamic planning can preserve determinism through immutable workflow revisions:
 5. execution continues against that revision.
 
 No agent may silently rewrite its active graph.
-
