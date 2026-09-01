@@ -20,7 +20,7 @@ func (GitCreateBranch) Name() string {
 }
 
 func (GitCreateBranch) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
 	_, err := parameter(input, "branch")
@@ -39,7 +39,7 @@ func (GitCreateBranch) Run(ctx context.Context, input utilitycontract.Input) (ut
 	if _, err := runGit(ctx, input.WorkspacePath, "check-ref-format", "--branch", branch); err != nil {
 		return utilitycontract.Result{}, fmt.Errorf("invalid branch %q: %w", branch, err)
 	}
-	baseRevision := optionalParameter(input, "baseRevision", "HEAD")
+	baseRevision := OptionalParameter(input, "baseRevision", "HEAD")
 	baseCommit, err := gitOutput(ctx, input.WorkspacePath, "rev-parse", baseRevision+"^{commit}")
 	if err != nil {
 		return utilitycontract.Result{}, err
@@ -63,9 +63,13 @@ func (GitCreateBranch) Run(ctx context.Context, input utilitycontract.Input) (ut
 		return utilitycontract.Result{}, err
 	}
 	metadata := map[string]string{"branch": branch, "baseRevision": baseRevision, "commit": commit}
-	return gitArtifactResult(input, message, metadata, artifactcontract.BranchReference{
-		RepositoryURL: input.Parameters["repositoryURL"], Branch: branch, BaseCommit: baseCommit, Commit: commit,
-		UtilityOperation: utilityIdentity(input), IdempotencyKey: input.IdempotencyKey,
+	return GitArtifactResult(input, message, metadata, artifactcontract.BranchReference{
+		RepositoryURL:    input.Parameters["repositoryURL"],
+		Branch:           branch,
+		BaseCommit:       baseCommit,
+		Commit:           commit,
+		UtilityOperation: artifactcontract.ObjectIdentity{Namespace: input.Authority.Namespace, Name: input.Authority.Name, UID: input.Authority.UID},
+		IdempotencyKey:   input.IdempotencyKey,
 	})
 }
 
@@ -76,17 +80,17 @@ func (GitCommit) Name() string {
 }
 
 func (GitCommit) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
 	if _, err := parameter(input, "repositoryURL"); err != nil {
 		return err
 	}
-	if outputContract(input) == artifactcontract.CandidateRevisionContract {
-		if _, err := requiredInput(input, artifactcontract.PreparedCandidateContract); err != nil {
+	if OutputContract(input) == artifactcontract.CandidateRevisionContract {
+		if _, err := RequiredInput(input, artifactcontract.PreparedCandidateContract); err != nil {
 			return err
 		}
-		_, err := requiredInput(input, artifactcontract.TestReportContract)
+		_, err := RequiredInput(input, artifactcontract.TestReportContract)
 		return err
 	}
 	_, err := parameter(input, "message")
@@ -97,7 +101,7 @@ func (GitCommit) Run(ctx context.Context, input utilitycontract.Input) (utilityc
 	if err := verifyAdmittedRepository(ctx, input); err != nil {
 		return utilitycontract.Result{}, err
 	}
-	if outputContract(input) != artifactcontract.CandidateRevisionContract {
+	if OutputContract(input) != artifactcontract.CandidateRevisionContract {
 		if _, err := runGit(ctx, input.WorkspacePath, "add", "-A"); err != nil {
 			return utilitycontract.Result{}, err
 		}
@@ -152,17 +156,17 @@ type GitPush struct{}
 func (GitPush) Name() string { return OperationGitPush }
 
 func (GitPush) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
-	if remote := optionalParameter(input, "remote", "origin"); remote != "origin" {
+	if remote := OptionalParameter(input, "remote", "origin"); remote != "origin" {
 		return fmt.Errorf("git.push remote must be origin")
 	}
 	if _, err := parameter(input, "repositoryURL"); err != nil {
 		return err
 	}
-	if outputContract(input) == artifactcontract.CandidateRemoteProofContract {
-		_, err := requiredInput(input, artifactcontract.CandidateRevisionContract)
+	if OutputContract(input) == artifactcontract.CandidateRemoteProofContract {
+		_, err := RequiredInput(input, artifactcontract.CandidateRevisionContract)
 		return err
 	}
 	_, err := parameter(input, "branch")
@@ -175,8 +179,8 @@ func (GitPush) Run(ctx context.Context, input utilitycontract.Input) (utilitycon
 	}
 	var candidateRef utilitycontract.ArtifactInput
 	branch := ""
-	if outputContract(input) == artifactcontract.CandidateRemoteProofContract {
-		reference, candidate, err := readInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
+	if OutputContract(input) == artifactcontract.CandidateRemoteProofContract {
+		reference, candidate, err := ReadInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
@@ -199,7 +203,7 @@ func (GitPush) Run(ctx context.Context, input utilitycontract.Input) (utilitycon
 	if _, err := runGit(ctx, input.WorkspacePath, "check-ref-format", "--branch", branch); err != nil {
 		return utilitycontract.Result{}, fmt.Errorf("invalid branch %q: %w", branch, err)
 	}
-	remote := optionalParameter(input, "remote", "origin")
+	remote := OptionalParameter(input, "remote", "origin")
 	localCommit, remoteCommit, err := pushBranch(ctx, input.WorkspacePath, remote, branch)
 	if err != nil {
 		return utilitycontract.Result{}, err
@@ -210,13 +214,13 @@ func (GitPush) Run(ctx context.Context, input utilitycontract.Input) (utilitycon
 	}
 	metadata := map[string]string{"remote": remote, "branch": branch, "commit": localCommit, "previousRemoteCommit": remoteCommit, "idempotencyKey": input.IdempotencyKey}
 	payload := any(metadata)
-	if outputContract(input) == artifactcontract.CandidateRemoteProofContract {
+	if OutputContract(input) == artifactcontract.CandidateRemoteProofContract {
 		payload = artifactcontract.CandidateRemoteProof{
 			CandidateRevisionDigest: candidateRef.Digest, RepositoryURL: input.Parameters["repositoryURL"],
 			Ref: "refs/heads/" + branch, ObservedCommit: localCommit, VerifiedAt: proofTimestamp(input, "refs/heads/"+branch, localCommit),
 		}
 	}
-	return gitArtifactResult(input, message, metadata, payload)
+	return GitArtifactResult(input, message, metadata, payload)
 }
 
 func pushBranch(ctx context.Context, workspace, remote, branch string) (localCommit, previousRemoteCommit string, err error) {
@@ -255,7 +259,7 @@ func (GitMerge) Name() string {
 }
 
 func (GitMerge) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
 	for _, name := range []string{"sourceBranch", "candidateRevision", "approvalDecisionRef", "validationRunRef"} {
@@ -263,13 +267,13 @@ func (GitMerge) Validate(input utilitycontract.Input) error {
 			return err
 		}
 	}
-	if remote := optionalParameter(input, "remote", "origin"); remote != "origin" {
+	if remote := OptionalParameter(input, "remote", "origin"); remote != "origin" {
 		return fmt.Errorf("git.merge remote must be origin")
 	}
 	_, err := parameter(input, "repositoryURL")
-	if err == nil && outputContract(input) == artifactcontract.MergeRevisionContract {
+	if err == nil && OutputContract(input) == artifactcontract.MergeRevisionContract {
 		for _, contract := range []string{artifactcontract.CandidateRemoteProofContract, artifactcontract.CandidateRevisionContract, artifactcontract.ValidationResultContract} {
-			if _, err = requiredInput(input, contract); err != nil {
+			if _, err = RequiredInput(input, contract); err != nil {
 				return err
 			}
 		}
@@ -287,7 +291,7 @@ func (GitMerge) Run(ctx context.Context, input utilitycontract.Input) (utilityco
 		return utilitycontract.Result{}, err
 	}
 	source, _ := parameter(input, "sourceBranch")
-	target := optionalParameter(input, "targetBranch", "main")
+	target := OptionalParameter(input, "targetBranch", "main")
 	for _, branch := range []string{source, target} {
 		if _, err := runGit(ctx, input.WorkspacePath, "check-ref-format", "--branch", branch); err != nil {
 			return utilitycontract.Result{}, fmt.Errorf("invalid branch %q: %w", branch, err)
@@ -315,13 +319,13 @@ func (GitMerge) Run(ctx context.Context, input utilitycontract.Input) (utilityco
 	// runner restart: if the candidate is already present, only remote
 	// convergence remains to be established.
 	if _, err := runGit(ctx, input.WorkspacePath, "merge-base", "--is-ancestor", source, "HEAD"); err == nil {
-		head, previousRemote, pushErr := pushBranch(ctx, input.WorkspacePath, optionalParameter(input, "remote", "origin"), target)
+		head, previousRemote, pushErr := pushBranch(ctx, input.WorkspacePath, OptionalParameter(input, "remote", "origin"), target)
 		if pushErr != nil {
 			return utilitycontract.Result{}, pushErr
 		}
 		return gitMergeResult(ctx, input, "source already merged", source, target, head, previousRemote)
 	}
-	message := optionalParameter(input, "message", "Merge "+source)
+	message := OptionalParameter(input, "message", "Merge "+source)
 	if !strings.Contains(message, input.IdempotencyKey) {
 		message = message + "\n\nSovereign-Idempotency-Key: " + input.IdempotencyKey
 	}
@@ -332,7 +336,7 @@ func (GitMerge) Run(ctx context.Context, input utilitycontract.Input) (utilityco
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
-	remote := optionalParameter(input, "remote", "origin")
+	remote := OptionalParameter(input, "remote", "origin")
 	pushedCommit, previousRemote, err := pushBranch(ctx, input.WorkspacePath, remote, target)
 	if err != nil {
 		return utilitycontract.Result{}, err
@@ -348,10 +352,10 @@ func (GitMerge) Run(ctx context.Context, input utilitycontract.Input) (utilityco
 }
 
 func admittedCommitMessage(input utilitycontract.Input) (string, error) {
-	if outputContract(input) != artifactcontract.CandidateRevisionContract {
+	if OutputContract(input) != artifactcontract.CandidateRevisionContract {
 		return parameter(input, "message")
 	}
-	preparedRef, _, err := readInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
+	preparedRef, _, err := ReadInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
 	if err != nil {
 		return "", err
 	}
@@ -361,12 +365,12 @@ func admittedCommitMessage(input utilitycontract.Input) (string, error) {
 func gitCommitResult(ctx context.Context, input utilitycontract.Input, message, commit, tree string) (utilitycontract.Result, error) {
 	metadata := map[string]string{"commit": commit, "tree": tree, "idempotencyKey": input.IdempotencyKey}
 	payload := any(metadata)
-	if outputContract(input) == artifactcontract.CandidateRevisionContract {
-		preparedRef, prepared, err := readInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
+	if OutputContract(input) == artifactcontract.CandidateRevisionContract {
+		preparedRef, prepared, err := ReadInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
-		testRef, report, err := readInputArtifact[artifactcontract.TestReport](input, artifactcontract.TestReportContract)
+		testRef, report, err := ReadInputArtifact[artifactcontract.TestReport](input, artifactcontract.TestReportContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
@@ -387,18 +391,18 @@ func gitCommitResult(ctx context.Context, input utilitycontract.Input, message, 
 			Branch: branch, Commit: commit, Tree: tree, CommitMessageDigest: artifactcontract.DigestBytes([]byte(commitMessage)),
 		}
 	}
-	return gitArtifactResult(input, message, metadata, payload)
+	return GitArtifactResult(input, message, metadata, payload)
 }
 
 func validateCommitInputs(ctx context.Context, input utilitycontract.Input, tree string) error {
-	if outputContract(input) != artifactcontract.CandidateRevisionContract {
+	if OutputContract(input) != artifactcontract.CandidateRevisionContract {
 		return nil
 	}
-	_, prepared, err := readInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
+	_, prepared, err := ReadInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
 	if err != nil {
 		return err
 	}
-	_, report, err := readInputArtifact[artifactcontract.TestReport](input, artifactcontract.TestReportContract)
+	_, report, err := ReadInputArtifact[artifactcontract.TestReport](input, artifactcontract.TestReportContract)
 	if err != nil {
 		return err
 	}
@@ -426,18 +430,18 @@ func validateCandidateRevisionState(prepared artifactcontract.PreparedCandidate,
 }
 
 func validateMergeInputs(input utilitycontract.Input, source, candidateCommit string) error {
-	if outputContract(input) != artifactcontract.MergeRevisionContract {
+	if OutputContract(input) != artifactcontract.MergeRevisionContract {
 		return nil
 	}
-	candidateRef, candidate, err := readInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
+	candidateRef, candidate, err := ReadInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
 	if err != nil {
 		return err
 	}
-	_, proof, err := readInputArtifact[artifactcontract.CandidateRemoteProof](input, artifactcontract.CandidateRemoteProofContract)
+	_, proof, err := ReadInputArtifact[artifactcontract.CandidateRemoteProof](input, artifactcontract.CandidateRemoteProofContract)
 	if err != nil {
 		return err
 	}
-	_, validation, err := readInputArtifact[artifactcontract.ValidationResult](input, artifactcontract.ValidationResultContract)
+	_, validation, err := ReadInputArtifact[artifactcontract.ValidationResult](input, artifactcontract.ValidationResultContract)
 	if err != nil {
 		return err
 	}
@@ -454,16 +458,16 @@ func gitMergeResult(ctx context.Context, input utilitycontract.Input, message, s
 		metadata = extra[0]
 	}
 	payload := any(metadata)
-	if outputContract(input) == artifactcontract.MergeRevisionContract {
-		candidateRef, candidate, err := readInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
+	if OutputContract(input) == artifactcontract.MergeRevisionContract {
+		candidateRef, candidate, err := ReadInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
-		validationRef, validation, err := readInputArtifact[artifactcontract.ValidationResult](input, artifactcontract.ValidationResultContract)
+		validationRef, validation, err := ReadInputArtifact[artifactcontract.ValidationResult](input, artifactcontract.ValidationResultContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
-		_, remoteProof, err := readInputArtifact[artifactcontract.CandidateRemoteProof](input, artifactcontract.CandidateRemoteProofContract)
+		_, remoteProof, err := ReadInputArtifact[artifactcontract.CandidateRemoteProof](input, artifactcontract.CandidateRemoteProofContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
@@ -491,12 +495,12 @@ func gitMergeResult(ctx context.Context, input utilitycontract.Input, message, s
 			RemoteProof: artifactcontract.RemoteProof{Ref: "refs/heads/" + target, ObservedCommit: commit, VerifiedAt: proofTimestamp(input, "refs/heads/"+target, commit)},
 		}
 	}
-	return gitArtifactResult(input, message, metadata, payload)
+	return GitArtifactResult(input, message, metadata, payload)
 }
 
-func readInputArtifact[T any](input utilitycontract.Input, contract string) (utilitycontract.ArtifactInput, T, error) {
+func ReadInputArtifact[T any](input utilitycontract.Input, contract string) (utilitycontract.ArtifactInput, T, error) {
 	var value T
-	reference, err := requiredInput(input, contract)
+	reference, err := RequiredInput(input, contract)
 	if err != nil {
 		return reference, value, err
 	}
@@ -513,7 +517,7 @@ func readInputArtifact[T any](input utilitycontract.Input, contract string) (uti
 	return reference, value, nil
 }
 
-func requiredInput(input utilitycontract.Input, contract string) (utilitycontract.ArtifactInput, error) {
+func RequiredInput(input utilitycontract.Input, contract string) (utilitycontract.ArtifactInput, error) {
 	for _, reference := range input.Inputs {
 		if reference.Contract == contract {
 			if reference.Digest == "" || reference.Path == "" {
@@ -525,15 +529,11 @@ func requiredInput(input utilitycontract.Input, contract string) (utilitycontrac
 	return utilitycontract.ArtifactInput{}, fmt.Errorf("%s input is required", contract)
 }
 
-func outputContract(input utilitycontract.Input) string {
+func OutputContract(input utilitycontract.Input) string {
 	if len(input.Outputs) == 0 {
 		return ""
 	}
 	return input.Outputs[0].Contract()
-}
-
-func utilityIdentity(input utilitycontract.Input) artifactcontract.ObjectIdentity {
-	return artifactcontract.ObjectIdentity{Namespace: input.Authority.Namespace, Name: input.Authority.Name, UID: input.Authority.UID}
 }
 
 func objectIdentity(input utilitycontract.Input, nameParameter, uidParameter string) artifactcontract.ObjectIdentity {
@@ -546,12 +546,12 @@ func proofTimestamp(input utilitycontract.Input, ref, commit string) string {
 	if len(input.Outputs) > 0 {
 		path := filepath.Join(input.StagingPath, strings.ReplaceAll(input.Outputs[0].Name, "/", "-")+".json")
 		if data, err := os.ReadFile(path); err == nil {
-			if outputContract(input) == artifactcontract.CandidateRemoteProofContract {
+			if OutputContract(input) == artifactcontract.CandidateRemoteProofContract {
 				var proof artifactcontract.CandidateRemoteProof
 				if json.Unmarshal(data, &proof) == nil && proof.Ref == ref && proof.ObservedCommit == commit && proof.VerifiedAt != "" {
 					return proof.VerifiedAt
 				}
-			} else if outputContract(input) == artifactcontract.MergeRevisionContract {
+			} else if OutputContract(input) == artifactcontract.MergeRevisionContract {
 				var merge artifactcontract.MergeRevision
 				if json.Unmarshal(data, &merge) == nil && merge.RemoteProof.Ref == ref && merge.RemoteProof.ObservedCommit == commit && merge.RemoteProof.VerifiedAt != "" {
 					return merge.RemoteProof.VerifiedAt
@@ -562,9 +562,9 @@ func proofTimestamp(input utilitycontract.Input, ref, commit string) string {
 	return nowTimestamp()
 }
 
-// gitArtifactResult turns a Git side effect into contract-bound evidence. The
+// GitArtifactResult turns a Git side effect into contract-bound evidence. The
 // collector subsequently promotes the staged file into an immutable Artifact.
-func gitArtifactResult(input utilitycontract.Input, message string, metadata map[string]string, payload any) (utilitycontract.Result, error) {
+func GitArtifactResult(input utilitycontract.Input, message string, metadata map[string]string, payload any) (utilitycontract.Result, error) {
 	artifacts, err := writeOperationArtifact(input, payload)
 	if err != nil {
 		return utilitycontract.Result{}, err

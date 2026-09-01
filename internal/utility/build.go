@@ -20,7 +20,7 @@ type BuildImage struct{}
 func (BuildImage) Name() string { return OperationBuildImage }
 
 func (BuildImage) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
 	if _, err := parameter(input, "imageName"); err != nil {
@@ -32,9 +32,9 @@ func (BuildImage) Validate(input utilitycontract.Input) error {
 	if len(input.Command) == 0 {
 		return fmt.Errorf("build.image requires a Project-owned build command")
 	}
-	if outputContract(input) == artifactcontract.ImageDigestContract {
+	if OutputContract(input) == artifactcontract.ImageDigestContract {
 		for _, contract := range []string{artifactcontract.CandidateRevisionContract, artifactcontract.CandidateRemoteProofContract} {
-			if _, err := requiredInput(input, contract); err != nil {
+			if _, err := RequiredInput(input, contract); err != nil {
 				return err
 			}
 		}
@@ -59,12 +59,12 @@ func (BuildImage) Run(ctx context.Context, input utilitycontract.Input) (utility
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
-	if outputContract(input) == artifactcontract.ImageDigestContract {
-		candidateRef, candidate, err := readInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
+	if OutputContract(input) == artifactcontract.ImageDigestContract {
+		candidateRef, candidate, err := ReadInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
-		_, proof, err := readInputArtifact[artifactcontract.CandidateRemoteProof](input, artifactcontract.CandidateRemoteProofContract)
+		_, proof, err := ReadInputArtifact[artifactcontract.CandidateRemoteProof](input, artifactcontract.CandidateRemoteProofContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
@@ -170,12 +170,12 @@ func buildImageResult(input utilitycontract.Input, marker buildMarker, output co
 		"image": marker.Image, "digest": marker.Digest, "commit": marker.Commit, "tree": marker.Tree,
 		"stdout": output.Stdout, "stderr": output.Stderr,
 	})
-	if outputContract(input) == artifactcontract.ImageDigestContract {
-		candidateRef, candidate, err := readInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
+	if OutputContract(input) == artifactcontract.ImageDigestContract {
+		candidateRef, candidate, err := ReadInputArtifact[artifactcontract.CandidateRevision](input, artifactcontract.CandidateRevisionContract)
 		if err != nil {
 			return utilitycontract.Result{}, err
 		}
-		dockerfile := optionalParameter(input, "dockerfile", "Dockerfile")
+		dockerfile := OptionalParameter(input, "dockerfile", "Dockerfile")
 		dockerfilePath := filepath.Join(input.WorkspacePath, filepath.Clean(dockerfile))
 		relative, err := filepath.Rel(input.WorkspacePath, dockerfilePath)
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {

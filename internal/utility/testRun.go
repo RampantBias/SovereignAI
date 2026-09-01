@@ -20,14 +20,14 @@ type TestRun struct{}
 func (TestRun) Name() string { return OperationTestRun }
 
 func (TestRun) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
 	if len(input.Command) == 0 {
 		return fmt.Errorf("test.run requires a Project-owned test command")
 	}
-	if outputContract(input) == artifactcontract.TestReportContract {
-		if _, err := requiredInput(input, artifactcontract.PreparedCandidateContract); err != nil {
+	if OutputContract(input) == artifactcontract.TestReportContract {
+		if _, err := RequiredInput(input, artifactcontract.PreparedCandidateContract); err != nil {
 			return err
 		}
 		if _, err := parameter(input, "environmentImageDigest"); err != nil {
@@ -38,7 +38,7 @@ func (TestRun) Validate(input utilitycontract.Input) error {
 }
 
 func (TestRun) Run(ctx context.Context, input utilitycontract.Input) (utilitycontract.Result, error) {
-	if outputContract(input) != artifactcontract.TestReportContract {
+	if OutputContract(input) != artifactcontract.TestReportContract {
 		output, err := runTemplateCommand(ctx, input)
 		if err != nil {
 			return utilitycontract.Result{}, err
@@ -57,7 +57,7 @@ func (TestRun) Run(ctx context.Context, input utilitycontract.Input) (utilitycon
 		}, nil
 	}
 
-	preparedRef, prepared, err := readInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
+	preparedRef, prepared, err := ReadInputArtifact[artifactcontract.PreparedCandidate](input, artifactcontract.PreparedCandidateContract)
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}

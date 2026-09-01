@@ -101,7 +101,7 @@ func gitOutput(ctx context.Context, workspace string, args ...string) (string, e
 	return strings.TrimSpace(output.Stdout), nil
 }
 
-func ensureWorkspace(input utilitycontract.Input) error {
+func EnsureWorkspace(input utilitycontract.Input) error {
 	info, err := os.Stat(input.WorkspacePath)
 	if err != nil {
 		return fmt.Errorf("inspect workspace: %w", err)
@@ -120,7 +120,7 @@ func parameter(input utilitycontract.Input, name string) (string, error) {
 	return value, nil
 }
 
-func optionalParameter(input utilitycontract.Input, name, fallback string) string {
+func OptionalParameter(input utilitycontract.Input, name, fallback string) string {
 	if value := strings.TrimSpace(input.Parameters[name]); value != "" {
 		return value
 	}

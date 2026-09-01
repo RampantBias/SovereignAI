@@ -18,10 +18,10 @@ type CandidatePrepare struct{}
 func (CandidatePrepare) Name() string { return OperationCandidatePrepare }
 
 func (CandidatePrepare) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
-	if outputContract(input) != artifactcontract.PreparedCandidateContract {
+	if OutputContract(input) != artifactcontract.PreparedCandidateContract {
 		return fmt.Errorf("candidate.prepare requires a prepared-candidate/v1 output")
 	}
 	for _, contract := range []string{
@@ -29,7 +29,7 @@ func (CandidatePrepare) Validate(input utilitycontract.Input) error {
 		artifactcontract.TestChangeSetContract,
 		artifactcontract.ChangeSetContract,
 	} {
-		if _, err := requiredInput(input, contract); err != nil {
+		if _, err := RequiredInput(input, contract); err != nil {
 			return err
 		}
 	}
@@ -37,15 +37,15 @@ func (CandidatePrepare) Validate(input utilitycontract.Input) error {
 }
 
 func (CandidatePrepare) Run(ctx context.Context, input utilitycontract.Input) (utilitycontract.Result, error) {
-	repositoryRef, repository, err := readInputArtifact[artifactcontract.RepositoryRevision](input, artifactcontract.RepositoryRevisionContract)
+	repositoryRef, repository, err := ReadInputArtifact[artifactcontract.RepositoryRevision](input, artifactcontract.RepositoryRevisionContract)
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
-	testRef, tests, err := readInputArtifact[artifactcontract.TestChangeSet](input, artifactcontract.TestChangeSetContract)
+	testRef, tests, err := ReadInputArtifact[artifactcontract.TestChangeSet](input, artifactcontract.TestChangeSetContract)
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
-	changeRef, change, err := readInputArtifact[artifactcontract.ChangeSet](input, artifactcontract.ChangeSetContract)
+	changeRef, change, err := ReadInputArtifact[artifactcontract.ChangeSet](input, artifactcontract.ChangeSetContract)
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
