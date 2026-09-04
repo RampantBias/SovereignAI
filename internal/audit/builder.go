@@ -84,11 +84,25 @@ func AppendEvent(ctx context.Context, recorder Recorder, options EventOptions) e
 	if recorder == nil {
 		return nil
 	}
+	_, err := BuildAndAppendEvent(ctx, recorder, options)
+	return err
+}
+
+// BuildAndAppendEvent constructs and appends an event while returning the exact
+// event identity. Callers use the returned ID to create explicit lineage edges
+// between independently recorded audit events.
+func BuildAndAppendEvent(ctx context.Context, recorder Recorder, options EventOptions) (Event, error) {
 	event, err := NewEvent(options)
 	if err != nil {
-		return err
+		return Event{}, err
 	}
-	return recorder.Append(ctx, event)
+	if recorder == nil {
+		return event, nil
+	}
+	if err := recorder.Append(ctx, event); err != nil {
+		return Event{}, err
+	}
+	return event, nil
 }
 
 func marshalData(data any) (json.RawMessage, error) {

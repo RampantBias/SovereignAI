@@ -23,7 +23,10 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+const InferenceLeaseFinalizer = "sovereign-ai.io/inference-reservation-release"
 
 type InferenceLeaseReconciler struct {
 	client.Client
@@ -47,6 +50,22 @@ func (r *InferenceLeaseReconciler) Reconcile(ctx context.Context, request ctrl.R
 	var lease v1alpha1.InferenceLease
 	if err := r.Get(ctx, request.NamespacedName, &lease); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !lease.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(&lease, InferenceLeaseFinalizer) {
+			return ctrl.Result{}, nil
+		}
+		if err := r.removeEndpointReservation(ctx, &lease); err != nil {
+			return ctrl.Result{}, err
+		}
+		controllerutil.RemoveFinalizer(&lease, InferenceLeaseFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &lease)
+	}
+	if !controllerutil.ContainsFinalizer(&lease, InferenceLeaseFinalizer) {
+		controllerutil.AddFinalizer(&lease, InferenceLeaseFinalizer)
+		if err := r.Update(ctx, &lease); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	if reason := lease.Annotations[controllermeta.InferenceLeaseReleaseRequestAnnotation]; reason != "" && !state.IsTerminal(lease.Status.Phase) {
 		return ctrl.Result{}, r.releaseLease(ctx, &lease, reason)
@@ -237,7 +256,7 @@ func (r *InferenceLeaseReconciler) ensureEndpoint(ctx context.Context, lease *v1
 	}
 	maxKV := r.DefaultMaxKVRAMMiB
 	if maxKV == 0 {
-		maxKV = 8192
+		maxKV = 16384
 	}
 	endpoint = v1alpha1.InferenceEndpoint{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: controllermeta.InferenceNamespace, Labels: map[string]string{
@@ -272,6 +291,10 @@ func (r *InferenceLeaseReconciler) bind(ctx context.Context, lease *v1alpha1.Inf
 		if err := r.Get(ctx, types.NamespacedName{Namespace: endpointRef.Namespace, Name: endpointRef.Name}, &endpoint); err != nil {
 			return err
 		}
+		reservationChanged, err := r.pruneEndpointReservations(ctx, &endpoint)
+		if err != nil {
+			return err
+		}
 		leaseRef := v1alpha1.NamespacedReference{Namespace: lease.Namespace, Name: lease.Name}
 		if !slices.Contains(endpoint.Status.ActiveLeases, leaseRef) {
 			if endpoint.Status.AllocatedKVRAMMiB+lease.Spec.EstimatedKVRAMMiB+endpoint.Spec.SafetyHeadroomMiB > endpoint.Spec.MaxKVRAMMiB {
@@ -282,9 +305,10 @@ func (r *InferenceLeaseReconciler) bind(ctx context.Context, lease *v1alpha1.Inf
 			endpoint.Status.AllocatedKVRAMMiB += lease.Spec.EstimatedKVRAMMiB
 			now := metav1.Now()
 			endpoint.Status.LastUsedAt = &now
-			if err := r.Status().Update(ctx, &endpoint); err != nil {
-				return err
-			}
+			reservationChanged = true
+		}
+		if reservationChanged {
+			return r.Status().Update(ctx, &endpoint)
 		}
 		return nil
 	})
@@ -301,6 +325,45 @@ func (r *InferenceLeaseReconciler) bind(ctx context.Context, lease *v1alpha1.Inf
 		return err
 	}
 	return r.appendInferenceLeaseAdmissionEvents(ctx, lease)
+}
+
+// pruneEndpointReservations repairs endpoint capacity from live lease objects.
+// Endpoint status is denormalized scheduling state, so namespace deletion or an
+// interrupted cleanup must not leave a nonexistent lease consuming capacity.
+func (r *InferenceLeaseReconciler) pruneEndpointReservations(ctx context.Context, endpoint *v1alpha1.InferenceEndpoint) (bool, error) {
+	active := make([]v1alpha1.NamespacedReference, 0, len(endpoint.Status.ActiveLeases))
+	seen := make(map[v1alpha1.NamespacedReference]struct{}, len(endpoint.Status.ActiveLeases))
+	allocated := int64(0)
+	endpointRef := v1alpha1.NamespacedReference{Namespace: endpoint.Namespace, Name: endpoint.Name}
+	for _, reference := range endpoint.Status.ActiveLeases {
+		if _, duplicate := seen[reference]; duplicate {
+			continue
+		}
+		seen[reference] = struct{}{}
+		var activeLease v1alpha1.InferenceLease
+		err := r.Get(ctx, types.NamespacedName{Namespace: reference.Namespace, Name: reference.Name}, &activeLease)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if !activeLease.DeletionTimestamp.IsZero() || state.IsTerminal(activeLease.Status.Phase) {
+			continue
+		}
+		if activeLease.Status.EndpointRef.Name != "" && activeLease.Status.EndpointRef != endpointRef {
+			continue
+		}
+		active = append(active, reference)
+		allocated += activeLease.Spec.EstimatedKVRAMMiB
+	}
+	changed := !slices.Equal(endpoint.Status.ActiveLeases, active) ||
+		endpoint.Status.ActiveLeaseCount != int32(len(active)) ||
+		endpoint.Status.AllocatedKVRAMMiB != allocated
+	endpoint.Status.ActiveLeases = active
+	endpoint.Status.ActiveLeaseCount = int32(len(active))
+	endpoint.Status.AllocatedKVRAMMiB = allocated
+	return changed, nil
 }
 
 // appendInferenceLeaseAdmissionEvents is safe to replay from the Running state:

@@ -50,6 +50,25 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if !authorized {
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
+	evidence, ready, invalidReason, err := ResolveArtifactEvidence(
+		ctx,
+		r.Client,
+		approval.Namespace,
+		approval.Spec.WorkflowRef,
+		approval.Spec.Inputs,
+	)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if invalidReason != "" {
+		return ctrl.Result{}, r.setFailed(ctx, &approval, "InvalidArtifactInputs")
+	}
+	if !ready {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
+	if err := r.appendInputsResolved(ctx, &approval, evidence); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.setAwaiting(ctx, &approval); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -70,8 +89,29 @@ func (r *ApprovalRequestReconciler) setFailed(ctx context.Context, approval *v1a
 		latest.Status.FailureReason = reason
 		latest.Status.Retryable = false
 		latest.Status.ObservedGeneration = latest.Generation
-		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: "approval request is not authorized by its StepAttempt", ObservedGeneration: latest.Generation})
+		apiMeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: reason, Message: "approval request failed authority or input validation", ObservedGeneration: latest.Generation})
 		return r.Status().Update(ctx, &latest)
+	})
+}
+
+func (r *ApprovalRequestReconciler) appendInputsResolved(ctx context.Context, approval *v1alpha1.ApprovalRequest, evidence []audit.ArtifactEvidence) error {
+	payload := InputsResolvedPayload("ApprovalRequest", approval, evidence)
+	return audit.AppendControllerEvent(ctx, r.Audit, "approvalrequest-controller", r.Now, audit.EventOptions{
+		Type: "InputsResolved",
+		Subject: audit.Subject{
+			Namespace: approval.Namespace,
+			Workflow:  approval.Spec.WorkflowRef.Name,
+			Step:      approval.Spec.StepName,
+			Attempt:   approval.Spec.Attempt,
+		},
+		Action:  "resolve-inputs",
+		Target:  approval.Name,
+		Outcome: "resolved",
+		References: map[string]string{
+			"approvalRequest": approval.Name,
+			"stepAttempt":     approval.Spec.AttemptRef.Name,
+		},
+		Data: payload,
 	})
 }
 

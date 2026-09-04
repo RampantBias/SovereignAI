@@ -44,7 +44,7 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	// reconciliations; consumption performs its own identity/digest checks.
 	if artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" &&
 		artifacts.ArtifactAccepted(&artifact) {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.appendArtifactEvent(ctx, &artifact, v1alpha1.PhaseSucceeded, "ContractAccepted")
 	}
 
 	phase := v1alpha1.PhaseSucceeded
@@ -64,6 +64,9 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	}
 
 	if artifact.Status.Phase == phase && artifact.Status.ObservedGeneration == artifact.Generation {
+		if phase == v1alpha1.PhaseSucceeded {
+			return ctrl.Result{}, r.appendArtifactEvent(ctx, &artifact, phase, condition.Reason)
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -127,6 +130,30 @@ func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *
 		eventType = "ArtifactRejected"
 		outcome = "rejected"
 	}
+	var data any = map[string]any{
+		"contract":       artifact.Spec.Contract,
+		"classification": artifact.Spec.Classification,
+		"sourceRevision": artifact.Spec.SourceRevision,
+	}
+	if phase == v1alpha1.PhaseSucceeded {
+		decisionEvent, err := r.producerDecisionEvent(ctx, artifact)
+		if err != nil {
+			return err
+		}
+		evidence := ArtifactEvidence(artifact)
+		data = audit.ConsequenceRecorded{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			DecisionEvent: decisionEvent,
+			Consequences: []audit.ConsequenceEvidence{{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				Kind:          "artifact-accepted",
+				Resource:      &evidence.Artifact,
+				Artifact:      &evidence,
+				Digest:        artifact.Spec.Digest,
+				Target:        artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version,
+			}},
+		}
+	}
 	return audit.AppendControllerEvent(ctx, r.Audit, "artifact-controller", nil, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
@@ -143,10 +170,34 @@ func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *
 			"path":     artifact.Spec.Path,
 			"producer": artifact.Spec.ProducerRef.Kind + "/" + artifact.Spec.ProducerRef.Name,
 		},
-		Data: map[string]any{
-			"contract":       artifact.Spec.Contract,
-			"classification": artifact.Spec.Classification,
-			"sourceRevision": artifact.Spec.SourceRevision,
-		},
+		Data: data,
 	})
+}
+
+func (r *ArtifactReconciler) producerDecisionEvent(ctx context.Context, artifact *v1alpha1.Artifact) (string, error) {
+	if r.Audit == nil || artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" {
+		return "", nil
+	}
+	events, err := r.Audit.ListWorkflow(ctx, artifact.Spec.WorkflowRef.Name)
+	if err != nil {
+		return "", err
+	}
+	wantedType := map[string]string{
+		"AgentRun":         "AgentExecutionAuthorized",
+		"UtilityOperation": "UtilityExecutionAuthorized",
+		"ValidationRun":    "ValidationEvaluated",
+	}[artifact.Spec.ProducerRef.Kind]
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if event.Type != wantedType {
+			continue
+		}
+		if event.Target == artifact.Spec.ProducerRef.Name ||
+			event.References["agentRun"] == artifact.Spec.ProducerRef.Name ||
+			event.References["utilityOperation"] == artifact.Spec.ProducerRef.Name ||
+			event.References["validationRun"] == artifact.Spec.ProducerRef.Name {
+			return event.ID, nil
+		}
+	}
+	return "", nil
 }

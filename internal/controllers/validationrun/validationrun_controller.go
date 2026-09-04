@@ -51,8 +51,8 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 			if err := r.Provider.Destroy(ctx, reference); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
-			// Argo's resources finalizer, not DELETE acceptance, determines when
-			// the preview is gone. Keep our finalizer until actual absence.
+			// Argo's resources finalizer determines when the preview is gone.
+			// Keep this finalizer until it is actually gone
 			if _, err := r.Provider.Status(ctx, reference); !apierrors.IsNotFound(err) {
 				if err != nil {
 					return ctrl.Result{}, err

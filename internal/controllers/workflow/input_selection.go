@@ -72,6 +72,28 @@ func (r *WorkflowReconciler) resolveStepInputs(
 		if err != nil {
 			return nil, err
 		}
+		// Explicit imports have no producer in this workflow definition
+		if producerIndex < 0 && !bootstrap {
+			if requested.ArtifactRef == nil || requested.ArtifactRef.Name == "" || requested.ArtifactRef.UID == "" || requested.Digest == "" || requested.ProducerAttemptRef != "" {
+				return nil, fmt.Errorf("input artifact %q has no upstream producer; an import requires an exact artifact name, UID and digest without a producer attempt", requested.Name)
+			}
+			artifact, ready, invalid, err := artifacts.ResolvePinnedInput(ctx, r.Client, workflow.Namespace, consumer.Spec.WorkflowRef, requested)
+			if err != nil {
+				return nil, err
+			}
+			if invalid != "" {
+				return nil, fmt.Errorf("imported input %q: %s", requested.Name, invalid)
+			}
+			if !ready {
+				return nil, fmt.Errorf("imported input %q is not accepted yet", requested.Name)
+			}
+			switch artifact.Spec.ProducerRef.Kind {
+			case "SovereignWorkflow", "StepAttempt", "AgentRun", "UtilityOperation", "ValidationRun", "ApprovalRequest":
+				return nil, fmt.Errorf("input %q cannot import an artifact from a workflow execution primitive", requested.Name)
+			}
+			resolved = append(resolved, requested)
+			continue
+		}
 
 		var selected *inputArtifactCandidate
 		eligiblePending := false
@@ -80,6 +102,8 @@ func (r *WorkflowReconciler) resolveStepInputs(
 			artifact := &artifactList.Items[index]
 			if artifact.Spec.WorkflowRef != consumer.Spec.WorkflowRef ||
 				artifact.Spec.Contract.Name != requested.Name ||
+				(requested.ArtifactRef != nil && (artifact.Name != requested.ArtifactRef.Name || artifact.UID != requested.ArtifactRef.UID)) ||
+				(requested.ProducerAttemptRef != "" && artifact.Spec.ProducerRef.Name != requested.ProducerAttemptRef) ||
 				(requested.Digest != "" && artifact.Spec.Digest != requested.Digest) {
 				continue
 			}
@@ -244,13 +268,6 @@ func workflowInputProducer(
 			}
 			producerIndex = index
 		}
-	}
-	if producerIndex < 0 {
-		return -1, false, fmt.Errorf(
-			"input artifact %q has no upstream producer for step %q",
-			contractName,
-			consumer.Name,
-		)
 	}
 	return producerIndex, false, nil
 }

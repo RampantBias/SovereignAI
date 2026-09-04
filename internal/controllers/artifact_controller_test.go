@@ -33,6 +33,58 @@ func TestArtifactReconcilerAcceptsExactStoredTypedContent(t *testing.T) {
 	}
 }
 
+func TestArtifactAcceptedRecordsTypedProducerConsequence(t *testing.T) {
+	content := validChangeRequestContent(t)
+	artifact := artifactFixture(t, content, artifactcontract.DigestBytes(content), v1alpha1.ContractReference{Name: "change-request", Version: "v1"})
+	artifact.UID = "artifact-uid"
+	artifact.Spec.ProducerRef.APIVersion = v1alpha1.GroupVersion.String()
+	artifact.Spec.ProducerUID = "producer-uid"
+	artifact.Spec.ProducerGrantRef = v1alpha1.UIDReference{Name: "architect-attempt", UID: "attempt-uid"}
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	recorder := audit.NewMemoryRecorder()
+	decision, err := audit.NewEvent(audit.EventOptions{
+		Source: "agentrun-controller", Type: "AgentExecutionAuthorized",
+		Subject: audit.Subject{Namespace: artifact.Namespace, Workflow: artifact.Spec.WorkflowRef.Name},
+		Action:  "authorize-execution", Target: artifact.Spec.ProducerRef.Name, Outcome: "authorized",
+		References: map[string]string{"agentRun": artifact.Spec.ProducerRef.Name},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.Append(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: artifact.Namespace}}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.Artifact{}).WithObjects(namespace, artifact).Build()
+	reconciler := &ArtifactReconciler{Client: kubeClient, Audit: recorder}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: artifact.Namespace, Name: artifact.Name}}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	var accepted audit.Event
+	for _, event := range recorder.AllEvents() {
+		if event.Type == "ArtifactAccepted" {
+			accepted = event
+		}
+	}
+	var consequence audit.ConsequenceRecorded
+	if accepted.ID == "" {
+		t.Fatal("ArtifactAccepted event was not recorded")
+	}
+	if err := json.Unmarshal(accepted.Data, &consequence); err != nil {
+		t.Fatal(err)
+	}
+	if consequence.DecisionEvent != decision.ID || len(consequence.Consequences) != 1 || consequence.Consequences[0].Artifact == nil || consequence.Consequences[0].Artifact.Artifact.UID != string(artifact.UID) || consequence.Consequences[0].Artifact.Producer.UID != string(artifact.Spec.ProducerUID) || consequence.Consequences[0].Artifact.ProducerGrant == nil {
+		t.Fatalf("artifact consequence did not preserve exact producer lineage: %#v", consequence)
+	}
+}
+
 func TestArtifactReconcilerAcceptsCollectorAttestationWithoutReadingContent(t *testing.T) {
 	content := validChangeRequestContent(t)
 	artifact := artifactFixture(t, content, artifactcontract.DigestBytes(content), v1alpha1.ContractReference{

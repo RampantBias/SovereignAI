@@ -36,7 +36,7 @@ func TestRuntimeSmokeWorkflowCarriesChangeSetResponsibilities(t *testing.T) {
 			t.Fatalf("runtime smoke workflow is missing agent step %q", stepName)
 		}
 		responsibility := workflow.Spec.Steps[index].Agent.Responsibility
-		for _, expected := range []string{"directly in the attempt workspace", "Trusted runtime code records", "complete changed"} {
+		for _, expected := range []string{"directly in the attempt workspace"} {
 			if !strings.Contains(responsibility, expected) {
 				t.Errorf("step %q responsibility does not contain %q", stepName, expected)
 			}

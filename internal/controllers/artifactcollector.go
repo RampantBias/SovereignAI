@@ -16,6 +16,10 @@ func BuildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWo
 	jobName := owner.GetName() + "-collect"
 	automount, backoff := true, int32(0)
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: owner.GetNamespace()}, AutomountServiceAccountToken: &automount}
+	producerGrantName, producerGrantUID := "", ""
+	if controller := metav1.GetControllerOf(owner); controller != nil && controller.Kind == "StepAttempt" {
+		producerGrantName, producerGrantUID = controller.Name, string(controller.UID)
+	}
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -55,6 +59,9 @@ func BuildCollectorResources(owner client.Object, workflow *v1alpha1.SovereignWo
 							"--attempt", owner.GetName(),
 							"--producer-kind", producerKind(owner),
 							"--producer-api-version", v1alpha1.GroupVersion.String(),
+							"--producer-uid", string(owner.GetUID()),
+							"--producer-grant", producerGrantName,
+							"--producer-grant-uid", producerGrantUID,
 							"--result", ExecutionResultPath(owner.GetName()),
 							"--staging", ExecutionStagingPath(owner.GetName()),
 							"--artifact-store", "/workspace/.sovereign/artifacts",

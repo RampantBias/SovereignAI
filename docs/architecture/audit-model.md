@@ -245,6 +245,22 @@ High-frequency hardware metrics belong in the telemetry system. Evaluation recor
 
 Comparisons must identify the workflow population and domain. A successful microservices-development workflow should not be treated as evidence that a structurally different engineering workflow is equally automatable.
 
+## Audit Events
+
+I will utilize a variety of audit events that can be joined together into a cohesive evidence model for a workflow.
+
+
+```mermaid
+flowchart TD
+    A[DecisionEvidence] --> B[SourceEventRef]
+    A --> C[AuthorityEstablished]
+	A --> D[ArtifactEvidence]
+	A --> E[DecisionEvaluated]
+	A --> F[InvariantResult]
+	A --> G[ConsequenceEvidence]
+	A --> H[Verification]
+```
+
 ## Demo presentation
 
 The September demonstration should present an execution playback derived from decision lineage. The goal of the playback display will be to build the causal graph of the workflow operation. That graph should be able to answer operational questions, based on the expected MVP failures, to help show how decision lineage (at least as an experiment) could provide a bridge in the agent trust gap.
@@ -261,10 +277,4 @@ The failure segment will focus purely on the lineage, as it best supports the fo
 
 ## Open audit decisions
 
-- **AUTHOR NOTE:** Define required retention and deletion behavior for the target regulated scenario.
-- **AUTHOR NOTE:** Decide whether prompt/context bodies are retained, and under which policy.
-- **AUTHOR NOTE:** Define the MVP event transport and behavior when the audit sink is unavailable.
-- **AUTHOR NOTE:** Define integrity requirements: database controls, chained hashes, signatures, or immutable object storage.
-- **AUTHOR NOTE:** Choose the first public event schema convention, such as CloudEvents-inspired envelopes or a project-specific format.
-- **AUTHOR NOTE:** Define the initial playback query/API and whether the MVP renders it through the CLI or a minimal web view.
-- **AUTHOR NOTE:** Define the comparison cohort and outcome metrics used in the first cross-workflow evaluation.
+- Define a comparison between execution and lineage, showing how execution may retain some of the core information but not in a way that assigns valuable meaning.

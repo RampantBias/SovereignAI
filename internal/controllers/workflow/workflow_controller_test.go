@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
@@ -229,7 +230,79 @@ func TestWorkflowRetriesRetryableFailedAttempt(t *testing.T) {
 	if !recorder.Has("StepAttemptRetried") {
 		t.Error("missing StepAttemptRetried audit event")
 	}
+	for _, event := range recorder.AllEvents() {
+		if event.Type != "RecoveryDecisionSelected" {
+			continue
+		}
+		var decision audit.DecisionEvaluated
+		if err := json.Unmarshal(event.Data, &decision); err != nil {
+			t.Fatal(err)
+		}
+		if decision.Decision.Outcome != "selected" || len(decision.Invariants) != 3 || decision.Primitive.Kind != "SovereignWorkflow" {
+			t.Fatalf("recovery event is not a typed lineage decision: %#v", decision)
+		}
+	}
 
+}
+
+func TestWorkflowCompletedRecordsFinalDecisionAndArtifact(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	workflow := &v1alpha1.SovereignWorkflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "workflow", Namespace: "workflow", UID: "workflow-uid"},
+		Spec: v1alpha1.SovereignWorkflowSpec{
+			WorkflowID: "workflow",
+			Project:    v1alpha1.UIDReference{Name: "project"},
+			Steps:      []v1alpha1.StepConfig{{Name: "publish", Kind: v1alpha1.ExecutionKindUtility, Utility: &v1alpha1.UtilityOperationRequest{Name: "git.merge-request"}}},
+		},
+		Status: v1alpha1.SovereignWorkflowStatus{Phase: string(v1alpha1.PhaseSucceeded)},
+	}
+	attempt := &v1alpha1.StepAttempt{
+		ObjectMeta: metav1.ObjectMeta{Name: "publish-w000-r001", Namespace: workflow.Namespace, UID: "attempt-uid", Labels: map[string]string{controllermeta.LabelWorkflow: workflow.Spec.WorkflowID, controllermeta.LabelStep: "publish"}},
+		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.UID}, StepName: "publish", RetryNumber: 1, Kind: v1alpha1.ExecutionKindUtility},
+		Status:     v1alpha1.StepAttemptStatus{Phase: v1alpha1.PhaseSucceeded, ExecutionRef: &v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "UtilityOperation", Name: "publish-w000-r001"}},
+	}
+	artifact := &v1alpha1.Artifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "merge-request", Namespace: workflow.Namespace, UID: "artifact-uid", Generation: 1},
+		Spec: v1alpha1.ArtifactSpec{
+			WorkflowRef: attempt.Spec.WorkflowRef,
+			ProducerRef: v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "UtilityOperation", Name: attempt.Status.ExecutionRef.Name},
+			ProducerUID: "utility-uid", ProducerGrantRef: v1alpha1.UIDReference{Name: attempt.Name, UID: attempt.UID},
+			Contract: v1alpha1.ContractReference{Name: "merge-request", Version: "v1"}, Digest: "sha256:merge-request", Path: "/artifacts/merge-request",
+		},
+		Status: v1alpha1.ArtifactStatus{Phase: v1alpha1.PhaseSucceeded, ObservedGeneration: 1, Conditions: []metav1.Condition{{Type: "Valid", Status: metav1.ConditionTrue, ObservedGeneration: 1}}},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(workflow, attempt, artifact).Build()
+	recorder := audit.NewMemoryRecorder()
+	decision, err := audit.NewEvent(audit.EventOptions{Source: "utilityoperation-controller", Type: "UtilityExecutionAuthorized", Subject: audit.Subject{Namespace: workflow.Namespace, Workflow: workflow.Name, Step: "publish", Attempt: 1}, Action: "authorize-execution", Target: attempt.Status.ExecutionRef.Name, Outcome: "authorized", References: map[string]string{"utilityOperation": attempt.Status.ExecutionRef.Name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.Append(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+	reconciler := &WorkflowReconciler{Client: kubeClient, Reader: kubeClient, Scheme: scheme, Audit: recorder}
+	if err := reconciler.appendWorkflowCompleted(context.Background(), workflow, attempt); err != nil {
+		t.Fatal(err)
+	}
+	var completed audit.Event
+	for _, event := range recorder.AllEvents() {
+		if event.Type == "WorkflowCompleted" {
+			completed = event
+		}
+	}
+	var consequence audit.ConsequenceRecorded
+	if completed.ID == "" {
+		t.Fatal("WorkflowCompleted event was not recorded")
+	}
+	if err := json.Unmarshal(completed.Data, &consequence); err != nil {
+		t.Fatal(err)
+	}
+	if consequence.DecisionEvent != decision.ID || len(consequence.Consequences) != 3 || consequence.Consequences[2].Artifact == nil || consequence.Consequences[2].Artifact.Digest != artifact.Spec.Digest {
+		t.Fatalf("workflow completion did not preserve final decision and artifact: %#v", consequence)
+	}
 }
 
 func TestWorkflowSkipsNormalReconcileWhenNamespaceTerminating(t *testing.T) {

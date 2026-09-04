@@ -26,10 +26,17 @@ func acceptedAgentInputArtifact(name, contractName, contractVersion, digest, pat
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       name,
 			Namespace:  "wf",
+			UID:        types.UID(name + "-uid"),
 			Generation: generation,
 		},
 		Spec: v1alpha1.ArtifactSpec{
 			WorkflowRef: workflowRef,
+			ProducerRef: v1alpha1.TypedLocalReference{
+				APIVersion: v1alpha1.GroupVersion.String(),
+				Kind:       "AgentRun",
+				Name:       "producer-001",
+			},
+			ProducerUID: "producer-001-uid",
 			Contract: v1alpha1.ContractReference{
 				Name:    contractName,
 				Version: contractVersion,
@@ -69,6 +76,7 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 			StepName:        "architect",
 			Attempt:         1,
 			Responsibility:  "plan",
+			Capabilities:    []string{agentcontract.CapabilityWorkspaceRead, agentcontract.CapabilityCandidateWrite},
 			Image:           "agent@sha256:test",
 			Executable:      []string{"/domain-agent", "--role", "architect"},
 			PriorAttemptRef: &v1alpha1.FailedAgentAttempt{PreviousAttemptRef: "architect-000", Code: "InvalidRepositoryPath", Message: "affected path was invalid"},
@@ -81,7 +89,8 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.AgentRun{}).
 		WithObjects(workflow, workspaceLeaseFixture(), attempt, run, inputArtifact).Build()
-	reconciler := &AgentRunReconciler{Client: client, Scheme: scheme}
+	recorder := audit.NewMemoryRecorder()
+	reconciler := &AgentRunReconciler{Client: client, Scheme: scheme, Audit: recorder}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(run)); err != nil {
 		t.Fatal(err)
 	}
@@ -154,6 +163,70 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	if contract.MCPServer != "http://127.0.0.1:8080/mcp" {
 		t.Fatalf("agent contract MCP endpoint = %q", contract.MCPServer)
 	}
+	var inputsResolved, established, authorized audit.Event
+	for _, event := range recorder.AllEvents() {
+		switch event.Type {
+		case "InputsResolved":
+			inputsResolved = event
+		case "ExecutionAuthorityEstablished":
+			established = event
+		case "AgentExecutionAuthorized":
+			authorized = event
+		}
+	}
+	if inputsResolved.ID == "" {
+		t.Fatal("InputsResolved event was not recorded before pod creation")
+	}
+	if established.ID == "" {
+		t.Fatal("ExecutionAuthorityEstablished event was not recorded before pod creation")
+	}
+	if authorized.ID == "" {
+		t.Fatal("AgentExecutionAuthorized event was not recorded before pod creation")
+	}
+	var inputs audit.InputsResolved
+	if err := json.Unmarshal(inputsResolved.Data, &inputs); err != nil {
+		t.Fatalf("decode InputsResolved payload: %v", err)
+	}
+	if inputs.SchemaVersion != audit.PayloadSchemaVersionV1 || inputs.Consumer.Kind != "AgentRun" ||
+		inputs.Consumer.UID != string(run.UID) || len(inputs.Inputs) != 1 ||
+		inputs.Inputs[0].Artifact.UID != string(inputArtifact.UID) ||
+		inputs.Inputs[0].Contract != "repository-revision/v1" ||
+		inputs.Inputs[0].Digest != inputArtifact.Spec.Digest ||
+		inputs.Inputs[0].Producer.UID != string(inputArtifact.Spec.ProducerUID) {
+		t.Fatalf("unexpected InputsResolved payload: %#v", inputs)
+	}
+	var authority audit.AuthorityEstablished
+	if err := json.Unmarshal(established.Data, &authority); err != nil {
+		t.Fatalf("decode ExecutionAuthorityEstablished payload: %v", err)
+	}
+	if authority.SchemaVersion != audit.PayloadSchemaVersionV1 ||
+		authority.Workflow.UID != string(workflow.UID) || authority.StepAttempt.UID != string(attempt.UID) ||
+		authority.Primitive.UID != string(run.UID) || authority.WorkspaceWrite == nil ||
+		authority.WorkspaceWrite.Lease.UID != "workspace-writer-uid" ||
+		authority.WorkspaceWrite.HolderIdentity == "" || authority.WorkspaceWrite.WriterEpoch != 1 ||
+		len(authority.WorkspaceWrite.Capabilities) != 2 || len(authority.Invariants) != 3 {
+		t.Fatalf("unexpected ExecutionAuthorityEstablished payload: %#v", authority)
+	}
+	for _, invariant := range authority.Invariants {
+		if invariant.Outcome != "passed" || invariant.Expected != invariant.Observed {
+			t.Fatalf("ExecutionAuthorityEstablished invariant is not verified: %#v", invariant)
+		}
+	}
+	var decision audit.DecisionEvaluated
+	if err := json.Unmarshal(authorized.Data, &decision); err != nil {
+		t.Fatalf("decode AgentExecutionAuthorized payload: %v", err)
+	}
+	if decision.SchemaVersion != audit.PayloadSchemaVersionV1 || decision.Primitive.UID != string(run.UID) ||
+		decision.Decision.ID == "" || decision.Decision.Kind != "controller" || decision.Decision.Outcome != "allowed" ||
+		decision.Decision.InputDigest == "" || authorized.DecisionID != decision.Decision.ID ||
+		decision.AuthorityEvent != established.ID || decision.InputEvent != inputsResolved.ID || len(decision.Invariants) != 3 {
+		t.Fatalf("unexpected AgentExecutionAuthorized payload: event=%#v payload=%#v", authorized, decision)
+	}
+	for _, invariant := range decision.Invariants {
+		if invariant.Outcome != "passed" || invariant.Expected != invariant.Observed {
+			t.Fatalf("AgentExecutionAuthorized invariant is not verified: %#v", invariant)
+		}
+	}
 }
 
 func TestTerminalAgentRunReleasesInferenceCapacityForNextAttempt(t *testing.T) {
@@ -177,6 +250,20 @@ func TestTerminalAgentRunReleasesInferenceCapacityForNextAttempt(t *testing.T) {
 			},
 		},
 	}
+	endpointRef := v1alpha1.NamespacedReference{Namespace: endpoint.Namespace, Name: endpoint.Name}
+	liveLease := func(name, attemptRef string) *v1alpha1.InferenceLease {
+		return &v1alpha1.InferenceLease{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: workflowNamespace},
+			Spec: v1alpha1.InferenceLeaseSpec{
+				WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, AttemptRef: attemptRef, ProjectRef: "project",
+				Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject,
+				Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2048,
+			},
+			Status: v1alpha1.InferenceLeaseStatus{Phase: v1alpha1.PhaseRunning, EndpointRef: endpointRef},
+		}
+	}
+	architectLease := liveLease("architect-001-inference", "architect-001")
+	firstTestAuthorLease := liveLease("test-author-001-inference", "test-author-001")
 	completedLease := &v1alpha1.InferenceLease{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-author-002-inference", Namespace: workflowNamespace},
 		Spec: v1alpha1.InferenceLeaseSpec{
@@ -186,7 +273,7 @@ func TestTerminalAgentRunReleasesInferenceCapacityForNextAttempt(t *testing.T) {
 		},
 		Status: v1alpha1.InferenceLeaseStatus{
 			Phase:       v1alpha1.PhaseRunning,
-			EndpointRef: v1alpha1.NamespacedReference{Namespace: endpoint.Namespace, Name: endpoint.Name},
+			EndpointRef: endpointRef,
 			EndpointURL: "http://warm.sovereign-inference.svc:8000",
 		},
 	}
@@ -201,7 +288,7 @@ func TestTerminalAgentRunReleasesInferenceCapacityForNextAttempt(t *testing.T) {
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controllermeta.InferenceNamespace}}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.InferenceLease{}, &v1alpha1.InferenceEndpoint{}).
-		WithObjects(namespace, endpoint, completedLease, nextLease).Build()
+		WithObjects(namespace, endpoint, architectLease, firstTestAuthorLease, completedLease, nextLease).Build()
 	recorder := audit.NewMemoryRecorder()
 	run := &v1alpha1.AgentRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-author-002", Namespace: workflowNamespace},
@@ -313,7 +400,7 @@ func workspaceLeaseFixture() *coordinationv1.Lease {
 	zero := int32(0)
 	controller := true
 	return &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{
-		Name: "wf-workspace-writer", Namespace: "wf",
+		Name: "wf-workspace-writer", Namespace: "wf", UID: "workspace-writer-uid",
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: "wf", UID: "workflow-uid", Controller: &controller}},
 	}, Spec: coordinationv1.LeaseSpec{LeaseTransitions: &zero}}
 }

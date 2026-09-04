@@ -2,9 +2,11 @@ package stepattempt
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllers"
 	policyengine "github.com/SovereignAI/internal/policy"
 	batchv1 "k8s.io/api/batch/v1"
@@ -132,13 +134,14 @@ func TestApprovalRequestOwnsAwaitingApprovalState(t *testing.T) {
 	workflow := workflowFixture()
 	attempt := authorizedAttempt("approval-001", "wf", "approval", v1alpha1.ExecutionKindHumanGate)
 	approval := &v1alpha1.ApprovalRequest{
-		ObjectMeta: metav1.ObjectMeta{Name: "approval-001", Namespace: "wf"},
+		ObjectMeta: metav1.ObjectMeta{Name: "approval-001", Namespace: "wf", UID: "approval-request-uid"},
 		Spec: v1alpha1.ApprovalRequestSpec{AttemptRef: v1alpha1.UIDReference{Name: "approval-001"}, WorkflowRef: workflowRef(workflow), StepName: "approval", Attempt: 1,
 			Approval: v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, RequiredGroups: []string{"maintainers"}, DenyBehavior: "Fail"}},
 	}
 	ownByAttempt(approval, attempt)
 	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.ApprovalRequest{}).WithObjects(attempt, approval).Build()
-	reconciler := &controllers.ApprovalRequestReconciler{Client: client}
+	recorder := audit.NewMemoryRecorder()
+	reconciler := &controllers.ApprovalRequestReconciler{Client: client, Audit: recorder}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(approval)); err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +151,24 @@ func TestApprovalRequestOwnsAwaitingApprovalState(t *testing.T) {
 	}
 	if updated.Status.Phase != v1alpha1.PhaseAwaitingApproval {
 		t.Fatalf("approval request phase = %s", updated.Status.Phase)
+	}
+	var resolved audit.Event
+	for _, event := range recorder.AllEvents() {
+		if event.Type == "InputsResolved" {
+			resolved = event
+			break
+		}
+	}
+	if resolved.ID == "" {
+		t.Fatal("ApprovalRequest did not record InputsResolved before awaiting approval")
+	}
+	var inputs audit.InputsResolved
+	if err := json.Unmarshal(resolved.Data, &inputs); err != nil {
+		t.Fatalf("decode ApprovalRequest InputsResolved payload: %v", err)
+	}
+	if inputs.SchemaVersion != audit.PayloadSchemaVersionV1 || inputs.Consumer.Kind != "ApprovalRequest" ||
+		inputs.Consumer.UID != string(approval.UID) || len(inputs.Inputs) != 0 {
+		t.Fatalf("unexpected ApprovalRequest InputsResolved payload: %#v", inputs)
 	}
 }
 

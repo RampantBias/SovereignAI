@@ -2,12 +2,16 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/controllers"
@@ -99,6 +103,9 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 
 	// Check if workflow is terminal
 	if state.IsTerminal(v1alpha1.ResourcePhase(workflow.Status.Phase)) {
+		if workflow.Status.Phase == string(v1alpha1.PhaseSucceeded) {
+			return ctrl.Result{}, r.appendWorkflowCompleted(ctx, &workflow, nil)
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -155,13 +162,30 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	case v1alpha1.PhaseSucceeded:
 		next, found := nextStep(workflow.Spec.Steps, attempt.Spec.StepName)
 		if !found {
-			_, err := r.updateWorkflowStatus(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+			finalStep, stepFound := findStep(workflow.Spec.Steps, attempt.Spec.StepName)
+			if !stepFound {
+				return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "StepMissing", attempt.Spec.StepName)
+			}
+			outputsReady, invalidReason, err := r.finalStepOutputsAccepted(ctx, &workflow, &attempt, finalStep)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if invalidReason != "" {
+				return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "FinalOutputRejected", invalidReason)
+			}
+			if !outputsReady {
+				return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			}
+			updated, err := r.updateWorkflowStatus(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
 				latest.Status.Phase = string(v1alpha1.PhaseSucceeded)
 				latest.Status.ActiveStepName = ""
 				latest.Status.ActiveAttemptRef = ""
 				latest.Status.ObservedGeneration = latest.Generation
 			})
-			return ctrl.Result{}, err
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, r.appendWorkflowCompleted(ctx, updated, &attempt)
 		}
 		return ctrl.Result{}, r.createAttempt(ctx, &workflow, next, 1)
 	// On PhaseFailed or PhaseInterrupted, we need to evaluate whether retry is possible
@@ -227,6 +251,42 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		}
 	}
 	return ctrl.Result{}, nil
+}
+
+func (r *WorkflowReconciler) finalStepOutputsAccepted(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, attempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig) (bool, string, error) {
+	if len(step.Outputs) == 0 {
+		return true, "", nil
+	}
+	producerName := attempt.Name
+	if attempt.Status.ExecutionRef != nil {
+		producerName = attempt.Status.ExecutionRef.Name
+	}
+	var artifactList v1alpha1.ArtifactList
+	if err := r.Client.List(ctx, &artifactList, client.InNamespace(workflow.Namespace)); err != nil {
+		return false, "", err
+	}
+	for _, output := range step.Outputs {
+		acceptedCount := 0
+		for index := range artifactList.Items {
+			artifact := &artifactList.Items[index]
+			if artifact.Spec.WorkflowRef != attempt.Spec.WorkflowRef || artifact.Spec.ProducerRef.Name != producerName || artifact.Spec.Contract != output {
+				continue
+			}
+			if artifact.Status.Phase == v1alpha1.PhaseFailed {
+				return false, fmt.Sprintf("final output %s/%s was rejected", output.Name, output.Version), nil
+			}
+			if artifacts.ArtifactAccepted(artifact) {
+				acceptedCount++
+			}
+		}
+		if acceptedCount == 0 {
+			return false, "", nil
+		}
+		if acceptedCount > 1 {
+			return false, fmt.Sprintf("final output %s/%s resolved to %d accepted artifacts", output.Name, output.Version, acceptedCount), nil
+		}
+	}
+	return true, "", nil
 }
 
 func (r *WorkflowReconciler) isDeleted(ctx context.Context, workflow v1alpha1.SovereignWorkflow, request ctrl.Request) (bool, error) {
@@ -683,17 +743,181 @@ func (r *WorkflowReconciler) appendRecoveryEvents(ctx context.Context, workflow 
 		"failedAttempt": failedAttempt.Name,
 		"retryAttempt":  attemptName(step.Name, workflow.Status.WorkflowAttempt, nextAttempt),
 	}
-	data := map[string]any{
+	retryData := map[string]any{
 		"retryFrom":        step.Name,
 		"previousAttempt":  failedAttempt.Spec.RetryNumber,
 		"nextAttempt":      nextAttempt,
 		"failureReason":    failedAttempt.Status.FailureReason,
 		"interruptedPhase": failedAttempt.Status.Phase,
 	}
-	if err := r.appendWorkflowEvent(ctx, workflow, "RecoveryDecisionSelected", step.Name, failedAttempt.Spec.RetryNumber, "select", step.Name, "selected", failedAttempt.Status.FailureReason, references, data); err != nil {
+	payload, err := r.recoveryDecision(ctx, workflow, failedAttempt, step, nextAttempt)
+	if err != nil {
 		return err
 	}
-	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptRetried", step.Name, nextAttempt, "retry", attemptName(step.Name, workflow.Status.WorkflowAttempt, nextAttempt), "created", failedAttempt.Status.FailureReason, references, data)
+	if err := r.appendWorkflowEvent(ctx, workflow, "RecoveryDecisionSelected", step.Name, failedAttempt.Spec.RetryNumber, "select", step.Name, "selected", failedAttempt.Status.FailureReason, references, payload); err != nil {
+		return err
+	}
+	return r.appendWorkflowEvent(ctx, workflow, "StepAttemptRetried", step.Name, nextAttempt, "retry", attemptName(step.Name, workflow.Status.WorkflowAttempt, nextAttempt), "created", failedAttempt.Status.FailureReason, references, retryData)
+}
+
+func (r *WorkflowReconciler) recoveryDecision(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, failedAttempt *v1alpha1.StepAttempt, step v1alpha1.StepConfig, nextAttempt int32) (audit.DecisionEvaluated, error) {
+	decisionInput, err := json.Marshal(struct {
+		WorkflowAttempt int32                      `json:"workflowAttempt"`
+		Step            v1alpha1.StepConfig        `json:"step"`
+		FailedAttempt   v1alpha1.StepAttemptStatus `json:"failedAttemptStatus"`
+		FailedRef       string                     `json:"failedAttemptRef"`
+		NextAttempt     int32                      `json:"nextAttempt"`
+	}{workflow.Status.WorkflowAttempt, step, failedAttempt.Status, failedAttempt.Name, nextAttempt})
+	if err != nil {
+		return audit.DecisionEvaluated{}, fmt.Errorf("marshal recovery decision input: %w", err)
+	}
+	inputDigest := artifactcontract.DigestBytes(decisionInput)
+	evidenceEvents, err := r.failedAttemptEvidenceEvents(ctx, workflow, failedAttempt)
+	if err != nil {
+		return audit.DecisionEvaluated{}, err
+	}
+	maxAttempts := step.MaxAttempts
+	if maxAttempts == 0 {
+		maxAttempts = 1
+	}
+	return audit.DecisionEvaluated{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Primitive:     workflowResourceRef("SovereignWorkflow", workflow),
+		Decision: audit.DecisionRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			ID:            audit.DeterministicID("workflow-recovery-selection", string(workflow.UID), failedAttempt.Name, inputDigest),
+			Kind:          "controller",
+			Revision:      "workflow-recovery/v1",
+			InputDigest:   inputDigest,
+			Outcome:       "selected",
+		},
+		EvidenceEvents: evidenceEvents,
+		Invariants: []audit.InvariantResult{
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "failed-attempt-terminal", Outcome: "passed", Expected: "Failed or Interrupted", Observed: string(failedAttempt.Status.Phase), Reason: "recovery is evaluated only for a terminal unsuccessful attempt"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "failed-attempt-retryable", Outcome: "passed", Expected: "true", Observed: fmt.Sprint(failedAttempt.Status.Retryable), Reason: "the execution primitive classified the failure as retryable"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "step-attempt-budget-remaining", Outcome: "passed", Expected: fmt.Sprintf("next attempt <= %d", maxAttempts), Observed: fmt.Sprint(nextAttempt), Reason: "the selected retry remains within the declared step policy"},
+		},
+	}, nil
+}
+
+func (r *WorkflowReconciler) failedAttemptEvidenceEvents(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, failedAttempt *v1alpha1.StepAttempt) ([]string, error) {
+	if r.Audit == nil {
+		return nil, nil
+	}
+	events, err := r.Audit.ListWorkflow(ctx, workflow.Name)
+	if err != nil {
+		return nil, err
+	}
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if (event.Type == "StepAttemptFailed" || event.Type == "StepAttemptInterrupted") && event.Target == failedAttempt.Name {
+			return []string{event.ID}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *WorkflowReconciler) appendWorkflowCompleted(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, finalAttempt *v1alpha1.StepAttempt) error {
+	if r.Audit == nil {
+		return nil
+	}
+	var err error
+	if finalAttempt == nil {
+		finalAttempt, err = r.findFinalSucceededAttempt(ctx, workflow)
+		if err != nil {
+			return err
+		}
+	}
+	decisionEvent, err := r.workflowCompletionDecisionEvent(ctx, workflow, finalAttempt)
+	if err != nil {
+		return err
+	}
+	workflowResRef := workflowResourceRef("SovereignWorkflow", workflow)
+	consequences := []audit.ConsequenceEvidence{{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Kind:          "workflow-state",
+		Resource:      &workflowResRef,
+		After:         string(v1alpha1.PhaseSucceeded),
+	}}
+	if finalAttempt != nil {
+		attemptRef := workflowResourceRef("StepAttempt", finalAttempt)
+		consequences = append(consequences, audit.ConsequenceEvidence{SchemaVersion: audit.PayloadSchemaVersionV1, Kind: "final-step-attempt", Resource: &attemptRef, After: string(finalAttempt.Status.Phase)})
+		var artifactList v1alpha1.ArtifactList
+		if err := r.Client.List(ctx, &artifactList, client.InNamespace(workflow.Namespace)); err != nil {
+			return err
+		}
+		sort.Slice(artifactList.Items, func(i, j int) bool { return artifactList.Items[i].Name < artifactList.Items[j].Name })
+		producerName := finalAttempt.Name
+		if finalAttempt.Status.ExecutionRef != nil {
+			producerName = finalAttempt.Status.ExecutionRef.Name
+		}
+		for index := range artifactList.Items {
+			artifact := &artifactList.Items[index]
+			if artifact.Spec.WorkflowRef != finalAttempt.Spec.WorkflowRef || artifact.Spec.ProducerRef.Name != producerName || !artifacts.ArtifactAccepted(artifact) {
+				continue
+			}
+			evidence := controllers.ArtifactEvidence(artifact)
+			consequences = append(consequences, audit.ConsequenceEvidence{SchemaVersion: audit.PayloadSchemaVersionV1, Kind: "final-artifact", Resource: &evidence.Artifact, Artifact: &evidence, Digest: artifact.Spec.Digest, Target: evidence.Contract})
+		}
+	}
+	payload := audit.ConsequenceRecorded{SchemaVersion: audit.PayloadSchemaVersionV1, DecisionEvent: decisionEvent, Consequences: consequences}
+	stepName := ""
+	attemptNumber := int32(0)
+	if finalAttempt != nil {
+		stepName = finalAttempt.Spec.StepName
+		attemptNumber = finalAttempt.Spec.RetryNumber
+	}
+	return r.appendWorkflowEvent(ctx, workflow, "WorkflowCompleted", stepName, attemptNumber, "complete", workflow.Name, "succeeded", "AllStepsSucceeded", map[string]string{"finalDecisionEvent": decisionEvent}, payload)
+}
+
+func (r *WorkflowReconciler) findFinalSucceededAttempt(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) (*v1alpha1.StepAttempt, error) {
+	if len(workflow.Spec.Steps) == 0 {
+		return nil, nil
+	}
+	finalStep := workflow.Spec.Steps[len(workflow.Spec.Steps)-1].Name
+	var attempts v1alpha1.StepAttemptList
+	if err := r.stepAttemptReader().List(ctx, &attempts, client.InNamespace(workflow.Namespace), client.MatchingLabels{controllermeta.LabelWorkflow: workflow.Spec.WorkflowID, controllermeta.LabelStep: finalStep}); err != nil {
+		return nil, err
+	}
+	var selected *v1alpha1.StepAttempt
+	for index := range attempts.Items {
+		attempt := &attempts.Items[index]
+		if attempt.Status.Phase != v1alpha1.PhaseSucceeded {
+			continue
+		}
+		if selected == nil || attempt.Spec.WorkflowAttempt > selected.Spec.WorkflowAttempt || (attempt.Spec.WorkflowAttempt == selected.Spec.WorkflowAttempt && attempt.Spec.RetryNumber > selected.Spec.RetryNumber) {
+			selected = attempt
+		}
+	}
+	return selected, nil
+}
+
+func (r *WorkflowReconciler) workflowCompletionDecisionEvent(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, attempt *v1alpha1.StepAttempt) (string, error) {
+	if r.Audit == nil || attempt == nil || attempt.Status.ExecutionRef == nil {
+		return "", nil
+	}
+	wantedType := map[string]string{"AgentRun": "AgentExecutionAuthorized", "UtilityOperation": "UtilityExecutionAuthorized", "ValidationRun": "ValidationEvaluated"}[attempt.Status.ExecutionRef.Kind]
+	events, err := r.Audit.ListWorkflow(ctx, workflow.Name)
+	if err != nil {
+		return "", err
+	}
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if event.Type == wantedType && (event.Target == attempt.Status.ExecutionRef.Name || event.References["agentRun"] == attempt.Status.ExecutionRef.Name || event.References["utilityOperation"] == attempt.Status.ExecutionRef.Name || event.References["validationRun"] == attempt.Status.ExecutionRef.Name) {
+			return event.ID, nil
+		}
+	}
+	return "", nil
+}
+
+func workflowResourceRef(kind string, object client.Object) audit.ResourceRef {
+	return audit.ResourceRef{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		APIVersion:    v1alpha1.GroupVersion.String(),
+		Kind:          kind,
+		Namespace:     object.GetNamespace(),
+		Name:          object.GetName(),
+		UID:           string(object.GetUID())}
 }
 
 func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, eventType, step string, attempt int32, action, target, outcome, reason string, references map[string]string, data any) error {
