@@ -19,9 +19,9 @@ spec:
         executable: ["/domain-agent", "--role", "architect"]
         capabilities: ["context.read", "artifact.publish"]
         inference:
-          model: code-small
-          modelRevision: latest
-          estimatedKVRAMMiB: 2048
+          model: code-qwen25-14b-awq
+          modelRevision: eb3172f06a6d6b3a15f08947b0668d782e4d2d2c
+          estimatedKVRAMMiB: 1536
           sharingScope: Dedicated
       maxAttempts: 2
       outputs:
@@ -36,9 +36,9 @@ spec:
         executable: ["/domain-agent", "--role", "architect"]
         capabilities: ["context.read", "artifact.publish"]
         inference:
-          model: code-small
-          modelRevision: latest
-          estimatedKVRAMMiB: 2048
+          model: code-qwen25-14b-awq
+          modelRevision: eb3172f06a6d6b3a15f08947b0668d782e4d2d2c
+          estimatedKVRAMMiB: 1536
           sharingScope: Dedicated
       maxAttempts: 2
       inputs:

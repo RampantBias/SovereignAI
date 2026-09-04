@@ -256,7 +256,7 @@ func (r *InferenceLeaseReconciler) ensureEndpoint(ctx context.Context, lease *v1
 	}
 	maxKV := r.DefaultMaxKVRAMMiB
 	if maxKV == 0 {
-		maxKV = 16384
+		maxKV = 12288
 	}
 	endpoint = v1alpha1.InferenceEndpoint{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: controllermeta.InferenceNamespace, Labels: map[string]string{

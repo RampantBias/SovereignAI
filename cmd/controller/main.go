@@ -94,18 +94,23 @@ func main() {
 
 	// Initialize vLLM inference snapshot for MVP
 	inferenceProfile := inference.Profile{
-		RuntimeImage:      env("SOVEREIGN_VLLM_IMAGE", "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b"), //7/25/26 v0.26.0 linux/amd64
-		ModelID:           env("SOVEREIGN_MODEL_ID", "Qwen/Qwen2.5-Coder-3B-Instruct"),
-		ModelRevision:     env("SOVEREIGN_MODEL_REVISION", "488639f1ff808d1d3d0ba301aef8c11461451ec5"), //8/1/26
-		ServedModelName:   env("SOVEREIGN_SERVED_MODEL_NAME", "code-small"),
-		CachePVCName:      env("SOVEREIGN_MODEL_CACHE_PVC", "sovereign-model-cache"),
-		CachePath:         env("SOVEREIGN_MODEL_CACHE_PATH", "/model-cache"),
-		GPUNodeLabelKey:   "sovereign-ai.io/gpu-node",
-		GPUNodeLabelValue: "true",
-		StartupTimeout:    time.Minute * 15,
-		RequestTimeout:    time.Minute * 3,
-		MaxOutputTokens:   2048,
-		MaxResponseBytes:  4194304, // 4 MB
+		RuntimeImage:       env("SOVEREIGN_VLLM_IMAGE", "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b"), //7/25/26 v0.26.0 linux/amd64
+		ModelID:            env("SOVEREIGN_MODEL_ID", "Qwen/Qwen2.5-Coder-14B-Instruct-AWQ"),
+		ModelRevision:      env("SOVEREIGN_MODEL_REVISION", "eb3172f06a6d6b3a15f08947b0668d782e4d2d2c"),
+		ServedModelName:    env("SOVEREIGN_SERVED_MODEL_NAME", "code-qwen25-14b-awq"),
+		DType:              env("SOVEREIGN_VLLM_DTYPE", "auto"),
+		Quantization:       env("SOVEREIGN_VLLM_QUANTIZATION", "awq_marlin"),
+		AttentionBackend:   env("SOVEREIGN_VLLM_ATTENTION_BACKEND", "TRITON_ATTN"),
+		MaxModelLen:        envInt("SOVEREIGN_VLLM_MAX_MODEL_LEN", 16384),
+		KVCacheMemoryBytes: int64(envInt("SOVEREIGN_VLLM_KV_CACHE_MEMORY_BYTES", 2147483648)),
+		CachePVCName:       env("SOVEREIGN_MODEL_CACHE_PVC", "sovereign-model-cache"),
+		CachePath:          env("SOVEREIGN_MODEL_CACHE_PATH", "/model-cache"),
+		GPUNodeLabelKey:    "sovereign-ai.io/gpu-node",
+		GPUNodeLabelValue:  "true",
+		StartupTimeout:     time.Minute * 15,
+		RequestTimeout:     time.Minute * 3,
+		MaxOutputTokens:    2048,
+		MaxResponseBytes:   4194304, // 4 MB
 	}
 
 	// Validate inference profile
@@ -165,9 +170,9 @@ func main() {
 			Client:               mgr.GetClient(),
 			Scheme:               mgr.GetScheme(),
 			Profile:              inferenceProfile,
-			DefaultStaticVRAMMiB: int64(envInt("SOVEREIGN_MODEL_VRAM_MIB", 4096)),
-			DefaultMaxKVRAMMiB:   int64(envInt("SOVEREIGN_KV_VRAM_MIB", 8192)),
-			SafetyHeadroomMiB:    int64(envInt("SOVEREIGN_VRAM_HEADROOM_MIB", 1024)),
+			DefaultStaticVRAMMiB: int64(envInt("SOVEREIGN_MODEL_VRAM_MIB", 10240)),
+			DefaultMaxKVRAMMiB:   int64(envInt("SOVEREIGN_KV_VRAM_MIB", 2048)),
+			SafetyHeadroomMiB:    int64(envInt("SOVEREIGN_VRAM_HEADROOM_MIB", 256)),
 			Policy:               policyEvaluator,
 			Audit:                recorder,
 		},

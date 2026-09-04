@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
@@ -45,6 +46,9 @@ func (r *InferenceEndpointReconciler) Reconcile(ctx context.Context, request ctr
 	if err := r.Get(ctx, request.NamespacedName, &endpoint); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := r.validateEndpointProfile(&endpoint); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// Build inference workloads (inference pod + exposing service)
 	pod, service := r.buildInferenceWorkloads(&endpoint)
@@ -71,6 +75,22 @@ func (r *InferenceEndpointReconciler) Reconcile(ctx context.Context, request ctr
 		return ctrl.Result{}, r.updateEndpointStatus(ctx, &endpoint, phase, pod.Name, service.Name, current.Spec.NodeName)
 	}
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+func (r *InferenceEndpointReconciler) validateEndpointProfile(endpoint *v1alpha1.InferenceEndpoint) error {
+	if endpoint.Spec.Model != r.Profile.ServedModelName || endpoint.Spec.ModelRevision != r.Profile.ModelRevision {
+		return fmt.Errorf(
+			"endpoint model %s@%s does not match configured inference profile %s@%s",
+			endpoint.Spec.Model,
+			endpoint.Spec.ModelRevision,
+			r.Profile.ServedModelName,
+			r.Profile.ModelRevision,
+		)
+	}
+	if endpoint.Spec.RuntimeImage != r.Profile.RuntimeImage {
+		return fmt.Errorf("endpoint runtime image does not match configured inference profile")
+	}
+	return nil
 }
 
 func (r *InferenceEndpointReconciler) appendEndpointEvent(ctx context.Context, endpoint *v1alpha1.InferenceEndpoint, eventType, action, outcome, reason string) error {
@@ -109,6 +129,33 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 	shmSizeLimit := resource.MustParse("1Gi")
 	allowPrivilegeEscalation := false
 
+	vllmArgs := []string{
+		"--model", r.Profile.ModelID,
+		"--revision", r.Profile.ModelRevision,
+		"--served-model-name", r.Profile.ServedModelName,
+		"--download-dir", r.Profile.CachePath,
+		"--host", "0.0.0.0",
+		"--port", "8000",
+		"--dtype", r.Profile.DType,
+		"--tensor-parallel-size", "1",
+		"--gpu-memory-utilization", "0.90",
+		"--max-model-len", strconv.Itoa(r.Profile.MaxModelLen),
+		"--max-num-seqs", "1",
+		"--generation-config", "vllm",
+		"--enforce-eager",
+		"--enable-auto-tool-choice",
+		"--tool-call-parser", "hermes",
+	}
+	if r.Profile.Quantization != "" {
+		vllmArgs = append(vllmArgs, "--quantization", r.Profile.Quantization)
+	}
+	if r.Profile.AttentionBackend != "" {
+		vllmArgs = append(vllmArgs, "--attention-backend", r.Profile.AttentionBackend)
+	}
+	if r.Profile.KVCacheMemoryBytes > 0 {
+		vllmArgs = append(vllmArgs, "--kv-cache-memory-bytes", strconv.FormatInt(r.Profile.KVCacheMemoryBytes, 10))
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: endpoint.Name, Namespace: endpoint.Namespace, Labels: labels},
 		Spec: corev1.PodSpec{
@@ -137,23 +184,7 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 			Containers: []corev1.Container{{
 				Name:  "vllm",
 				Image: endpoint.Spec.RuntimeImage,
-				Args: []string{
-					"--model", r.Profile.ModelID,
-					"--revision", r.Profile.ModelRevision,
-					"--served-model-name", r.Profile.ServedModelName,
-					"--download-dir", r.Profile.CachePath,
-					"--host", "0.0.0.0",
-					"--port", "8000",
-					"--dtype", "bfloat16",
-					"--tensor-parallel-size", "1",
-					"--gpu-memory-utilization", "0.80",
-					"--max-model-len", "16384",
-					"--max-num-seqs", "1",
-					"--generation-config", "vllm",
-					"--enforce-eager",
-					"--enable-auto-tool-choice",
-					"--tool-call-parser", "hermes",
-				},
+				Args:  vllmArgs,
 				Env: []corev1.EnvVar{
 					{Name: "HF_HUB_OFFLINE", Value: "1"},
 					{Name: "HF_HUB_CACHE", Value: r.Profile.CachePath},

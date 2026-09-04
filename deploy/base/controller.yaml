@@ -36,6 +36,28 @@ spec:
               value: sovereign-artifact-bootstrap:dev
             - name: SOVEREIGN_UTILITY_IMAGE
               value: sovereign-utility-runner:dev
+            - name: SOVEREIGN_MODEL_ID
+              value: Qwen/Qwen2.5-Coder-14B-Instruct-AWQ
+            - name: SOVEREIGN_MODEL_REVISION
+              value: eb3172f06a6d6b3a15f08947b0668d782e4d2d2c
+            - name: SOVEREIGN_SERVED_MODEL_NAME
+              value: code-qwen25-14b-awq
+            - name: SOVEREIGN_VLLM_DTYPE
+              value: auto
+            - name: SOVEREIGN_VLLM_QUANTIZATION
+              value: awq_marlin
+            - name: SOVEREIGN_VLLM_ATTENTION_BACKEND
+              value: TRITON_ATTN
+            - name: SOVEREIGN_VLLM_MAX_MODEL_LEN
+              value: "16384"
+            - name: SOVEREIGN_VLLM_KV_CACHE_MEMORY_BYTES
+              value: "2147483648"
+            - name: SOVEREIGN_MODEL_VRAM_MIB
+              value: "10240"
+            - name: SOVEREIGN_KV_VRAM_MIB
+              value: "2048"
+            - name: SOVEREIGN_VRAM_HEADROOM_MIB
+              value: "256"
             - name: SOVEREIGN_DEV_LOGGING
               value: "true"
           ports:

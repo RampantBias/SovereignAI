@@ -9,18 +9,23 @@ import (
 
 // Snapshot inference profile
 type Profile struct {
-	RuntimeImage      string
-	ModelID           string
-	ModelRevision     string
-	ServedModelName   string
-	CachePVCName      string
-	CachePath         string
-	GPUNodeLabelKey   string
-	GPUNodeLabelValue string
-	StartupTimeout    time.Duration
-	RequestTimeout    time.Duration
-	MaxOutputTokens   int
-	MaxResponseBytes  int64
+	RuntimeImage       string
+	ModelID            string
+	ModelRevision      string
+	ServedModelName    string
+	DType              string
+	Quantization       string
+	AttentionBackend   string
+	MaxModelLen        int
+	KVCacheMemoryBytes int64
+	CachePVCName       string
+	CachePath          string
+	GPUNodeLabelKey    string
+	GPUNodeLabelValue  string
+	StartupTimeout     time.Duration
+	RequestTimeout     time.Duration
+	MaxOutputTokens    int
+	MaxResponseBytes   int64
 }
 
 func (p Profile) Validate() error {
@@ -33,6 +38,18 @@ func (p Profile) Validate() error {
 	}
 	if len(strings.TrimSpace(p.ModelID)) == 0 {
 		return fmt.Errorf("model id must not be empty or blank")
+	}
+	if len(strings.TrimSpace(p.ServedModelName)) == 0 {
+		return fmt.Errorf("served model name must not be empty or blank")
+	}
+	if len(strings.TrimSpace(p.DType)) == 0 {
+		return fmt.Errorf("model dtype must not be empty or blank")
+	}
+	if p.MaxModelLen <= 0 {
+		return fmt.Errorf("max model length must be > 0")
+	}
+	if p.KVCacheMemoryBytes < 0 {
+		return fmt.Errorf("kv cache memory bytes must be >= 0")
 	}
 	if len(strings.TrimSpace(p.GPUNodeLabelKey)) == 0 || len(strings.TrimSpace(p.GPUNodeLabelValue)) == 0 {
 		return fmt.Errorf("gpu node label key selector and label value must not be empty or blank")

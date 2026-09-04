@@ -11,6 +11,7 @@ import (
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/inference"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -96,6 +97,97 @@ func TestInferenceLeaseBindsCompatibleWarmEndpoint(t *testing.T) {
 	}
 }
 
+func TestInferenceLeaseBindingPrunesMissingReservation(t *testing.T) {
+	scheme := inferenceScheme(t)
+	ghost := v1alpha1.NamespacedReference{Namespace: "deleted-workflow", Name: "developer-inference"}
+	warmEndpointName := endpointName("code", "v1", "team", "internal")
+	endpoint := &v1alpha1.InferenceEndpoint{
+		ObjectMeta: metav1.ObjectMeta{Name: warmEndpointName, Namespace: controllermeta.InferenceNamespace, Labels: map[string]string{"sovereign-ai.io/project": "project"}},
+		Spec:       v1alpha1.InferenceEndpointSpec{Model: "code", ModelRevision: "v1", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, MaxKVRAMMiB: 4000, SafetyHeadroomMiB: 1000},
+		Status:     v1alpha1.InferenceEndpointStatus{Phase: v1alpha1.PhaseRunning, ActiveLeases: []v1alpha1.NamespacedReference{ghost}, ActiveLeaseCount: 1, AllocatedKVRAMMiB: 2000},
+	}
+	lease := &v1alpha1.InferenceLease{
+		ObjectMeta: metav1.ObjectMeta{Name: "lease", Namespace: "workflow", UID: "lease-uid"},
+		Spec:       v1alpha1.InferenceLeaseSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, AttemptRef: "architect-001", ProjectRef: "project", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2000},
+	}
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controllermeta.InferenceNamespace}}
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.InferenceLease{}, &v1alpha1.InferenceEndpoint{}).
+		WithObjects(namespace, endpoint, lease).Build()
+	reconciler := &InferenceLeaseReconciler{Client: client, Scheme: scheme, Audit: audit.NewMemoryRecorder()}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: lease.Namespace, Name: lease.Name}}
+	for range 4 {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var updatedLease v1alpha1.InferenceLease
+	if err := client.Get(context.Background(), request.NamespacedName, &updatedLease); err != nil {
+		t.Fatal(err)
+	}
+	if updatedLease.Status.Phase != v1alpha1.PhaseRunning {
+		t.Fatalf("lease phase = %q, want Running", updatedLease.Status.Phase)
+	}
+	var updatedEndpoint v1alpha1.InferenceEndpoint
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: endpoint.Namespace, Name: endpoint.Name}, &updatedEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if updatedEndpoint.Status.AllocatedKVRAMMiB != lease.Spec.EstimatedKVRAMMiB ||
+		updatedEndpoint.Status.ActiveLeaseCount != 1 ||
+		containsLeaseReference(updatedEndpoint.Status.ActiveLeases, ghost.Namespace, ghost.Name) ||
+		!containsLeaseReference(updatedEndpoint.Status.ActiveLeases, lease.Namespace, lease.Name) {
+		t.Fatalf("stale reservation was not repaired: %#v", updatedEndpoint.Status)
+	}
+}
+
+func TestInferenceLeaseDeletionReleasesEndpointReservation(t *testing.T) {
+	scheme := inferenceScheme(t)
+	now := metav1.Now()
+	leaseRef := v1alpha1.NamespacedReference{Namespace: "workflow", Name: "lease"}
+	endpointRef := v1alpha1.NamespacedReference{Namespace: controllermeta.InferenceNamespace, Name: "warm"}
+	endpoint := &v1alpha1.InferenceEndpoint{
+		ObjectMeta: metav1.ObjectMeta{Name: endpointRef.Name, Namespace: endpointRef.Namespace},
+		Status:     v1alpha1.InferenceEndpointStatus{ActiveLeases: []v1alpha1.NamespacedReference{leaseRef}, ActiveLeaseCount: 1, AllocatedKVRAMMiB: 2000},
+	}
+	lease := &v1alpha1.InferenceLease{
+		ObjectMeta: metav1.ObjectMeta{Name: leaseRef.Name, Namespace: leaseRef.Namespace, UID: "lease-uid", Finalizers: []string{InferenceLeaseFinalizer}, DeletionTimestamp: &now},
+		Spec:       v1alpha1.InferenceLeaseSpec{EstimatedKVRAMMiB: 2000},
+		Status:     v1alpha1.InferenceLeaseStatus{Phase: v1alpha1.PhaseRunning, EndpointRef: endpointRef},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.InferenceLease{}, &v1alpha1.InferenceEndpoint{}).
+		WithObjects(endpoint, lease).Build()
+	reconciler := &InferenceLeaseReconciler{Client: client, Scheme: scheme}
+	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: lease.Namespace, Name: lease.Name}}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	var updatedEndpoint v1alpha1.InferenceEndpoint
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: endpoint.Namespace, Name: endpoint.Name}, &updatedEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if updatedEndpoint.Status.AllocatedKVRAMMiB != 0 || updatedEndpoint.Status.ActiveLeaseCount != 0 || len(updatedEndpoint.Status.ActiveLeases) != 0 {
+		t.Fatalf("endpoint reservation survived lease deletion: %#v", updatedEndpoint.Status)
+	}
+	var updatedLease v1alpha1.InferenceLease
+	err := client.Get(context.Background(), request.NamespacedName, &updatedLease)
+	if err == nil && containsString(updatedLease.Finalizers, InferenceLeaseFinalizer) {
+		t.Fatalf("inference lease finalizer was not removed: %v", updatedLease.Finalizers)
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		t.Fatal(err)
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
 	reconciler := InferenceEndpointReconciler{
 		Profile: testInferenceProfile(),
@@ -114,7 +206,11 @@ func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
 		}
 	}
 	autoToolChoice, toolCallParser := false, ""
+	arguments := map[string]string{}
 	for index, argument := range pod.Spec.Containers[0].Args {
+		if index+1 < len(pod.Spec.Containers[0].Args) && len(argument) > 2 && argument[:2] == "--" {
+			arguments[argument] = pod.Spec.Containers[0].Args[index+1]
+		}
 		switch argument {
 		case "--enable-auto-tool-choice":
 			autoToolChoice = true
@@ -129,11 +225,36 @@ func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
 	if !autoToolChoice || toolCallParser != "hermes" {
 		t.Fatalf("tool calling args = %v, want automatic Hermes parsing", pod.Spec.Containers[0].Args)
 	}
+	if arguments["--model"] != reconciler.Profile.ModelID ||
+		arguments["--revision"] != reconciler.Profile.ModelRevision ||
+		arguments["--served-model-name"] != reconciler.Profile.ServedModelName ||
+		arguments["--dtype"] != "auto" || arguments["--quantization"] != "awq_marlin" ||
+		arguments["--attention-backend"] != "TRITON_ATTN" ||
+		arguments["--max-model-len"] != "12288" ||
+		arguments["--kv-cache-memory-bytes"] != "3221225472" {
+		t.Fatalf("14B runtime args = %v", pod.Spec.Containers[0].Args)
+	}
 	if got := pod.Spec.Containers[0].Resources.Limits["nvidia.com/gpu"]; got.String() != "1" {
 		t.Fatalf("GPU request = %s, want 1", got.String())
 	}
 	if service.Spec.Selector["sovereign-ai.io/endpoint-id"] != endpoint.Name || pod.Labels["sovereign-ai.io/endpoint-id"] != endpoint.Name {
 		t.Fatal("service selector does not match endpoint pod")
+	}
+}
+
+func TestInferenceEndpointRequiresConfiguredModelProfile(t *testing.T) {
+	reconciler := InferenceEndpointReconciler{Profile: testInferenceProfile()}
+	endpoint := &v1alpha1.InferenceEndpoint{Spec: v1alpha1.InferenceEndpointSpec{
+		Model:         reconciler.Profile.ServedModelName,
+		ModelRevision: reconciler.Profile.ModelRevision,
+		RuntimeImage:  reconciler.Profile.RuntimeImage,
+	}}
+	if err := reconciler.validateEndpointProfile(endpoint); err != nil {
+		t.Fatalf("matching endpoint was rejected: %v", err)
+	}
+	endpoint.Spec.ModelRevision = "488639f1ff808d1d3d0ba301aef8c11461451ec5"
+	if err := reconciler.validateEndpointProfile(endpoint); err == nil {
+		t.Fatal("endpoint for a stale model revision was accepted")
 	}
 }
 
@@ -151,17 +272,22 @@ func inferenceScheme(t *testing.T) *runtime.Scheme {
 
 func testInferenceProfile() inference.Profile {
 	return inference.Profile{
-		RuntimeImage:      "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b",
-		ModelID:           "Qwen/Qwen2.5-Coder-3B-Instruct",
-		ModelRevision:     "488639f1ff808d1d3d0ba301aef8c11461451ec5",
-		ServedModelName:   "code-small",
-		CachePVCName:      "sovereign-model-cache",
-		CachePath:         "/model-cache",
-		GPUNodeLabelKey:   "sovereign-ai.io/gpu-node",
-		GPUNodeLabelValue: "true",
-		StartupTimeout:    time.Minute * 15,
-		RequestTimeout:    time.Minute * 3,
-		MaxOutputTokens:   2048,
-		MaxResponseBytes:  4194304, // 4 MB
+		RuntimeImage:       "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b",
+		ModelID:            "Qwen/Qwen2.5-Coder-14B-Instruct-AWQ",
+		ModelRevision:      "eb3172f06a6d6b3a15f08947b0668d782e4d2d2c",
+		ServedModelName:    "code-qwen25-14b-awq",
+		DType:              "auto",
+		Quantization:       "awq_marlin",
+		AttentionBackend:   "TRITON_ATTN",
+		MaxModelLen:        12288,
+		KVCacheMemoryBytes: 3221225472,
+		CachePVCName:       "sovereign-model-cache",
+		CachePath:          "/model-cache",
+		GPUNodeLabelKey:    "sovereign-ai.io/gpu-node",
+		GPUNodeLabelValue:  "true",
+		StartupTimeout:     time.Minute * 15,
+		RequestTimeout:     time.Minute * 3,
+		MaxOutputTokens:    2048,
+		MaxResponseBytes:   4194304, // 4 MB
 	}
 }

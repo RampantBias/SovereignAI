@@ -27,14 +27,17 @@ func main() {
 	attempt := flag.String("attempt", "", "step attempt name")
 	producerKind := flag.String("producer-kind", "", "authoritative producer resource kind")
 	producerAPIVersion := flag.String("producer-api-version", v1alpha1.GroupVersion.String(), "authoritative producer API version")
+	producerUID := flag.String("producer-uid", "", "authoritative producer resource uid")
+	producerGrant := flag.String("producer-grant", "", "authorizing step attempt name")
+	producerGrantUID := flag.String("producer-grant-uid", "", "authorizing step attempt uid")
 	resultPath := flag.String("result", "", "agent result contract")
 	stagingPath := flag.String("staging", "", "attempt staging directory")
 	artifactPath := flag.String("artifact-store", "", "content-addressed artifact directory")
 	auditEventsPath := flag.String("audit-events", "", "agent wrapper audit event JSONL path")
 	sourceRevision := flag.String("source-revision", "", "source revision")
 	flag.Parse()
-	if *namespace == "" || *workflowName == "" || *attempt == "" || *producerKind == "" || *resultPath == "" || *stagingPath == "" || *artifactPath == "" {
-		log.Fatal("namespace, workflow, attempt, producer-kind, result, staging, and artifact-store are required")
+	if *namespace == "" || *workflowName == "" || *attempt == "" || *producerKind == "" || *producerUID == "" || *producerGrant == "" || *producerGrantUID == "" || *resultPath == "" || *stagingPath == "" || *artifactPath == "" {
+		log.Fatal("namespace, workflow, attempt, producer identity, producer grant, result, staging, and artifact-store are required")
 	}
 	if err := ingestRuntimeAudit(context.Background(), *auditEventsPath); err != nil {
 		log.Fatalf("ingest runtime audit: %v", err)
@@ -59,6 +62,8 @@ func main() {
 	}
 	for index, item := range collected {
 		name := artifactName(*attempt, item.Spec.Contract.Name, index)
+		item.Spec.ProducerUID = types.UID(*producerUID)
+		item.Spec.ProducerGrantRef = v1alpha1.UIDReference{Name: *producerGrant, UID: types.UID(*producerGrantUID)}
 		artifact := &v1alpha1.Artifact{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: *namespace, Labels: map[string]string{"sovereign-ai.io/workflow-id": *workflowName, "sovereign-ai.io/attempt": *attempt}}, Spec: item.Spec}
 		if err := kubernetes.Create(context.Background(), artifact); err != nil {
 			if apierrors.IsAlreadyExists(err) {
