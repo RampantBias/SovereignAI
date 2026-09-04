@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +25,7 @@ import (
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/contextrepo"
+	"github.com/SovereignAI/internal/utilitycontract"
 	"github.com/SovereignAI/internal/workspaceeditor"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -440,7 +445,7 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 				}
 				file, err := editor.Replace(input.Path, input.OldText, input.NewText, expected, input.ExpectedOccurrences)
 				if err != nil {
-					return nil, WriteOutput{}, err
+					return nil, WriteOutput{}, actionableWorkspaceReplaceError(editor, currentPath, err)
 				}
 				state.recordRead(file.Path)
 				return nil, WriteOutput{
@@ -474,6 +479,17 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 		changes, err := editor.Changes()
 		return nil, changes, err
 	})
+}
+
+func actionableWorkspaceReplaceError(editor *workspaceeditor.Editor, path string, err error) error {
+	if err == nil || !strings.HasPrefix(err.Error(), "oldText occurs ") {
+		return err
+	}
+	current, readErr := editor.Read(path, 0)
+	if readErr != nil {
+		return fmt.Errorf("%w; do not repeat this unchanged workspace_replace call; call workspace_read and copy an exact snippet before retrying", err)
+	}
+	return fmt.Errorf("%w; current file digest is %s; do not repeat this unchanged workspace_replace call; call workspace_read and copy an exact snippet before retrying, or use workspace_write for a complete-file rewrite", err, current.Digest)
 }
 
 func resolveWorkspaceWritePath(requested string, state *workspaceToolState, policy *artifactcontract.WorkspaceMutationPolicy) (string, error) {
@@ -589,6 +605,12 @@ func registerAgentTools(server *mcp.Server, editor *workspaceeditor.Editor, stat
 			if len(changes.Files) == 0 {
 				return nil, AgentCompleteOutput{}, fmt.Errorf("workspace contains no changes")
 			}
+			if contract == artifactcontract.TestChangeSetContract && input.RetryFeedback != nil &&
+				input.RetryFeedback.Code == utilitycontract.TestRunCodeError {
+				if err := validateRefinementTestPreservation(editor, changes.Files); err != nil {
+					return nil, AgentCompleteOutput{}, err
+				}
+			}
 			evidenceDigest = changes.EvidenceDigest
 		default:
 			return nil, AgentCompleteOutput{}, fmt.Errorf("unsupported materialization kind %q", materializer.Kind)
@@ -600,6 +622,56 @@ func registerAgentTools(server *mcp.Server, editor *workspaceeditor.Editor, stat
 		return nil, completed, nil
 	})
 	return nil
+}
+
+func validateRefinementTestPreservation(editor *workspaceeditor.Editor, files []artifactcontract.ChangedFile) error {
+	for _, file := range files {
+		if !strings.HasSuffix(strings.ToLower(file.Path), "_test.go") || file.Action == "add" {
+			continue
+		}
+		baseContent, err := os.ReadFile(filepath.Join(editor.BaseRoot, filepath.FromSlash(file.Path)))
+		if err != nil {
+			return fmt.Errorf("read refinement base test %q: %w", file.Path, err)
+		}
+		baseTests, err := declaredGoTests(baseContent)
+		if err != nil {
+			return fmt.Errorf("parse refinement base test %q: %w", file.Path, err)
+		}
+		var resultContent []byte
+		if file.ResultContent != nil {
+			resultContent = []byte(*file.ResultContent)
+		}
+		resultTests, err := declaredGoTests(resultContent)
+		if err != nil {
+			return fmt.Errorf("parse refined test %q: %w", file.Path, err)
+		}
+		var missing []string
+		for name := range baseTests {
+			if _, preserved := resultTests[name]; !preserved {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) != 0 {
+			sort.Strings(missing)
+			return fmt.Errorf("refinement must preserve existing active Go test declarations in %q; missing: %s; do not remove or comment out acceptance evidence to address downstream diagnostics", file.Path, strings.Join(missing, ", "))
+		}
+	}
+	return nil
+}
+
+func declaredGoTests(content []byte) (map[string]struct{}, error) {
+	parsed, err := parser.ParseFile(token.NewFileSet(), "test.go", content, 0)
+	if err != nil {
+		return nil, err
+	}
+	tests := map[string]struct{}{}
+	for _, declaration := range parsed.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Recv == nil && strings.HasPrefix(function.Name.Name, "Test") {
+			tests[function.Name.Name] = struct{}{}
+		}
+	}
+	return tests, nil
 }
 
 func candidateWriteSchema(candidateSchema json.RawMessage) (json.RawMessage, error) {

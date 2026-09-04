@@ -16,6 +16,7 @@ import (
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/inference"
+	"github.com/SovereignAI/internal/utilitycontract"
 	"github.com/SovereignAI/internal/workspaceeditor"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -400,6 +401,11 @@ func TestTestAuthorPromptRendersCompleteDeveloperFiles(t *testing.T) {
 		Outputs: []agentcontract.OutputObligation{{
 			Name: "test-change-set", Version: "v1", Required: true, MediaType: jsonMediaType,
 		}},
+		RetryFeedback: &agentcontract.RetryFeedback{
+			PreviousAttemptRef: "test-candidate-w000-r001",
+			Code:               utilitycontract.TestRunCodeError,
+			Message:            "downstream test failed",
+		},
 	}
 
 	prompt, err := buildTaskContext(input, artifacts)
@@ -416,6 +422,7 @@ func TestTestAuthorPromptRendersCompleteDeveloperFiles(t *testing.T) {
 		"Path: calculator.go",
 		"Result Content:",
 		"| func Divide(a, b int) int { return a / b }",
+		"Preserve every existing active test declaration during refinement",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("test-author prompt does not contain %q:\n%s", expected, prompt)
@@ -532,6 +539,77 @@ func TestValidateInputRequiresMutationCapabilityForWorkspaceOutput(t *testing.T)
 	}
 }
 
+func TestCompactWorkspaceMutationHistoryRemovesSuccessfulPayloads(t *testing.T) {
+	oldText := strings.Repeat("old source ", 200)
+	newText := strings.Repeat("new source ", 200)
+	arguments, err := json.Marshal(map[string]any{
+		"path": "src/main_test.go", "oldText": oldText, "newText": newText, "expectedOccurrences": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := inference.ToolCall{
+		ID: "replace-1", Type: "function",
+		Function: inference.ToolCallFunction{
+			Name: agentcontract.CapabilityWorkspaceReplace, Arguments: string(arguments),
+		},
+	}
+	resultText := `{"path":"src/main_test.go","digest":"sha256:result","byteCount":2048,"changed":true}`
+	compactedCall, compactedResult := compactWorkspaceMutationHistory(
+		call,
+		resultText,
+		map[string]any{
+			"path": "src/main_test.go", "digest": "sha256:result", "byteCount": 2048,
+			"changed": true, "content": newText, "source": "overlay",
+		},
+		false,
+	)
+	if strings.Contains(compactedCall.Function.Arguments, oldText) ||
+		strings.Contains(compactedCall.Function.Arguments, newText) ||
+		strings.Contains(compactedResult, newText) {
+		t.Fatal("successful mutation history retained full source content")
+	}
+	var compactedArguments map[string]any
+	if err := json.Unmarshal([]byte(compactedCall.Function.Arguments), &compactedArguments); err != nil {
+		t.Fatal(err)
+	}
+	if compactedArguments["path"] != "src/main_test.go" ||
+		compactedArguments["oldTextDigest"] != artifactcontract.DigestBytes([]byte(oldText)) ||
+		compactedArguments["newTextDigest"] != artifactcontract.DigestBytes([]byte(newText)) ||
+		compactedArguments["historyCompacted"] != true {
+		t.Fatalf("unexpected compacted arguments: %#v", compactedArguments)
+	}
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(compactedResult), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := receipt["content"]; ok {
+		t.Fatalf("compacted result retained content: %#v", receipt)
+	}
+	if receipt["path"] != "src/main_test.go" || receipt["digest"] != "sha256:result" ||
+		receipt["changed"] != true || receipt["historyCompacted"] != true {
+		t.Fatalf("unexpected compacted result: %#v", receipt)
+	}
+	if call.Function.Arguments != string(arguments) || resultText == compactedResult {
+		t.Fatal("compaction mutated the raw call or failed to produce a compact receipt")
+	}
+}
+
+func TestCompactWorkspaceMutationHistoryPreservesFailedMutation(t *testing.T) {
+	call := inference.ToolCall{
+		ID: "write-1", Type: "function",
+		Function: inference.ToolCallFunction{
+			Name:      agentcontract.CapabilityWorkspaceWrite,
+			Arguments: `{"path":"src/main_test.go","content":"full retryable content"}`,
+		},
+	}
+	resultText := `workspace_read must succeed for exact existing path "src/main_test.go" before it can be changed`
+	gotCall, gotResult := compactWorkspaceMutationHistory(call, resultText, nil, true)
+	if gotCall != call || gotResult != resultText {
+		t.Fatalf("failed mutation was compacted: call=%#v result=%q", gotCall, gotResult)
+	}
+}
+
 func TestToolCallTrackerRejectsThirdUnchangedObservation(t *testing.T) {
 	tracker := toolCallTracker{counts: map[string]int{}}
 	arguments := []byte(`{"path":"calculator.go"}`)
@@ -546,6 +624,19 @@ func TestToolCallTrackerRejectsThirdUnchangedObservation(t *testing.T) {
 	}
 	if err := tracker.observe(agentcontract.CapabilityWorkspaceRead, arguments, `{"digest":"changed"}`, false); err != nil {
 		t.Fatalf("changed result was treated as an unchanged repetition: %v", err)
+	}
+}
+
+func TestToolCallTrackerRejectsSecondUnchangedWorkspaceReplaceError(t *testing.T) {
+	tracker := toolCallTracker{counts: map[string]int{}}
+	arguments := []byte(`{"path":"main_test.go","oldText":"missing","newText":"replacement"}`)
+	result := `oldText occurs 0 times in "main_test.go", expected 1`
+	if err := tracker.observe(agentcontract.CapabilityWorkspaceReplace, arguments, result, true); err != nil {
+		t.Fatalf("first rejected replacement was rejected as repeated: %v", err)
+	}
+	err := tracker.observe(agentcontract.CapabilityWorkspaceReplace, arguments, result, true)
+	if err == nil || !strings.Contains(err.Error(), "2 times") {
+		t.Fatalf("second unchanged rejected replacement returned %v", err)
 	}
 }
 

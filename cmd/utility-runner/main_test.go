@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/utilitycontract"
 )
 
@@ -51,5 +55,45 @@ func TestWriteOperationResultReportsSucceededOutcome(t *testing.T) {
 	}
 	if !succeeded {
 		t.Fatal("successful utility result was reported as process failure")
+	}
+}
+
+func TestRunnerRecordsCandidateDecisionAndLinkedConsequences(t *testing.T) {
+	recorder := audit.NewMemoryRecorder()
+	events := newRunnerEvents(recorder, utilitycontract.Input{
+		WorkflowID: "workflow", StepName: "candidate", Attempt: 1, Operation: "candidate.prepare",
+		Authority:      utilitycontract.AuthorityReference{APIVersion: "aim.sovereign.io/v1alpha1", Kind: "UtilityOperation", Namespace: "workflow", Name: "candidate-001", UID: "utility-uid"},
+		WorkspaceWrite: utilitycontract.WorkspaceWriteAuthority{LeaseName: "writer", HolderIdentity: "UtilityOperation/workflow/candidate-001/utility-uid", WriterEpoch: 4},
+		Lineage:        &utilitycontract.LineageReferences{AdmissionDecisionEvent: "admission-event", AuthorityEvent: "authority-event", InputsEvent: "inputs-event", ExecutionDecisionEvent: "execution-event"},
+	})
+	events.operationCompleted(context.Background(), 25*time.Millisecond, utilitycontract.Result{
+		Outcome:  "Succeeded",
+		Metadata: map[string]string{"branch": "sovereign/workflow", "baseCommit": "base", "tree": "tree-digest"},
+	})
+	var evaluated, completed audit.Event
+	for _, event := range recorder.AllEvents() {
+		switch event.Type {
+		case "CandidatePreparationEvaluated":
+			evaluated = event
+		case "UtilityOperationCompleted":
+			completed = event
+		}
+	}
+	if evaluated.ID == "" || completed.ID == "" {
+		t.Fatalf("missing runtime lineage events: evaluated=%q completed=%q", evaluated.ID, completed.ID)
+	}
+	var decision audit.DecisionEvaluated
+	if err := json.Unmarshal(evaluated.Data, &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.AuthorityEvent != "authority-event" || decision.InputEvent != "inputs-event" || decision.Decision.Outcome != "allowed" || len(decision.Invariants) < 4 {
+		t.Fatalf("candidate evaluation did not preserve authority and checks: %#v", decision)
+	}
+	var consequence audit.ConsequenceRecorded
+	if err := json.Unmarshal(completed.Data, &consequence); err != nil {
+		t.Fatal(err)
+	}
+	if consequence.DecisionEvent != evaluated.ID || len(consequence.Consequences) < 3 {
+		t.Fatalf("utility consequences were not linked to candidate evaluation: %#v", consequence)
 	}
 }

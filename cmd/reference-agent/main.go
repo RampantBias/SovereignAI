@@ -18,21 +18,23 @@ import (
 	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/contractrender"
 	"github.com/SovereignAI/internal/inference"
+	"github.com/SovereignAI/internal/utilitycontract"
 	"github.com/SovereignAI/internal/workspaceeditor"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	maxResponseBytes  = 65792
-	maxOutputTokens   = 4096
-	maxPromptBytes    = 4 << 20 // 4 MB
-	timeout           = 600 * time.Second
-	temperature       = 0.2
-	repetitionPenalty = 1.1
-	jsonMediaType     = "application/json"
-	maxToolRounds     = 25
-	maxUnchangedCalls = 3
-	rootTreeArguments = `{"path":".","maxEntries":5000}`
+	maxResponseBytes                          = 65792
+	maxOutputTokens                           = 4096
+	maxPromptBytes                            = 4 << 20 // 4 MB
+	timeout                                   = 600 * time.Second
+	temperature                               = 0.2
+	repetitionPenalty                         = 1.1
+	jsonMediaType                             = "application/json"
+	maxToolRounds                             = 25
+	maxUnchangedCalls                         = 3
+	maxUnchangedRejectedWorkspaceReplaceCalls = 2
+	rootTreeArguments                         = `{"path":".","maxEntries":5000}`
 )
 
 type loadedArtifact struct {
@@ -164,7 +166,7 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 			{Role: "system", Content: systemContext},
 			{Role: "user", Content: taskContext},
 		},
-	})
+	}, nil)
 	if len(taskContext) > maxPromptBytes {
 		return fmt.Errorf("task context exceeds %d-byte limit", maxPromptBytes)
 	}
@@ -230,6 +232,7 @@ func generateWithMCP(
 		return generationOutcome{}, err
 	}
 	messages := []inference.Message{{Role: "system", Content: systemContext}, {Role: "user", Content: taskContext}}
+	rawMessages := append([]inference.Message(nil), messages...)
 	var completion *agentcontract.AgentCompletion
 	candidateReady := false
 	workspaceInspected := false
@@ -260,7 +263,7 @@ func generateWithMCP(
 			Temperature: temperature, RepetitionPenalty: repetitionPenalty, Tools: roundTools,
 			ToolChoice: toolChoice,
 		}
-		writeDebugContext(input, artifacts, round+1, request)
+		writeDebugContext(input, artifacts, round+1, request, rawMessages)
 		response, err := client.Chat(ctx, request)
 		if err != nil {
 			return generationOutcome{}, fmt.Errorf("inference tool round %d: %w", round+1, err)
@@ -280,7 +283,11 @@ func generateWithMCP(
 		if requiredTool == agentcontract.CapabilityWorkspaceTree {
 			response.ToolCalls[0].Function.Arguments = rootTreeArguments
 		}
-		messages = append(messages, inference.Message{Role: "assistant", Content: response.Content, ToolCalls: response.ToolCalls})
+		modelToolCalls := append([]inference.ToolCall(nil), response.ToolCalls...)
+		rawToolCalls := append([]inference.ToolCall(nil), response.ToolCalls...)
+		messages = append(messages, inference.Message{Role: "assistant", Content: response.Content, ToolCalls: modelToolCalls})
+		rawMessages = append(rawMessages, inference.Message{Role: "assistant", Content: response.Content, ToolCalls: rawToolCalls})
+		modelAssistantIndex := len(messages) - 1
 		for index, call := range response.ToolCalls {
 			if call.ID == "" || call.Type != "function" {
 				return generationOutcome{}, fmt.Errorf("invalid inference tool call")
@@ -307,7 +314,20 @@ func generateWithMCP(
 				return generationOutcome{}, err
 			}
 
-			messages = append(messages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: resultText})
+			modelCall, modelResultText := compactWorkspaceMutationHistory(
+				messages[modelAssistantIndex].ToolCalls[index],
+				resultText,
+				result.StructuredContent,
+				result.IsError,
+			)
+			if modelCall.Function.Arguments != call.Function.Arguments || modelResultText != resultText {
+				log.Printf("compacted workspace mutation history name=%s argumentBytes=%d compactArgumentBytes=%d resultBytes=%d compactResultBytes=%d",
+					call.Function.Name, len([]byte(call.Function.Arguments)), len([]byte(modelCall.Function.Arguments)),
+					len([]byte(resultText)), len([]byte(modelResultText)))
+			}
+			messages[modelAssistantIndex].ToolCalls[index] = modelCall
+			messages = append(messages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: modelResultText})
+			rawMessages = append(rawMessages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: resultText})
 			if materializer.Kind == artifactcontract.MaterializationWorkspace &&
 				call.Function.Name == agentcontract.CapabilityWorkspaceRead && !result.IsError {
 				workspaceInspected = true
@@ -420,6 +440,67 @@ func toolsForWorkspaceInspectionState(
 	)
 }
 
+func compactWorkspaceMutationHistory(
+	call inference.ToolCall,
+	resultText string,
+	structuredResult any,
+	isError bool,
+) (inference.ToolCall, string) {
+	if isError {
+		return call, resultText
+	}
+	switch call.Function.Name {
+	case agentcontract.CapabilityWorkspaceWrite,
+		agentcontract.CapabilityWorkspaceCreate,
+		agentcontract.CapabilityWorkspaceReplace:
+	default:
+		return call, resultText
+	}
+
+	var arguments map[string]any
+	if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+		return call, resultText
+	}
+	compactedArguments := map[string]any{"historyCompacted": true}
+	if path, ok := arguments["path"].(string); ok && path != "" {
+		compactedArguments["path"] = path
+	}
+	for _, field := range []string{"content", "oldText", "newText"} {
+		value, ok := arguments[field].(string)
+		if !ok {
+			continue
+		}
+		compactedArguments[field+"Bytes"] = len([]byte(value))
+		compactedArguments[field+"Digest"] = artifactcontract.DigestBytes([]byte(value))
+	}
+	if expected, ok := arguments["expectedOccurrences"]; ok {
+		compactedArguments["expectedOccurrences"] = expected
+	}
+	encodedArguments, err := json.Marshal(compactedArguments)
+	if err != nil {
+		return call, resultText
+	}
+
+	var compactedResult map[string]any
+	encodedResult, err := json.Marshal(structuredResult)
+	if err != nil || json.Unmarshal(encodedResult, &compactedResult) != nil || compactedResult == nil {
+		return call, resultText
+	}
+	delete(compactedResult, "content")
+	delete(compactedResult, "source")
+	compactedResult["historyCompacted"] = true
+	if call.Function.Name == agentcontract.CapabilityWorkspaceCreate {
+		compactedResult["changed"] = true
+	}
+	encodedResult, err = json.Marshal(compactedResult)
+	if err != nil {
+		return call, resultText
+	}
+
+	call.Function.Arguments = string(encodedArguments)
+	return call, string(encodedResult)
+}
+
 func isWorkspaceMutation(name string) bool {
 	switch name {
 	case agentcontract.CapabilityWorkspaceWrite,
@@ -497,7 +578,11 @@ func (tracker *toolCallTracker) observe(name string, arguments []byte, result st
 	signature := name + "\x00" + artifactcontract.DigestBytes(arguments) + "\x00" +
 		fmt.Sprint(isError) + "\x00" + artifactcontract.DigestBytes([]byte(result))
 	tracker.counts[signature]++
-	if tracker.counts[signature] >= maxUnchangedCalls {
+	limit := maxUnchangedCalls
+	if isError && name == agentcontract.CapabilityWorkspaceReplace {
+		limit = maxUnchangedRejectedWorkspaceReplaceCalls
+	}
+	if tracker.counts[signature] >= limit {
 		lastResult := boundedRunes(agentcontract.SanitizeRetryFeedbackMessage(result), 512, true)
 		if lastResult == "" {
 			lastResult = "empty result"
@@ -788,6 +873,10 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact) (st
 		)
 		if hasCapability(input.Capabilities, agentcontract.CapabilityWorkspaceCreate) {
 			actions = append(actions, "workspace_create creates an absent path only when an implementation-plan affectedPaths entry authorizes that exact path with action add. After workspace_tree, call workspace_create directly for that absent path; workspace_read is not required and cannot succeed for it.")
+		}
+		if contract == artifactcontract.TestChangeSetContract && input.RetryFeedback != nil &&
+			input.RetryFeedback.Code == utilitycontract.TestRunCodeError {
+			actions = append(actions, "Preserve every existing active test declaration during refinement. A downstream diagnostic is not authority to remove, comment out, skip, or weaken acceptance evidence; make only the smallest change that addresses the reported failure.")
 		}
 	default:
 		return "", fmt.Errorf("unsupported materialization kind %q", materializer.Kind)

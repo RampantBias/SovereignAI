@@ -187,6 +187,25 @@ func TestWorkspaceReplaceEditsInspectedFileAndRecoversWrongPath(t *testing.T) {
 		t.Fatalf("workspace_read failed: result=%#v err=%v", result, err)
 	}
 
+	notMatched, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceReplace,
+		Arguments: map[string]any{
+			"path": "src/main_test.go", "oldText": "func TestMissing", "newText": "func TestDivide",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notMatchedMessage, err := json.Marshal(notMatched.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"oldText occurs 0 times", "current file digest", "do not repeat", "workspace_read", "workspace_write"} {
+		if !notMatched.IsError || !strings.Contains(string(notMatchedMessage), expected) {
+			t.Fatalf("replace mismatch error does not contain %q: %#v", expected, notMatched.Content)
+		}
+	}
+
 	missing, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: agentcontract.CapabilityWorkspaceReplace,
 		Arguments: map[string]any{
@@ -239,6 +258,49 @@ func TestWorkspaceReplaceEditsInspectedFileAndRecoversWrongPath(t *testing.T) {
 		t.Fatalf("workspace_replace mutated the base checkout: %q", baseContent)
 	}
 }
+
+func TestRefinementPreservesExistingGoTestDeclarations(t *testing.T) {
+	base, overlay := t.TempDir(), t.TempDir()
+	path := filepath.Join(base, "calculator_test.go")
+	baseContent := "package calculator\n\nfunc TestExisting(t *testing.T) {}\nfunc TestDivide(t *testing.T) {}\n"
+	if err := os.WriteFile(path, []byte(baseContent), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	editor := &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay}
+	current, err := editor.Read("calculator_test.go", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refined := "package calculator\n\nfunc TestExisting(t *testing.T) {}\n// func TestDivide(t *testing.T) {}\n"
+	if _, err := editor.Write("calculator_test.go", refined, current.Digest); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := editor.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateRefinementTestPreservation(editor, changes.Files)
+	if err == nil || !strings.Contains(err.Error(), "TestDivide") || !strings.Contains(err.Error(), "acceptance evidence") {
+		t.Fatalf("removed test declaration returned %v", err)
+	}
+
+	preserved := "package calculator\n\nfunc TestExisting(t *testing.T) {}\nfunc TestDivide(t *testing.T) { /* refined */ }\n"
+	current, err = editor.Read("calculator_test.go", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := editor.Write("calculator_test.go", preserved, current.Digest); err != nil {
+		t.Fatal(err)
+	}
+	changes, err = editor.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRefinementTestPreservation(editor, changes.Files); err != nil {
+		t.Fatalf("preserved test declaration rejected: %v", err)
+	}
+}
+
 func TestWorkspaceWriteRecoversOnlyAuthorizedInspectedPath(t *testing.T) {
 	base, overlay := t.TempDir(), t.TempDir()
 	for path, content := range map[string]string{
