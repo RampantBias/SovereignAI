@@ -2,12 +2,9 @@ package workspaceeditor
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/SovereignAI/internal/artifactcontract"
 )
 
 func TestEditorWritesOverlayWithoutMutatingBase(t *testing.T) {
@@ -36,11 +33,13 @@ func TestEditorWritesOverlayWithoutMutatingBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes.Files) != 1 || changes.Added != 1 || changes.Deleted != 1 {
+	if len(changes.Files) != 1 || changes.EvidenceDigest == "" {
 		t.Fatalf("unexpected changes: %#v", changes)
 	}
-	if _, _, err := artifactcontract.DerivePatchMetadata(changes.Patch); err != nil {
-		t.Fatalf("invalid derived patch: %v\n%s", err, changes.Patch)
+	file := changes.Files[0]
+	if file.Path != "calculator.go" || file.Action != "modify" || file.BaseDigest != current.Digest ||
+		file.ResultDigest != updated.Digest || file.ResultContent == nil || *file.ResultContent != updated.Content {
+		t.Fatalf("unexpected changed file: %#v", file)
 	}
 }
 
@@ -64,12 +63,12 @@ func TestEditorRejectsTraversalAndStaleWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	changes, err := editor.Changes()
-	if err != nil || len(changes.Files) != 0 {
+	if err != nil || len(changes.Files) != 0 || changes.EvidenceDigest != "" {
 		t.Fatalf("create/delete did not converge: %#v, %v", changes, err)
 	}
 }
 
-func TestEditorDeletionPreservesMissingNewlineMetadata(t *testing.T) {
+func TestEditorDeletionOmitsResultContent(t *testing.T) {
 	base, overlay := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(base, "old.txt"), []byte("old without newline"), 0o640); err != nil {
 		t.Fatal(err)
@@ -83,24 +82,23 @@ func TestEditorDeletionPreservesMissingNewlineMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(changes.Patch, "deleted file mode 100644\n") || !strings.Contains(changes.Patch, "+++ /dev/null\n") || !strings.Contains(changes.Patch, "\\ No newline at end of file\n") {
-		t.Fatalf("unexpected deletion patch:\n%s", changes.Patch)
+	if len(changes.Files) != 1 {
+		t.Fatalf("unexpected changes: %#v", changes)
 	}
-	if _, _, err := artifactcontract.DerivePatchMetadata(changes.Patch); err != nil {
-		t.Fatalf("invalid deletion patch: %v", err)
+	file := changes.Files[0]
+	if file.Action != "delete" || file.BaseDigest != current.Digest || file.ResultDigest != "" || file.ResultContent != nil {
+		t.Fatalf("unexpected deletion: %#v", file)
 	}
 }
 
-func TestEditorCreateAndDeletePatchesPassGitApplyCheck(t *testing.T) {
+func TestEditorCreateAndDeleteProduceSortedManifest(t *testing.T) {
 	base, overlay := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(base, "old.txt"), []byte("old\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, base, "init", "--quiet")
-	runGit(t, base, "add", "old.txt")
-
 	editor := Editor{BaseRoot: base, OverlayRoot: overlay}
-	if _, err := editor.Write("new.txt", "new\n", AbsentDigest); err != nil {
+	created, err := editor.Write("new.txt", "new\n", AbsentDigest)
+	if err != nil {
 		t.Fatal(err)
 	}
 	current, err := editor.Read("old.txt", 0)
@@ -114,13 +112,15 @@ func TestEditorCreateAndDeletePatchesPassGitApplyCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(changes.Patch, "new file mode 100644\n") || !strings.Contains(changes.Patch, "deleted file mode 100644\n") {
-		t.Fatalf("patch is missing create/delete mode metadata:\n%s", changes.Patch)
+	if len(changes.Files) != 2 || changes.Files[0].Path != "new.txt" || changes.Files[1].Path != "old.txt" {
+		t.Fatalf("manifest is not sorted: %#v", changes)
 	}
-	command := exec.Command("git", "-C", base, "apply", "--check", "--index", "-")
-	command.Stdin = strings.NewReader(changes.Patch)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("generated patch failed git apply --check --index: %v: %s\n%s", err, output, changes.Patch)
+	if changes.Files[0].Action != "add" || changes.Files[0].BaseDigest != AbsentDigest ||
+		changes.Files[0].ResultContent == nil || *changes.Files[0].ResultContent != "new\n" || changes.Files[0].ResultDigest != created.Digest {
+		t.Fatalf("unexpected addition: %#v", changes.Files[0])
+	}
+	if changes.Files[1].Action != "delete" || changes.EvidenceDigest == "" {
+		t.Fatalf("unexpected manifest: %#v", changes)
 	}
 }
 
@@ -174,23 +174,10 @@ func TestEditorPreservesExistingLineEndingsAndUsesLFForNewFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changes.Added != 3 || changes.Deleted != 1 {
-		t.Fatalf("unexpected line counts: %#v\n%s", changes, changes.Patch)
-	}
-	if !strings.Contains(changes.Patch, "-func main() {}\r\n") || !strings.Contains(changes.Patch, "+func main() {\r\n") {
-		t.Fatalf("patch did not preserve CRLF hunk content:\n%q", changes.Patch)
-	}
-	if _, _, err := artifactcontract.DerivePatchMetadata(changes.Patch); err != nil {
-		t.Fatalf("CRLF hunk patch was rejected: %v\n%q", err, changes.Patch)
+	if len(changes.Files) != 2 || changes.Files[0].ResultContent == nil || *changes.Files[0].ResultContent != "package main\n" ||
+		changes.Files[1].ResultContent == nil || *changes.Files[1].ResultContent != replaced.Content {
+		t.Fatalf("manifest did not preserve complete file content: %#v", changes)
 	}
 }
 
 func bytesEqual(first, second []byte) bool { return string(first) == string(second) }
-
-func runGit(t *testing.T, directory string, arguments ...string) {
-	t.Helper()
-	command := exec.Command("git", append([]string{"-C", directory}, arguments...)...)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("git %s failed: %v: %s", strings.Join(arguments, " "), err, output)
-	}
-}

@@ -24,25 +24,15 @@ func TestTypedCandidateThroughImageLineage(t *testing.T) {
 
 	changeRequestDigest := "sha256:" + strings.Repeat("a", 64)
 	planDigest := "sha256:" + strings.Repeat("b", 64)
-	testPatch := "diff --git a/calc_test.go b/calc_test.go\n" +
-		"new file mode 100644\n--- /dev/null\n+++ b/calc_test.go\n@@ -0,0 +1,7 @@\n" +
-		"+package calculator\n+\n+import \"testing\"\n+\n+func TestDivide(t *testing.T) {\n+\tif Divide(84, 2) != 42 { t.Fatal(\"divide failed\") }\n+}\n"
-	changePatch := "diff --git a/Dockerfile b/Dockerfile\n" +
-		"new file mode 100644\n--- /dev/null\n+++ b/Dockerfile\n@@ -0,0 +1,2 @@\n+FROM scratch\n+COPY calc /calc\n" +
-		"diff --git a/calc.go b/calc.go\nnew file mode 100644\n--- /dev/null\n+++ b/calc.go\n@@ -0,0 +1,3 @@\n" +
-		"+package calculator\n+\n+func Divide(a, b int) int { return a / b }\n" +
-		"diff --git a/go.mod b/go.mod\nnew file mode 100644\n--- /dev/null\n+++ b/go.mod\n@@ -0,0 +1,3 @@\n" +
-		"+module example.invalid/calculator\n+\n+go 1.26.2\n"
-
 	prepare := utilityInput(t, workspace, "prepare", OperationCandidatePrepare, nil, "prepared-candidate")
 	addUtilityInputArtifact(t, &prepare, "repository-revision", artifactcontract.RepositoryRevisionContract, artifactcontract.RepositoryRevision{
 		RepositoryURL: admittedURL, RequestedRevision: "main", ResolvedCommit: baseCommit,
 		UtilityOperation: artifactcontract.ObjectIdentity{Namespace: "wf", Name: "initialize", UID: "initialize-uid"},
 	})
 	addUtilityInputArtifact(t, &prepare, "test-change-set", artifactcontract.TestChangeSetContract,
-		testChangeSetForTest(t, testPatch, baseCommit, changeRequestDigest, planDigest))
+		testChangeSetForTest(baseCommit, changeRequestDigest, planDigest))
 	addUtilityInputArtifact(t, &prepare, "change-set", artifactcontract.ChangeSetContract,
-		changeSetForTest(t, changePatch, baseCommit, changeRequestDigest, planDigest))
+		changeSetForTest(baseCommit, changeRequestDigest, planDigest))
 	acceptedInputs := t.TempDir()
 	for index := range prepare.Inputs {
 		acceptedPath := filepath.Join(acceptedInputs, filepath.Base(prepare.Inputs[index].Path))
@@ -62,7 +52,7 @@ func TestTypedCandidateThroughImageLineage(t *testing.T) {
 	assertArtifactBytesEqual(t, preparedResult, preparedAgain)
 	prepared := decodeArtifact[artifactcontract.PreparedCandidate](t, preparedResult, artifactcontract.PreparedCandidateContract)
 	if prepared.TestChangeSetDigest != prepare.Inputs[1].Digest || prepared.ChangeSetDigest != prepare.Inputs[2].Digest {
-		t.Fatalf("prepared candidate did not bind both patches: %#v", prepared)
+		t.Fatalf("prepared candidate did not bind both changed-file manifests: %#v", prepared)
 	}
 
 	testInput := utilityInput(t, workspace, "test", OperationTestRun, map[string]string{
@@ -126,26 +116,35 @@ func TestCandidateRevisionStateReportsFailedTestOutcome(t *testing.T) {
 	}
 }
 
-func testChangeSetForTest(t *testing.T, patch, base, changeRequestDigest, planDigest string) artifactcontract.TestChangeSet {
-	t.Helper()
-	files, counts, err := artifactcontract.DerivePatchMetadata(patch)
-	if err != nil {
-		t.Fatal(err)
+func testChangeSetForTest(base, changeRequestDigest, planDigest string) artifactcontract.TestChangeSet {
+	content := "package calculator\n\nimport \"testing\"\n\nfunc TestDivide(t *testing.T) {\n\tif Divide(84, 2) != 42 { t.Fatal(\"divide failed\") }\n}\n"
+	return artifactcontract.TestChangeSet{
+		Summary: "add divide test", BaseCommit: base,
+		ChangeRequestDigest: changeRequestDigest, ImplementationPlanDigest: planDigest,
+		Files: []artifactcontract.ChangedFile{addedFile("calc_test.go", content)},
 	}
-	return artifactcontract.TestChangeSet{Format: "unified-diff", Summary: "add divide test", BaseCommit: base,
-		ChangeRequestDigest: changeRequestDigest, ImplementationPlanDigest: planDigest, Patch: patch,
-		PatchDigest: artifactcontract.DigestBytes([]byte(patch)), Files: files, ByteCount: len([]byte(patch)), LineCounts: counts}
 }
 
-func changeSetForTest(t *testing.T, patch, base, changeRequestDigest, planDigest string) artifactcontract.ChangeSet {
-	t.Helper()
-	files, counts, err := artifactcontract.DerivePatchMetadata(patch)
-	if err != nil {
-		t.Fatal(err)
+func changeSetForTest(base, changeRequestDigest, planDigest string) artifactcontract.ChangeSet {
+	dockerfile := "FROM scratch\nCOPY calc /calc\n"
+	calculator := "package calculator\n\nfunc Divide(a, b int) int { return a / b }\n"
+	module := "module example.invalid/calculator\n\ngo 1.26.2\n"
+	return artifactcontract.ChangeSet{
+		Summary: "implement divide", BaseCommit: base,
+		ChangeRequestDigest: changeRequestDigest, ImplementationPlanDigest: planDigest,
+		Files: []artifactcontract.ChangedFile{
+			addedFile("Dockerfile", dockerfile),
+			addedFile("calc.go", calculator),
+			addedFile("go.mod", module),
+		},
 	}
-	return artifactcontract.ChangeSet{Format: "unified-diff", Summary: "implement divide", BaseCommit: base,
-		ChangeRequestDigest: changeRequestDigest, ImplementationPlanDigest: planDigest, Patch: patch,
-		PatchDigest: artifactcontract.DigestBytes([]byte(patch)), Files: files, ByteCount: len([]byte(patch)), LineCounts: counts}
+}
+
+func addedFile(path, content string) artifactcontract.ChangedFile {
+	return artifactcontract.ChangedFile{
+		Path: path, Action: "add", BaseDigest: "absent",
+		ResultDigest: artifactcontract.DigestBytes([]byte(content)), ResultContent: &content,
+	}
 }
 
 func addResultArtifactInput(t *testing.T, input *utilitycontract.Input, name, contract string, result utilitycontract.Result) {

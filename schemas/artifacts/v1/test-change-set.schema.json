@@ -4,31 +4,32 @@
   "title": "test-change-set/v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["format", "summary", "baseCommit", "changeRequestDigest", "implementationPlanDigest", "patch", "patchDigest", "files", "byteCount", "lineCounts"],
+  "required": ["summary", "baseCommit", "changeRequestDigest", "implementationPlanDigest", "files"],
   "properties": {
-    "format": {"const": "unified-diff"},
     "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
     "baseCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
     "changeRequestDigest": {"$ref": "common.schema.json#/$defs/Digest"},
     "implementationPlanDigest": {"$ref": "common.schema.json#/$defs/Digest"},
-    "patch": {"type": "string", "minLength": 1, "maxLength": 262144},
-    "patchDigest": {"$ref": "common.schema.json#/$defs/Digest"},
-    "files": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 128,
-      "uniqueItems": true,
-      "items": {"$ref": "common.schema.json#/$defs/RepositoryRelativePath"}
-    },
-    "byteCount": {"type": "integer", "minimum": 1, "maximum": 262144},
-    "lineCounts": {
+    "files": {"title": "Changed Files", "type": "array", "minItems": 1, "maxItems": 128, "items": {"$ref": "#/$defs/ChangedFile"}}
+  },
+  "$defs": {
+    "ChangedFile": {
+      "title": "Changed File",
       "type": "object",
       "additionalProperties": false,
-      "required": ["added", "deleted"],
+      "required": ["path", "action", "baseDigest"],
       "properties": {
-        "added": {"type": "integer", "minimum": 0},
-        "deleted": {"type": "integer", "minimum": 0}
-      }
+        "path": {"$ref": "common.schema.json#/$defs/RepositoryRelativePath"},
+        "action": {"type": "string", "enum": ["add", "modify", "delete"]},
+        "baseDigest": {"oneOf": [{"const": "absent"}, {"$ref": "common.schema.json#/$defs/Digest"}]},
+        "resultDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+        "resultContent": {"type": "string", "maxLength": 262144}
+      },
+      "allOf": [
+        {"if": {"properties": {"action": {"const": "add"}}}, "then": {"properties": {"baseDigest": {"const": "absent"}}, "required": ["resultDigest", "resultContent"]}},
+        {"if": {"properties": {"action": {"const": "modify"}}}, "then": {"properties": {"baseDigest": {"$ref": "common.schema.json#/$defs/Digest"}}, "required": ["resultDigest", "resultContent"]}},
+        {"if": {"properties": {"action": {"const": "delete"}}}, "then": {"properties": {"baseDigest": {"$ref": "common.schema.json#/$defs/Digest"}}, "not": {"anyOf": [{"required": ["resultDigest"]}, {"required": ["resultContent"]}]}}}
+      ]
     }
   }
 }

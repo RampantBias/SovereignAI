@@ -12,9 +12,11 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/SovereignAI/internal/filemanifest"
 )
 
-const AbsentDigest = "absent"
+const AbsentDigest = filemanifest.AbsentDigest
 const defaultMaxFileBytes = int64(256 << 10)
 
 type Editor struct {
@@ -37,13 +39,11 @@ type SearchMatch struct {
 	Text string `json:"text"`
 }
 
+type ChangedFile = filemanifest.File
+
 type Changes struct {
-	Patch       string   `json:"patch"`
-	PatchDigest string   `json:"patchDigest"`
-	Files       []string `json:"files"`
-	ByteCount   int      `json:"byteCount"`
-	Added       int      `json:"added"`
-	Deleted     int      `json:"deleted"`
+	Files          []ChangedFile `json:"files"`
+	EvidenceDigest string        `json:"evidenceDigest,omitempty"`
 }
 
 type TreeListing struct {
@@ -262,16 +262,16 @@ func (e Editor) Changes() (Changes, error) {
 		return Changes{}, err
 	}
 	for _, marker := range markers {
-		if marker.IsDir() || marker.Type()&os.ModeSymlink != 0 {
-			return Changes{}, fmt.Errorf("invalid deletion marker %q", marker.Name())
+		if marker.IsDir() {
+			continue
 		}
-		data, err := os.ReadFile(filepath.Join(e.tombstonesRoot(), marker.Name()))
+		content, err := os.ReadFile(filepath.Join(e.tombstonesRoot(), marker.Name()))
 		if err != nil {
 			return Changes{}, err
 		}
-		path, err := normalizePath(strings.TrimSuffix(string(data), "\n"))
-		if err != nil {
-			return Changes{}, err
+		path := strings.TrimSuffix(string(content), "\n")
+		if _, err := normalizePath(path); err != nil {
+			return Changes{}, fmt.Errorf("invalid deletion marker: %w", err)
 		}
 		changed[path] = struct{}{}
 	}
@@ -280,8 +280,8 @@ func (e Editor) Changes() (Changes, error) {
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	var patch strings.Builder
-	var files []string
+
+	files := make([]ChangedFile, 0, len(paths))
 	for _, path := range paths {
 		oldContent, oldExists, err := e.readAt(e.BaseRoot, path, e.limit(0))
 		if err != nil {
@@ -299,20 +299,35 @@ func (e Editor) Changes() (Changes, error) {
 		if oldExists == newExists && bytes.Equal(oldContent, newContent) {
 			continue
 		}
-		filePatch, err := unifiedFileDiff(path, oldContent, oldExists, newContent, newExists)
+
+		file := ChangedFile{Path: path, BaseDigest: AbsentDigest}
+		if oldExists {
+			file.BaseDigest = digest(oldContent)
+		}
+		switch {
+		case !oldExists && newExists:
+			file.Action = "add"
+		case oldExists && newExists:
+			file.Action = "modify"
+		case oldExists && !newExists:
+			file.Action = "delete"
+		default:
+			continue
+		}
+		if newExists {
+			resultContent := string(newContent)
+			file.ResultContent = &resultContent
+			file.ResultDigest = digest(newContent)
+		}
+		files = append(files, file)
+	}
+	result := Changes{Files: files}
+	if len(files) != 0 {
+		evidenceDigest, err := filemanifest.Digest(files)
 		if err != nil {
 			return Changes{}, err
 		}
-		if filePatch != "" {
-			patch.WriteString(filePatch)
-			files = append(files, path)
-		}
-	}
-	result := Changes{Patch: patch.String(), Files: files}
-	if result.Patch != "" {
-		result.PatchDigest = digest([]byte(result.Patch))
-		result.ByteCount = len([]byte(result.Patch))
-		result.Added, result.Deleted = countPatchLines(result.Patch)
+		result.EvidenceDigest = evidenceDigest
 	}
 	return result, nil
 }
@@ -551,21 +566,4 @@ func digest(content []byte) string {
 
 func staleError(path, expected, current string) error {
 	return fmt.Errorf("stale file digest for %q: expected %s, current %s", path, expected, current)
-}
-
-func countPatchLines(patch string) (added, deleted int) {
-	inHunk := false
-	for _, line := range strings.Split(patch, "\n") {
-		switch {
-		case strings.HasPrefix(line, "@@ "):
-			inHunk = true
-		case strings.HasPrefix(line, "diff --git "):
-			inHunk = false
-		case inHunk && strings.HasPrefix(line, "+"):
-			added++
-		case inHunk && strings.HasPrefix(line, "-"):
-			deleted++
-		}
-	}
-	return added, deleted
 }

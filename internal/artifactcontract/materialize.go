@@ -8,7 +8,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/SovereignAI/internal/contractschema"
 	generationschemas "github.com/SovereignAI/schemas/generation/v1"
@@ -17,21 +16,15 @@ import (
 const (
 	MaterializationCandidate MaterializationKind = "candidate"
 	MaterializationWorkspace MaterializationKind = "workspace"
-
-	MinimumCandidatePatchLines     = 5
-	MaximumCandidatePatchLines     = 256
-	MaximumCandidatePatchLineBytes = 4 << 10
 )
 
 var candidateSchemaFiles = map[string]string{
 	ImplementationPlanContract: "implementation-plan.schema.json",
-	TestChangeSetContract:      "change-set.schema.json",
-	ChangeSetContract:          "change-set.schema.json",
 }
 
 // MaterializationKind identifies the durable evidence an agent must create.
 // Candidate evidence is a structured domain document. Workspace evidence is
-// the trusted diff derived from the attempt overlay.
+// the trusted changed-file manifest derived from the attempt overlay.
 type MaterializationKind string
 
 // SourceArtifact is immutable accepted input used to derive authoritative
@@ -43,12 +36,12 @@ type SourceArtifact struct {
 }
 
 // MaterializationEvidence is the complete trusted input to one materializer.
-// Candidate is model-authored evidence. Summary and Patch are runtime-derived
+// Candidate is model-authored evidence. Summary and Files are runtime-derived
 // workspace evidence. A binding accepts only the evidence kind it declares.
 type MaterializationEvidence struct {
 	Candidate              []byte
 	Summary                string
-	Patch                  string
+	Files                  []ChangedFile
 	Sources                []SourceArtifact
 	WorkspacePaths         []string
 	WorkspacePathsObserved bool
@@ -108,14 +101,9 @@ func NewMaterializerRegistry() (*MaterializerRegistry, error) {
 		return nil, err
 	}
 	for _, contract := range []string{TestChangeSetContract, ChangeSetContract} {
-		name, version, _ := strings.Cut(contract, "/")
-		schema, err := schemas.Lookup(name, version)
-		if err != nil {
-			return nil, err
-		}
 		contract := contract
 		if err := registry.Register(NewMaterializer(
-			contract, MaterializationWorkspace, schema,
+			contract, MaterializationWorkspace, contractschema.Definition{},
 			func(evidence MaterializationEvidence) ([]byte, error) {
 				return materializeChangeSet(contract, evidence)
 			},
@@ -166,12 +154,15 @@ func (m Materializer) Materialize(evidence MaterializationEvidence) ([]byte, err
 		if len(evidence.Candidate) == 0 {
 			return nil, fmt.Errorf("%s candidate evidence is required", m.Contract)
 		}
-		if evidence.Patch != "" {
-			return nil, fmt.Errorf("%s does not accept workspace patch evidence", m.Contract)
+		if len(evidence.Files) != 0 {
+			return nil, fmt.Errorf("%s does not accept workspace file evidence", m.Contract)
 		}
 	case MaterializationWorkspace:
-		if len(evidence.Candidate) == 0 && strings.TrimSpace(evidence.Patch) == "" {
-			return nil, fmt.Errorf("%s workspace patch evidence is required", m.Contract)
+		if len(evidence.Candidate) != 0 {
+			return nil, fmt.Errorf("%s does not accept candidate evidence", m.Contract)
+		}
+		if len(evidence.Files) == 0 {
+			return nil, fmt.Errorf("%s workspace file evidence is required", m.Contract)
 		}
 	default:
 		return nil, fmt.Errorf("materializer %q has invalid kind %q", m.Contract, m.Kind)
@@ -216,20 +207,6 @@ func materializeImplementationPlan(evidence MaterializationEvidence) ([]byte, er
 }
 
 func materializeChangeSet(contract string, evidence MaterializationEvidence) ([]byte, error) {
-	if len(evidence.Candidate) != 0 {
-		var candidate struct {
-			Summary    string   `json:"summary"`
-			PatchLines []string `json:"patchLines"`
-		}
-		if err := decodeCandidate(evidence.Candidate, &candidate); err != nil {
-			return nil, err
-		}
-		patch, err := JoinCandidatePatchLines(candidate.PatchLines)
-		if err != nil {
-			return nil, err
-		}
-		evidence.Summary, evidence.Patch = candidate.Summary, patch
-	}
 	if strings.TrimSpace(evidence.Summary) == "" {
 		return nil, fmt.Errorf("summary is required")
 	}
@@ -245,39 +222,17 @@ func materializeChangeSet(contract string, evidence MaterializationEvidence) ([]
 	if err != nil {
 		return nil, err
 	}
-	files, lineCounts, err := DerivePatchMetadata(evidence.Patch)
-	if err != nil {
-		return nil, err
-	}
-	patchBytes := []byte(evidence.Patch)
-	return marshalMaterializedArtifact(contract, ChangeSet{
-		Format: "unified-diff", Summary: evidence.Summary, BaseCommit: revision.ResolvedCommit,
+	files := append([]ChangedFile(nil), evidence.Files...)
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	changeSet := ChangeSet{
+		Summary: evidence.Summary, BaseCommit: revision.ResolvedCommit,
 		ChangeRequestDigest: changeRequest.Digest, ImplementationPlanDigest: plan.Digest,
-		Patch: evidence.Patch, PatchDigest: DigestBytes(patchBytes), Files: files,
-		ByteCount: len(patchBytes), LineCounts: lineCounts,
-	})
-}
-
-func JoinCandidatePatchLines(lines []string) (string, error) {
-	if len(lines) < MinimumCandidatePatchLines || len(lines) > MaximumCandidatePatchLines {
-		return "", fmt.Errorf("patchLines must contain %d through %d entries", MinimumCandidatePatchLines, MaximumCandidatePatchLines)
+		Files: files,
 	}
-	for index, line := range lines {
-		if line == "" {
-			return "", fmt.Errorf("patchLines[%d] must not be empty", index)
-		}
-		if len([]byte(line)) > MaximumCandidatePatchLineBytes {
-			return "", fmt.Errorf("patchLines[%d] exceeds %d bytes", index, MaximumCandidatePatchLineBytes)
-		}
-		if !utf8.ValidString(line) || strings.ContainsAny(line, "\r\n\x00") {
-			return "", fmt.Errorf("patchLines[%d] must be one UTF-8 line with no CR, LF, or NUL", index)
-		}
+	if contract == TestChangeSetContract {
+		return marshalMaterializedArtifact(contract, TestChangeSet(changeSet))
 	}
-	patch := strings.Join(lines, "\n") + "\n"
-	if len([]byte(patch)) > MaxPatchBytes {
-		return "", fmt.Errorf("joined patch exceeds %d bytes", MaxPatchBytes)
-	}
-	return patch, nil
+	return marshalMaterializedArtifact(contract, changeSet)
 }
 
 func materializationRepositoryRevision(sources []SourceArtifact) (SourceArtifact, RepositoryRevision, error) {
@@ -399,11 +354,8 @@ func DiagnoseMaterialization(err error) RejectionDiagnostic {
 		code = "InvalidRepositoryPath"
 	case strings.Contains(message, "decode candidate"):
 		code = "CandidateSchemaViolation"
-	case strings.Contains(message, "patchLines"):
-		code = "InvalidPatchLines"
-	case strings.Contains(message, "patch line") || strings.Contains(message, "unified diff") || strings.Contains(message, "patch has") ||
-		strings.Contains(message, "patch contains") || strings.Contains(message, "patch is missing") || strings.Contains(message, "patch must"):
-		code = "InvalidUnifiedDiff"
+	case strings.Contains(message, "changed file") || strings.Contains(message, "resultContent") || strings.Contains(message, "resultDigest") || strings.Contains(message, "baseDigest"):
+		code = "InvalidChangedFile"
 	}
 	return RejectionDiagnostic{Code: code, Message: message}
 }
