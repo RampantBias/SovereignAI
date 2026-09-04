@@ -235,6 +235,53 @@ func TestUtilityOperationScopesRegistryCredentialToUtilityContainer(t *testing.T
 	}
 }
 
+func TestUtilityOperationBuildWithoutRegistryCredential(t *testing.T) {
+	scheme := attemptScheme(t)
+	workflow := workflowFixture()
+	project := projectFixture()
+	project.Spec.Validation.ImageName = "registry.example.test/app"
+	project.Spec.BuildJob.CredentialRef = v1alpha1.NamespacedReference{}
+	attempt := authorizedAttempt("build-001", "wf", "build", v1alpha1.ExecutionKindUtility)
+	operation := &v1alpha1.UtilityOperation{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-001", Namespace: "wf", UID: "operation-uid"},
+		Spec: v1alpha1.UtilityOperationSpec{AttemptRef: "build-001", WorkflowRef: workflowRef(workflow), StepName: "build", Attempt: 1,
+			Operation: v1alpha1.UtilityOperationRequest{Name: "build.image"}},
+		Status: v1alpha1.UtilityOperationStatus{Phase: v1alpha1.PhasePending},
+	}
+	ownByAttempt(operation, attempt)
+	client := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.UtilityOperation{}).
+		WithObjects(workflow, workspaceLeaseFixture(), project, attempt, operation).Build()
+	reconciler := &UtilityOperationReconciler{Client: client, Scheme: scheme, Policy: allowPolicy{}}
+	if _, err := reconciler.Reconcile(context.Background(), requestFor(operation)); err != nil {
+		t.Fatal(err)
+	}
+	var credential corev1.Secret
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: operation.Namespace, Name: operation.Name + "-credential"}, &credential); err == nil {
+		t.Fatal("anonymous build unexpectedly received an operation-scoped credential")
+	}
+	var job batchv1.Job
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: operation.Namespace, Name: operation.Name}, &job); err != nil {
+		t.Fatal(err)
+	}
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.Name == "operation-credential" {
+			t.Fatal("anonymous build unexpectedly received a credential volume")
+		}
+	}
+	main := job.Spec.Template.Spec.Containers[0]
+	for _, mount := range main.VolumeMounts {
+		if mount.Name == "operation-credential" {
+			t.Fatal("anonymous build unexpectedly received a credential mount")
+		}
+	}
+	for _, env := range main.Env {
+		if env.Name == "DOCKER_CONFIG" {
+			t.Fatal("anonymous build unexpectedly received DOCKER_CONFIG")
+		}
+	}
+}
+
 func TestUtilityOperationScopesRepositoryCredentialToHTTPSGit(t *testing.T) {
 	scheme := attemptScheme(t)
 	workflow := workflowFixture()

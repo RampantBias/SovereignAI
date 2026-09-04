@@ -54,7 +54,6 @@ decision := {"allowed": true, "reasons": [], "evict": []} if {
   input.operation == "utility.execute"
   input.request.operation == "build.image"
   input.request.credentialClass == "registry"
-  input.request.hasCredential
   input.request.parameters.imageName != ""
 }
 

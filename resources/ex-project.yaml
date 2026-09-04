@@ -33,6 +33,3 @@ spec:
       - type=image,name=registry.internal/sovereign/calculator,push=true
       - --metadata-file
       - /workspace/image-metadata.json
-    credentialRef:
-      namespace: sovereign-orchestrator-system
-      name: sovereign-ai-registry

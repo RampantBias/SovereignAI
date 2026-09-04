@@ -212,7 +212,7 @@ func ValidateSovereignProjectSpec(project *v1alpha1.SovereignProject) field.Erro
 		validateJobTemplate(
 			project.Spec.BuildJob,
 			specPath.Child("buildJob"),
-			credentialRequired,
+			credentialOptional,
 		)...,
 	)
 	errors = append(

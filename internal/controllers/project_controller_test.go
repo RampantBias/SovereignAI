@@ -134,6 +134,29 @@ func TestProjectProvisioningLifecycle(t *testing.T) {
 	}
 }
 
+func TestProjectBuildRegistryCredentialIsOptionalButMustBeComplete(t *testing.T) {
+	tests := []struct {
+		name        string
+		credential  v1alpha1.NamespacedReference
+		wantInvalid bool
+	}{
+		{name: "anonymous registry"},
+		{name: "authenticated registry", credential: v1alpha1.NamespacedReference{Namespace: "credentials", Name: "registry"}},
+		{name: "missing namespace", credential: v1alpha1.NamespacedReference{Name: "registry"}, wantInvalid: true},
+		{name: "missing name", credential: v1alpha1.NamespacedReference{Namespace: "credentials"}, wantInvalid: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			project := validProjectFixture(t)
+			project.Spec.BuildJob.CredentialRef = test.credential
+			problems := ValidateSovereignProjectSpec(project)
+			if (len(problems) != 0) != test.wantInvalid {
+				t.Fatalf("validation problems = %v, want invalid = %v", problems, test.wantInvalid)
+			}
+		})
+	}
+}
+
 func TestProjectInvalidConfigurationNeverProvisions(t *testing.T) {
 	project := validProjectFixture(t)
 	// The existing gRPC CreateProject path also uses main and omits these fields.
