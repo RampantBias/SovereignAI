@@ -352,7 +352,7 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 		})
 	}
 	if allowed(agentcontract.CapabilityWorkspaceSearch) {
-		mcp.AddTool(server, &mcp.Tool{Name: agentcontract.CapabilityWorkspaceSearch, Description: "Search the overlay-aware workspace"}, func(_ context.Context, _ *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: agentcontract.CapabilityWorkspaceSearch, Description: "Search text content inside existing workspace files; this does not search filenames, so use workspace_tree to discover paths"}, func(_ context.Context, _ *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
 			matches, err := editor.Search(input.Path, input.Query, input.MaxResults)
 			return nil, SearchOutput{Matches: fromEditorMatches(matches), Revision: repository.Revision}, err
 		})
@@ -372,7 +372,7 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 					return nil, WriteOutput{}, err
 				}
 				if !exists {
-					return nil, WriteOutput{}, fmt.Errorf("workspace path %q does not exist; Use workspace_search to find the correct path; workspace_write cannot create file: ", input.Path)
+					return nil, WriteOutput{}, state.missingPathError(input.Path, agentcontract.CapabilityWorkspaceWrite)
 				}
 				if err := state.requireUpdate(currentPath); err != nil {
 					return nil, WriteOutput{}, err
@@ -396,7 +396,7 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 		)
 	}
 	if allowed(agentcontract.CapabilityWorkspaceCreate) {
-		mcp.AddTool(server, &mcp.Tool{Name: agentcontract.CapabilityWorkspaceCreate, Description: "Create a new UTF-8 file only at a path explicitly authorized by the implementation plan"}, func(_ context.Context, _ *mcp.CallToolRequest, input WriteInput) (*mcp.CallToolResult, workspaceeditor.File, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: agentcontract.CapabilityWorkspaceCreate, Description: "Create an absent UTF-8 file at an exact action:add path after workspace_tree; workspace_read is not required for an absent path"}, func(_ context.Context, _ *mcp.CallToolRequest, input WriteInput) (*mcp.CallToolResult, workspaceeditor.File, error) {
 			expected, currentPath, exists, err := trustedWorkspaceDigest(editor, input.Path)
 			if err != nil {
 				return nil, workspaceeditor.File{}, err
@@ -419,33 +419,37 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 	}
 	if allowed(agentcontract.CapabilityWorkspaceReplace) {
 		mcp.AddTool(server, &mcp.Tool{
-			Name:        agentcontract.CapabilityWorkspaceReplace,
-			Description: "Replace exact text in an inspected workspace file"}, func(_ context.Context, _ *mcp.CallToolRequest, input ReplaceInput) (*mcp.CallToolResult, WriteOutput, error) {
-			expected, currentPath, exists, err := trustedWorkspaceDigest(editor, input.Path)
-			if err != nil {
-				return nil, WriteOutput{}, err
-			}
-			if !exists {
-				return nil, WriteOutput{}, state.missingPathError(input.Path, agentcontract.CapabilityWorkspaceReplace)
-			}
-			if err := state.requireUpdate(currentPath); err != nil {
-				return nil, WriteOutput{}, err
-			}
-			if err := policy.ValidateUpdate(currentPath); err != nil {
-				return nil, WriteOutput{}, err
-			}
-			file, err := editor.Replace(input.Path, input.OldText, input.NewText, expected, input.ExpectedOccurrences)
-			if err != nil {
-				return nil, WriteOutput{}, err
-			}
-			state.recordRead(file.Path)
-			return nil, WriteOutput{
-				Path:      file.Path,
-				Digest:    file.Digest,
-				ByteCount: len([]byte(file.Content)),
-				Changed:   file.Digest != expected,
-			}, err
-		})
+			Name: agentcontract.CapabilityWorkspaceReplace,
+			Description: "Replace exact text in an inspected workspace file. " +
+				"oldText must be a nonempty exact snippet that occurs once. " +
+				"For insertion, select a unique existing anchor and include that anchor in newText. " +
+				"Use workspace_write for a complete-file rewrite."},
+			func(_ context.Context, _ *mcp.CallToolRequest, input ReplaceInput) (*mcp.CallToolResult, WriteOutput, error) {
+				expected, currentPath, exists, err := trustedWorkspaceDigest(editor, input.Path)
+				if err != nil {
+					return nil, WriteOutput{}, err
+				}
+				if !exists {
+					return nil, WriteOutput{}, state.missingPathError(input.Path, agentcontract.CapabilityWorkspaceReplace)
+				}
+				if err := state.requireUpdate(currentPath); err != nil {
+					return nil, WriteOutput{}, err
+				}
+				if err := policy.ValidateUpdate(currentPath); err != nil {
+					return nil, WriteOutput{}, err
+				}
+				file, err := editor.Replace(input.Path, input.OldText, input.NewText, expected, input.ExpectedOccurrences)
+				if err != nil {
+					return nil, WriteOutput{}, err
+				}
+				state.recordRead(file.Path)
+				return nil, WriteOutput{
+					Path:      file.Path,
+					Digest:    file.Digest,
+					ByteCount: len([]byte(file.Content)),
+					Changed:   file.Digest != expected,
+				}, err
+			})
 	}
 	if allowed(agentcontract.CapabilityWorkspaceDelete) {
 		mcp.AddTool(server, &mcp.Tool{Name: agentcontract.CapabilityWorkspaceDelete, Description: "Delete an inspected workspace file"}, func(_ context.Context, _ *mcp.CallToolRequest, input DeleteInput) (*mcp.CallToolResult, DeleteOutput, error) {

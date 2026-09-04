@@ -180,7 +180,8 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 		if errors.As(err, &rejection) {
 			return writeGenerationRejection(resultPath, rejection.diagnostic.Code, rejection.diagnostic.Message)
 		}
-		return fmt.Errorf("generate artifact: %w", err)
+		diagnostic := diagnoseGenerationFailure(err)
+		return writeGenerationRejection(resultPath, diagnostic.Code, diagnostic.Message)
 	}
 	artifact, err := writeArtifact(input.StagingPath, output, outcome.Content)
 	if err != nil {
@@ -233,7 +234,6 @@ func generateWithMCP(
 	candidateReady := false
 	workspaceInspected := false
 	workspaceDirty := false
-	retryTool := ""
 	tracker := toolCallTracker{counts: map[string]int{}}
 	for round := 0; round < maxToolRounds; round++ {
 		evidenceReady := candidateReady
@@ -241,15 +241,7 @@ func generateWithMCP(
 			evidenceReady = workspaceDirty
 		}
 		roundTools := toolsForEvidenceState(tools, materializer.Kind, evidenceReady)
-		if materializer.Kind == artifactcontract.MaterializationWorkspace && !workspaceInspected {
-			roundTools = toolsExceptNames(
-				roundTools,
-				agentcontract.CapabilityWorkspaceWrite,
-				agentcontract.CapabilityWorkspaceCreate,
-				agentcontract.CapabilityWorkspaceReplace,
-				agentcontract.CapabilityWorkspaceDelete,
-			)
-		}
+		roundTools = toolsForWorkspaceInspectionState(roundTools, materializer.Kind, workspaceInspected)
 		toolChoice := inference.ToolChoice{Mode: inference.ToolChoiceRequired}
 		requiredTool := ""
 		if round == 0 {
@@ -257,10 +249,7 @@ func generateWithMCP(
 		} else if materializer.Kind == artifactcontract.MaterializationCandidate && candidateReady {
 			requiredTool = agentcontract.CapabilityAgentComplete
 			roundTools = toolsNamed(tools, requiredTool)
-		} else if retryTool != "" {
-			requiredTool = retryTool
-			roundTools = toolsNamed(tools, requiredTool)
-			retryTool = ""
+
 		}
 		if requiredTool != "" {
 			toolChoice = inference.ToolChoice{Mode: inference.ToolChoiceNamed, FunctionName: requiredTool}
@@ -279,6 +268,9 @@ func generateWithMCP(
 		logInference(response)
 		if len(response.ToolCalls) == 0 {
 			logGenerationContent("ignored terminal chat content", response.FinishReason, response.Content)
+			if response.FinishReason == "length" {
+				return generationOutcome{}, fmt.Errorf("model response reached the output token limit before producing a valid tool call")
+			}
 			return generationOutcome{}, fmt.Errorf("agent stopped without calling %s", agentcontract.CapabilityAgentComplete)
 		}
 		if requiredTool != "" && (len(response.ToolCalls) != 1 ||
@@ -314,9 +306,7 @@ func generateWithMCP(
 			if err := tracker.observe(call.Function.Name, canonicalArguments, resultText, result.IsError); err != nil {
 				return generationOutcome{}, err
 			}
-			if result.IsError && isWorkspaceMutation(call.Function.Name) {
-				retryTool = call.Function.Name
-			}
+
 			messages = append(messages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: resultText})
 			if materializer.Kind == artifactcontract.MaterializationWorkspace &&
 				call.Function.Name == agentcontract.CapabilityWorkspaceRead && !result.IsError {
@@ -414,6 +404,22 @@ func toolsForEvidenceState(
 	return tools
 }
 
+func toolsForWorkspaceInspectionState(
+	tools []inference.ToolDefinition,
+	kind artifactcontract.MaterializationKind,
+	workspaceInspected bool,
+) []inference.ToolDefinition {
+	if kind != artifactcontract.MaterializationWorkspace || workspaceInspected {
+		return tools
+	}
+	return toolsExceptNames(
+		tools,
+		agentcontract.CapabilityWorkspaceWrite,
+		agentcontract.CapabilityWorkspaceReplace,
+		agentcontract.CapabilityWorkspaceDelete,
+	)
+}
+
 func isWorkspaceMutation(name string) bool {
 	switch name {
 	case agentcontract.CapabilityWorkspaceWrite,
@@ -492,7 +498,11 @@ func (tracker *toolCallTracker) observe(name string, arguments []byte, result st
 		fmt.Sprint(isError) + "\x00" + artifactcontract.DigestBytes([]byte(result))
 	tracker.counts[signature]++
 	if tracker.counts[signature] >= maxUnchangedCalls {
-		return fmt.Errorf("agent repeated unchanged MCP tool call %q %d times", name, tracker.counts[signature])
+		lastResult := boundedRunes(agentcontract.SanitizeRetryFeedbackMessage(result), 512, true)
+		if lastResult == "" {
+			lastResult = "empty result"
+		}
+		return fmt.Errorf("agent repeated unchanged MCP tool call %q %d times; last result: %s", name, tracker.counts[signature], lastResult)
 	}
 	return nil
 }
@@ -615,6 +625,33 @@ func writeGenerationRejection(resultPath, code, message string) error {
 	return nil
 }
 
+func diagnoseGenerationFailure(err error) agentcontract.ResultError {
+	message := agentcontract.SanitizeRetryFeedbackMessage(err.Error())
+	code := "GenerationFailed"
+	switch {
+	case strings.Contains(message, "output token limit"):
+		code = "GenerationLength"
+	case strings.Contains(message, "repeated unchanged MCP tool call"):
+		code = "RepeatedToolCall"
+	case strings.Contains(message, "tool loop exceeded"):
+		code = "ToolLoopExhausted"
+	case strings.Contains(message, "invalid inference tool call"),
+		strings.Contains(message, "model requested unavailable tool"),
+		strings.Contains(message, "decode arguments for"),
+		strings.Contains(message, "must call only"),
+		strings.Contains(message, "must be the final tool call"):
+		code = "InvalidToolCall"
+	case strings.Contains(message, "inference tool round"):
+		code = "InferenceFailed"
+	case strings.Contains(message, "MCP sidecar"),
+		strings.Contains(message, "MCP tool"),
+		strings.Contains(message, "workspace state"),
+		strings.Contains(message, "workspace changes"):
+		code = "MCPFailed"
+	}
+	return agentcontract.ResultError{Code: code, Message: message}
+}
+
 func loadArtifacts(input agentcontract.Input) ([]loadedArtifact, error) {
 	artifacts := make([]loadedArtifact, 0, len(input.Inputs))
 
@@ -735,7 +772,7 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact) (st
 
 	contract := input.Outputs[0].Name + "/" + input.Outputs[0].Version
 	output := &agentcontext.Output{Contract: contract, MediaType: input.Outputs[0].MediaType}
-	actions := []string{"Your first action must inspect the repository root with workspace_tree. Then use workspace_read or workspace_search for relevant files."}
+	actions := []string{"Your first action must inspect the repository root with workspace_tree. Use its exact paths for later calls. workspace_search searches file contents, not filenames."}
 	switch materializer.Kind {
 	case artifactcontract.MaterializationCandidate:
 		output.Guidance = []string{"The runtime materializes and validates the authoritative contract from durable MCP evidence; do not invent provenance or integrity fields."}
@@ -747,10 +784,10 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact) (st
 		output.Guidance = []string{"The runtime materializes and validates the authoritative contract from the complete files changed through workspace tools."}
 		actions = append(actions,
 			"Create the requested result with the authorized workspace mutation capabilities listed above. Trusted runtime code records complete changed files and manages mutation digests and line-ending normalization.",
-			"workspace_write updates an existing path only: copy the exact path from workspace_tree and successfully call workspace_read first.",
+			"For an existing file, copy its exact path from workspace_tree and successfully call workspace_read before workspace_write, workspace_replace, or workspace_delete.",
 		)
 		if hasCapability(input.Capabilities, agentcontract.CapabilityWorkspaceCreate) {
-			actions = append(actions, "workspace_create creates an absent path only when an implementation-plan affectedPaths entry authorizes that exact path with action add.")
+			actions = append(actions, "workspace_create creates an absent path only when an implementation-plan affectedPaths entry authorizes that exact path with action add. After workspace_tree, call workspace_create directly for that absent path; workspace_read is not required and cannot succeed for it.")
 		}
 	default:
 		return "", fmt.Errorf("unsupported materialization kind %q", materializer.Kind)

@@ -164,8 +164,16 @@ func TestWorkflowRetryContextReachesInferenceAcrossToolRounds(t *testing.T) {
 	if err := os.WriteFile(inputPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = run(context.Background(), inputPath, input.ResultPath)
-	if err == nil || !strings.Contains(err.Error(), "context capture complete") || rounds.Load() != 2 || inspections.Load() != 1 {
-		t.Fatalf("did not capture both inference rounds and workspace inspection: rounds=%d, inspections=%d, err=%v", rounds.Load(), inspections.Load(), err)
+	if err := run(context.Background(), inputPath, input.ResultPath); err != nil {
+		t.Fatalf("run did not publish the generation failure: %v", err)
+	}
+	result, err := agentcontract.ReadResult(input.ResultPath, input.StagingPath)
+	if err != nil {
+		t.Fatalf("read structured generation failure: %v", err)
+	}
+	if result.Outcome != "Failed" || result.Error == nil || result.Error.Code != "InferenceFailed" ||
+		!strings.Contains(result.Error.Message, "context capture complete") ||
+		rounds.Load() != 2 || inspections.Load() != 1 {
+		t.Fatalf("did not preserve both inference rounds, workspace inspection, and failure: rounds=%d, inspections=%d, result=%#v", rounds.Load(), inspections.Load(), result)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -564,7 +565,7 @@ func TestWorkspaceCompletionIsHiddenUntilEvidenceExists(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMutationsAreHiddenUntilAReadSucceeds(t *testing.T) {
+func TestWorkspaceCreateRemainsVisibleBeforeAReadSucceeds(t *testing.T) {
 	tools := []inference.ToolDefinition{
 		{Function: inference.ToolFunctionDefinition{Name: agentcontract.CapabilityWorkspaceRead}},
 		{Function: inference.ToolFunctionDefinition{Name: agentcontract.CapabilityWorkspaceSearch}},
@@ -572,17 +573,14 @@ func TestWorkspaceMutationsAreHiddenUntilAReadSucceeds(t *testing.T) {
 		{Function: inference.ToolFunctionDefinition{Name: agentcontract.CapabilityWorkspaceCreate}},
 		{Function: inference.ToolFunctionDefinition{Name: agentcontract.CapabilityWorkspaceReplace}},
 	}
-	visible := toolNames(toolsExceptNames(
-		tools,
-		agentcontract.CapabilityWorkspaceWrite,
-		agentcontract.CapabilityWorkspaceCreate,
-		agentcontract.CapabilityWorkspaceReplace,
-		agentcontract.CapabilityWorkspaceDelete,
-	))
+	visible := toolNames(toolsForWorkspaceInspectionState(tools, artifactcontract.MaterializationWorkspace, false))
 	if _, ok := visible[agentcontract.CapabilityWorkspaceRead]; !ok {
 		t.Fatalf("workspace_read is hidden before inspection: %v", visible)
 	}
-	for _, mutation := range []string{agentcontract.CapabilityWorkspaceWrite, agentcontract.CapabilityWorkspaceCreate, agentcontract.CapabilityWorkspaceReplace} {
+	if _, ok := visible[agentcontract.CapabilityWorkspaceCreate]; !ok {
+		t.Fatalf("workspace_create is hidden for an add-only plan: %v", visible)
+	}
+	for _, mutation := range []string{agentcontract.CapabilityWorkspaceWrite, agentcontract.CapabilityWorkspaceReplace} {
 		if _, ok := visible[mutation]; ok {
 			t.Fatalf("mutation %q is visible before inspection: %v", mutation, visible)
 		}
@@ -639,6 +637,29 @@ func TestWriteGenerationRejectionPublishesStructuredFailedResult(t *testing.T) {
 	if result.Outcome != "Failed" || result.Error == nil || result.Error.Code != "InvalidChangedFile" ||
 		result.Error.Message != "resultContent must contain valid UTF-8 text" {
 		t.Fatalf("unexpected rejection result: %#v", result)
+	}
+}
+
+func TestDiagnoseGenerationFailure(t *testing.T) {
+	tests := []struct {
+		message string
+		code    string
+	}{
+		{"model response reached the output token limit before producing a valid tool call", "GenerationLength"},
+		{"agent repeated unchanged MCP tool call \"workspace_read\" 3 times; last result: missing", "RepeatedToolCall"},
+		{"agent tool loop exceeded 25 rounds", "ToolLoopExhausted"},
+		{"decode arguments for workspace_write: unexpected end of JSON input", "InvalidToolCall"},
+		{"inference tool round 2: request timed out", "InferenceFailed"},
+		{"call MCP tool workspace_read: connection closed", "MCPFailed"},
+		{"agent stopped without calling agent_complete", "GenerationFailed"},
+	}
+	for _, test := range tests {
+		t.Run(test.code, func(t *testing.T) {
+			diagnostic := diagnoseGenerationFailure(errors.New(test.message))
+			if diagnostic.Code != test.code || diagnostic.Message != test.message {
+				t.Fatalf("diagnostic = %#v, want code %q and message %q", diagnostic, test.code, test.message)
+			}
+		})
 	}
 }
 
