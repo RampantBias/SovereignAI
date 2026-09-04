@@ -9,6 +9,7 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/artifacts"
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/controllers"
 	batchv1 "k8s.io/api/batch/v1"
@@ -283,29 +284,71 @@ func (r *WorkflowReconciler) completeBootstrap(ctx context.Context, workflow *v1
 	}
 	workflow.Status = updated.Status
 	if !alreadyReady {
+		decision := workflowAdmissionDecision(updated, artifact)
 		if err := r.appendWorkflowEvent(ctx, updated, "WorkflowAdmitted", "", 0, "accept", artifact.Name, "accepted", "",
-			map[string]string{"artifact": artifact.Name, "artifactUID": string(artifact.UID), "digest": artifact.Spec.Digest}, nil); err != nil {
+			map[string]string{"artifact": artifact.Name, "artifactUID": string(artifact.UID), "digest": artifact.Spec.Digest}, decision); err != nil {
 			return err
 		}
 	}
-	// decisionEvaluated := audit.DecisionEvaluated{
-	// 	SchemaVersion: "V1",
-	// 	Primitive: audit.ResourceRef{
-	// 		SchemaVersion: "V1",
-	// 		APIVersion:    "v1alpha1",
-	// 		Kind:          "sovereignworkflow",
-	// 		Namespace:     workflow.Namespace,
-	// 		Name:          workflow.Name,
-	// 		UID:           string(workflow.UID),
-	// 	},
-	// 	Decision: audit.DecisionRef{
-	// 		SchemaVersion: "V1",
-
-	// 	},
-	// 	AuthorityEvent: ,
-
-	// }
 	return r.cleanupBootstrapResources(ctx, updated)
+}
+
+func workflowAdmissionDecision(workflow *v1alpha1.SovereignWorkflow, artifact *v1alpha1.Artifact) audit.DecisionEvaluated {
+	contract := artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version
+	expectedEvidence := workflow.Spec.Bootstrap.Contract.Name + "/" + workflow.Spec.Bootstrap.Contract.Version + "@" + workflow.Spec.Bootstrap.ExpectedDigest
+	observedEvidence := contract + "@" + artifact.Spec.Digest
+	decisionID := audit.DeterministicID(
+		"workflow-admission",
+		string(workflow.UID),
+		string(artifact.UID),
+		artifact.Spec.Digest,
+		workflow.Spec.DefinitionRevision,
+	)
+	return audit.DecisionEvaluated{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Primitive: audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "SovereignWorkflow",
+			Namespace:     workflow.Namespace,
+			Name:          workflow.Name,
+			UID:           string(workflow.UID),
+		},
+		Decision: audit.DecisionRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			ID:            decisionID,
+			Kind:          "controller",
+			Revision:      workflow.Spec.DefinitionRevision,
+			InputDigest:   artifact.Spec.Digest,
+			Outcome:       "allowed",
+		},
+		Invariants: []audit.InvariantResult{
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "bootstrap-spec-valid",
+				Outcome:       "passed",
+				Expected:      expectedEvidence,
+				Observed:      observedEvidence,
+				Reason:        "the workflow bootstrap declaration is valid",
+			},
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "bootstrap-artifact-identity-valid",
+				Outcome:       "passed",
+				Expected:      string(workflow.UID),
+				Observed:      string(artifact.Spec.WorkflowRef.UID),
+				Reason:        "the accepted artifact is bound to this workflow",
+			},
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "bootstrap-artifact-accepted",
+				Outcome:       "passed",
+				Expected:      string(v1alpha1.PhaseSucceeded),
+				Observed:      string(artifact.Status.Phase),
+				Reason:        "the exact change-request artifact passed validation",
+			},
+		},
+	}
 }
 
 func (r *WorkflowReconciler) acceptedBootstrapArtifact(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) (*v1alpha1.Artifact, error) {

@@ -55,8 +55,9 @@ func TestWorkflowBootstrapGatesFirstAttemptUntilArtifactAcceptance(t *testing.T)
 			Finalizers: []string{controllermeta.WorkflowFinalizer},
 		},
 		Spec: v1alpha1.SovereignWorkflowSpec{
-			Project:    v1alpha1.UIDReference{Name: "platform", UID: "project-uid"},
-			WorkflowID: "wf-bootstrap",
+			Project:            v1alpha1.UIDReference{Name: "platform", UID: "project-uid"},
+			WorkflowID:         "wf-bootstrap",
+			DefinitionRevision: "test-definition-v1",
 			Bootstrap: v1alpha1.WorkflowBootstrapSpec{
 				SourceRef:      v1alpha1.UIDReference{Name: "wf-bootstrap-input", UID: "source-uid"},
 				Key:            "change-request.json",
@@ -179,6 +180,33 @@ func TestWorkflowBootstrapGatesFirstAttemptUntilArtifactAcceptance(t *testing.T)
 	}
 	if !recorder.Has("WorkflowAdmitted") {
 		t.Fatalf("WorkflowAdmitted was not recorded after Artifact acceptance: %#v", recorder.AllEvents())
+	}
+	var admitted audit.Event
+	for _, event := range recorder.AllEvents() {
+		if event.Type == "WorkflowAdmitted" {
+			admitted = event
+			break
+		}
+	}
+	if admitted.ID == "" {
+		t.Fatal("WorkflowAdmitted event was not found")
+	}
+	var decision audit.DecisionEvaluated
+	if err := json.Unmarshal(admitted.Data, &decision); err != nil {
+		t.Fatalf("decode WorkflowAdmitted decision payload: %v", err)
+	}
+	if decision.SchemaVersion != audit.PayloadSchemaVersionV1 ||
+		decision.Primitive.Kind != "SovereignWorkflow" || decision.Primitive.UID != string(workflow.UID) ||
+		decision.Decision.ID == "" || admitted.DecisionID != decision.Decision.ID ||
+		decision.Decision.Kind != "controller" || decision.Decision.Revision != workflow.Spec.DefinitionRevision ||
+		decision.Decision.InputDigest != artifact.Spec.Digest || decision.Decision.Outcome != "allowed" ||
+		decision.AuthorityEvent != "" || len(decision.Invariants) != 3 {
+		t.Fatalf("unexpected WorkflowAdmitted decision payload: event=%#v payload=%#v", admitted, decision)
+	}
+	for _, invariant := range decision.Invariants {
+		if invariant.Outcome != "passed" || invariant.Expected != invariant.Observed {
+			t.Fatalf("WorkflowAdmitted invariant is not verified: %#v", invariant)
+		}
 	}
 
 	var deletedSource corev1.ConfigMap

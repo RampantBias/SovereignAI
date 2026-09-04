@@ -1,5 +1,7 @@
 package audit
 
+const PayloadSchemaVersionV1 = "v1"
+
 // This is the culmination of the various events,
 // I can associate individual audit references into
 // this combined record through regular joins
@@ -107,7 +109,7 @@ type DecisionEvaluated struct {
 	SchemaVersion  string            `json:"schemaVersion"`
 	Primitive      ResourceRef       `json:"primitive"`
 	Decision       DecisionRef       `json:"decision"`
-	AuthorityEvent string            `json:"authorityEvent"`
+	AuthorityEvent string            `json:"authorityEvent,omitempty"`
 	InputEvent     string            `json:"inputEvent,omitempty"`
 	EvidenceEvents []string          `json:"evidenceEvents,omitempty"`
 	Invariants     []InvariantResult `json:"invariants"`

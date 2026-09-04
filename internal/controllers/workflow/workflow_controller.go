@@ -697,6 +697,15 @@ func (r *WorkflowReconciler) appendRecoveryEvents(ctx context.Context, workflow 
 }
 
 func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, eventType, step string, attempt int32, action, target, outcome, reason string, references map[string]string, data any) error {
+	decisionID := ""
+	switch payload := data.(type) {
+	case audit.DecisionEvaluated:
+		decisionID = payload.Decision.ID
+	case *audit.DecisionEvaluated:
+		if payload != nil {
+			decisionID = payload.Decision.ID
+		}
+	}
 	return audit.AppendControllerEvent(ctx, r.Audit, "workflow-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
@@ -711,6 +720,7 @@ func (r *WorkflowReconciler) appendWorkflowEvent(ctx context.Context, workflow *
 		Outcome:       outcome,
 		Reason:        reason,
 		CorrelationID: workflow.Name,
+		DecisionID:    decisionID,
 		References:    references,
 		Data:          data,
 	})
