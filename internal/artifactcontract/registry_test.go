@@ -115,19 +115,24 @@ func TestRegistryRejectsTrailingJSONAndOversizedContent(t *testing.T) {
 	}
 }
 
-func TestChangeSetsRejectDigestAndPatchLimitViolations(t *testing.T) {
+func TestChangeSetsRejectInvalidChangedFiles(t *testing.T) {
 	for _, contract := range []string{TestChangeSetContract, ChangeSetContract} {
 		t.Run(contract, func(t *testing.T) {
 			fixture := fixtureForContract(t, contract)
-			fixture.Document["patchDigest"] = "sha256:" + strings.Repeat("0", 64)
-			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patchDigest") {
-				t.Fatalf("expected patch digest rejection, got %v", err)
+			files := fixture.Document["files"].([]any)
+			file := files[0].(map[string]any)
+			file["resultDigest"] = "sha256:" + strings.Repeat("0", 64)
+			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "resultDigest") {
+				t.Fatalf("expected result digest rejection, got %v", err)
 			}
 
 			fixture = fixtureForContract(t, contract)
-			fixture.Document["patch"] = strings.Repeat("x", MaxPatchBytes+1)
-			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patch must contain") {
-				t.Fatalf("expected patch size rejection, got %v", err)
+			files = fixture.Document["files"].([]any)
+			file = files[0].(map[string]any)
+			file["resultContent"] = strings.Repeat("x", MaxChangedFileBytes+1)
+			file["resultDigest"] = DigestBytes([]byte(file["resultContent"].(string)))
+			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "resultContent") {
+				t.Fatalf("expected changed-file size rejection, got %v", err)
 			}
 		})
 	}
@@ -135,12 +140,8 @@ func TestChangeSetsRejectDigestAndPatchLimitViolations(t *testing.T) {
 
 func TestTestChangeSetRejectsProductionPaths(t *testing.T) {
 	fixture := fixtureForContract(t, TestChangeSetContract)
-	patch := "diff --git a/src/main.go b/src/main.go\n--- a/src/main.go\n+++ b/src/main.go\n@@ -1 +1 @@\n-old\n+new\n"
-	fixture.Document["patch"] = patch
-	fixture.Document["patchDigest"] = DigestBytes([]byte(patch))
-	fixture.Document["files"] = []string{"src/main.go"}
-	fixture.Document["byteCount"] = len([]byte(patch))
-	fixture.Document["lineCounts"] = map[string]any{"added": 1, "deleted": 1}
+	files := fixture.Document["files"].([]any)
+	files[0].(map[string]any)["path"] = "src/main.go"
 	if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "recognized test path") {
 		t.Fatalf("expected production-path rejection, got %v", err)
 	}

@@ -21,18 +21,28 @@ Autonomous agents are often treated as application-library concerns. That leaves
 
 SovereignAI treats those questions as control-plane responsibilities.
 
-The project's initial goal was  to investigate a broader hypothesis: multiple small, short-lived agents may outperform a single large, long-lived agent at lower cost. The September MVP is not intended to prove that hypothesis; it establishes the infrastructure needed to study it later.
+The project's initial goal was to investigate broader hypotheses and questions: 
+- Do multiple small, short-lived agents outperform a single large, long-lived agent? Lower tokens, less hallucination, etc. 
+- Can we optimize a workflow for a cheaper & smaller model, by enforcing context boundaries and responsibility?
+- What information must actually survive a workflow to make it explainable, auditable, and recoverable?
+
+The September MVP is only aimed to experiment with the last hypothesis, while reneging to prove any of the other hypotheses. The infrastructure to study the others is implemented, but not ready to conduct a conclusive study.
 
 ## What Works
 - Ability to create projects
-- Ability to create workflows from YAML definitions
-- Workflow state transitions and failure recovery (reconciliation)
+- Ability to create workflows with change requests from YAML definitions
+- Workflow can transition between states for the defined contracts
+- Failure recovery at the step or workflow level (workflow level has limitations, see retry.md)
 - GPU Scheduling of inference workloads
-- Rudimentary observability
+- Rudimentary observability, most of the focus being on lineage
+
+Workflow completion is still inconsistent. The biggest failure point is an agent being unable to effectively complete its task. This area is still a work in progress. 
 
 ## Intended MVP
 
-The first public demonstration targets an application developer and uses SovereignAI's own controller or API code as the workload. A predefined, sequential workflow will:
+The first public demonstration targets an application developer and uses a simple REST calculator app. The aim of the workflow is to add the divide operator support.
+
+A predefined, sequential workflow will:
 
 1. prepare an isolated workspace and feature branch
 2. run architect, test-writing, & development agents
@@ -67,9 +77,7 @@ See [MVP scope](docs/mvp.md) for commitments and non-goals.
 | `cmd/gpu-watcher` | Node-local GPU/VRAM sensor | Partial |
 | `cmd/agent-wrapper` | Contract-enforcing agent supervisor | Stub |
 | `internal/api/v1alpha1` | Workflow and GPU custom-resource types | Evolving |
-| `internal/orchestration` | Reconciliation and resource builders | Evolving |
-| `internal/orchestration/inference` | GPU placement and inference lifecycle | Prototype |
-| `internal/argo` | Argo CD integration | To become a validation provider |
+| `internal/validation` | Validation Run & Argo CD integration | ArgoCD is in a more complete integration state, allowing a dev deployment of the workload. |
 | `decisions` | Historical and proposed architecture decisions | Requires normalization |
 | `docs/architecture` | Current target architecture | Authoritative direction |
 

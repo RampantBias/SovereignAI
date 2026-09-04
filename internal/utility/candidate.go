@@ -103,24 +103,27 @@ func (CandidatePrepare) Run(ctx context.Context, input utilitycontract.Input) (u
 	if _, err := runGit(ctx, input.WorkspacePath, "checkout", "-B", branch, repository.ResolvedCommit); err != nil {
 		return utilitycontract.Result{}, err
 	}
-	for _, patch := range []struct {
-		name string
-		body string
-	}{{"test-change-set", tests.Patch}, {"change-set", change.Patch}} {
-		if _, err := runGitWithInput(ctx, input.WorkspacePath, []byte(patch.body), "apply", "--check", "--index"); err != nil {
-			return utilitycontract.Result{}, fmt.Errorf("validate %s patch: %w", patch.name, err)
-		}
-		if _, err := runGitWithInput(ctx, input.WorkspacePath, []byte(patch.body), "apply", "--index"); err != nil {
-			return utilitycontract.Result{}, fmt.Errorf("apply %s patch: %w", patch.name, err)
-		}
+	if err := ensureDisjointChangedFiles(tests.Files, change.Files); err != nil {
+		return utilitycontract.Result{}, err
+	}
+	if err := applyChangedFiles(ctx, input.WorkspacePath, "change-set", change.Files); err != nil {
+		return utilitycontract.Result{}, err
+	}
+	if err := applyChangedFiles(ctx, input.WorkspacePath, "test-change-set", tests.Files); err != nil {
+		return utilitycontract.Result{}, err
 	}
 	tree, err := gitOutput(ctx, input.WorkspacePath, "write-tree")
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
-	changedPaths := append(append([]string(nil), tests.Files...), change.Files...)
+	changedPaths := make([]string, 0, len(tests.Files)+len(change.Files))
+	for _, file := range tests.Files {
+		changedPaths = append(changedPaths, file.Path)
+	}
+	for _, file := range change.Files {
+		changedPaths = append(changedPaths, file.Path)
+	}
 	slices.Sort(changedPaths)
-	changedPaths = slices.Compact(changedPaths)
 	candidate := artifactcontract.PreparedCandidate{
 		RepositoryRevisionDigest: repositoryRef.Digest,
 		TestChangeSetDigest:      testRef.Digest,
@@ -140,6 +143,106 @@ func (CandidatePrepare) Run(ctx context.Context, input utilitycontract.Input) (u
 	return preparedCandidateResult(input, candidate, "candidate prepared")
 }
 
+func ensureDisjointChangedFiles(left, right []artifactcontract.ChangedFile) error {
+	paths := make(map[string]struct{}, len(left))
+	for _, file := range left {
+		paths[file.Path] = struct{}{}
+	}
+	for _, file := range right {
+		if _, exists := paths[file.Path]; exists {
+			return fmt.Errorf("test-change-set and change-set both change %q", file.Path)
+		}
+	}
+	return nil
+}
+
+func applyChangedFiles(ctx context.Context, workspace, name string, files []artifactcontract.ChangedFile) error {
+	for _, file := range files {
+		path, err := safeCandidatePath(workspace, file.Path)
+		if err != nil {
+			return fmt.Errorf("validate %s file %q: %w", name, file.Path, err)
+		}
+		current, readErr := os.ReadFile(path)
+		exists := readErr == nil
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return fmt.Errorf("read %s file %q: %w", name, file.Path, readErr)
+		}
+		if file.Action == "add" {
+			if exists {
+				return fmt.Errorf("apply %s file %q: expected path to be absent", name, file.Path)
+			}
+		} else if !exists || artifactcontract.DigestBytes(current) != file.BaseDigest {
+			return fmt.Errorf("apply %s file %q: base content does not match baseDigest", name, file.Path)
+		}
+
+		switch file.Action {
+		case "add":
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				return fmt.Errorf("create parent for %s file %q: %w", name, file.Path, err)
+			}
+			handle, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
+			if err != nil {
+				return fmt.Errorf("create %s file %q: %w", name, file.Path, err)
+			}
+			_, writeErr := handle.WriteString(*file.ResultContent)
+			closeErr := handle.Close()
+			if writeErr != nil {
+				return fmt.Errorf("write %s file %q: %w", name, file.Path, writeErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close %s file %q: %w", name, file.Path, closeErr)
+			}
+		case "modify":
+			info, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("inspect %s file %q: %w", name, file.Path, err)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("apply %s file %q: path is not a regular file", name, file.Path)
+			}
+			if err := os.WriteFile(path, []byte(*file.ResultContent), info.Mode().Perm()); err != nil {
+				return fmt.Errorf("write %s file %q: %w", name, file.Path, err)
+			}
+		case "delete":
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("delete %s file %q: %w", name, file.Path, err)
+			}
+		default:
+			return fmt.Errorf("apply %s file %q: unsupported action %q", name, file.Path, file.Action)
+		}
+		if _, err := runGit(ctx, workspace, "add", "-A", "--", file.Path); err != nil {
+			return fmt.Errorf("stage %s file %q: %w", name, file.Path, err)
+		}
+	}
+	return nil
+}
+
+func safeCandidatePath(workspace, relative string) (string, error) {
+	root, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(root, filepath.FromSlash(relative))
+	within, err := filepath.Rel(root, path)
+	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes workspace")
+	}
+	current := root
+	for _, component := range strings.Split(filepath.FromSlash(relative), string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("path crosses symbolic link")
+		}
+	}
+	return path, nil
+}
 func requireCleanBaseWorkspace(ctx context.Context, workspace, base string) error {
 	head, err := gitOutput(ctx, workspace, "rev-parse", "HEAD^{commit}")
 	if err != nil {

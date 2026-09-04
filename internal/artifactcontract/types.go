@@ -1,5 +1,7 @@
 package artifactcontract
 
+import "github.com/SovereignAI/internal/filemanifest"
+
 const (
 	ChangeRequestContract        = "change-request/v1"
 	RepositoryRevisionContract   = "repository-revision/v1"
@@ -16,7 +18,7 @@ const (
 	MergeRevisionContract        = "merge-revision/v1"
 	MergeRequestContract         = "merge-request/v1"
 	MaxArtifactBytes             = 1 << 20
-	MaxPatchBytes                = 256 << 10
+	MaxChangedFileBytes          = 256 << 10
 	MaxCapturedTestOutputBytes   = 1 << 20
 	MaxTestOutputExcerptBytes    = 16 << 10
 )
@@ -74,35 +76,22 @@ type ImplementationPlan struct {
 	Assumptions              []string            `json:"assumptions"`
 }
 
-type LineCounts struct {
-	Added   int `json:"added"`
-	Deleted int `json:"deleted"`
-}
+type ChangedFile = filemanifest.File
 
 type TestChangeSet struct {
-	Format                   string     `json:"format"`
-	Summary                  string     `json:"summary"`
-	BaseCommit               string     `json:"baseCommit"`
-	ChangeRequestDigest      string     `json:"changeRequestDigest"`
-	ImplementationPlanDigest string     `json:"implementationPlanDigest"`
-	Patch                    string     `json:"patch"`
-	PatchDigest              string     `json:"patchDigest"`
-	Files                    []string   `json:"files"`
-	ByteCount                int        `json:"byteCount"`
-	LineCounts               LineCounts `json:"lineCounts"`
+	Summary                  string        `json:"summary"`
+	BaseCommit               string        `json:"baseCommit"`
+	ChangeRequestDigest      string        `json:"changeRequestDigest"`
+	ImplementationPlanDigest string        `json:"implementationPlanDigest"`
+	Files                    []ChangedFile `json:"files"`
 }
 
 type ChangeSet struct {
-	Format                   string     `json:"format"`
-	Summary                  string     `json:"summary"`
-	BaseCommit               string     `json:"baseCommit"`
-	ChangeRequestDigest      string     `json:"changeRequestDigest"`
-	ImplementationPlanDigest string     `json:"implementationPlanDigest"`
-	Patch                    string     `json:"patch"`
-	PatchDigest              string     `json:"patchDigest"`
-	Files                    []string   `json:"files"`
-	ByteCount                int        `json:"byteCount"`
-	LineCounts               LineCounts `json:"lineCounts"`
+	Summary                  string        `json:"summary"`
+	BaseCommit               string        `json:"baseCommit"`
+	ChangeRequestDigest      string        `json:"changeRequestDigest"`
+	ImplementationPlanDigest string        `json:"implementationPlanDigest"`
+	Files                    []ChangedFile `json:"files"`
 }
 
 type PreparedCandidate struct {

@@ -647,7 +647,7 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 	}
 	parameters := copyStringMap(operation.Spec.Operation.Parameters)
 	switch operation.Spec.Operation.Name {
-	case utility.OperationGitCreateBranch, utility.OperationGitCommit, utility.OperationGitPush, utility.OperationGitMerge, utility.OperationBuildImage:
+	case utility.OperationGitCreateBranch, utility.OperationGitCommit, utility.OperationGitPush, utility.OperationGitMerge, utility.OperationGitMergeRequest, utility.OperationBuildImage:
 		parameters["repositoryURL"] = project.Spec.ApplicationRepository.URL
 	}
 	result := utilityWorkloadConfig{
@@ -677,7 +677,7 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 		result.input.Parameters["repositoryURL"] = project.Spec.ApplicationRepository.URL
 		result.input.Parameters["revision"] = project.Spec.ApplicationRepository.DefaultRevision
 		result.credentialRef = utilityCredentialReference(project, operation.Spec.Operation.Name)
-	case utility.OperationGitPush, utility.OperationGitMerge:
+	case utility.OperationGitPush, utility.OperationGitMerge, utility.OperationGitMergeRequest:
 		result.credentialRef = utilityCredentialReference(project, operation.Spec.Operation.Name)
 	case utility.OperationTestRun:
 		if project.Spec.TestJob.Image == "" || len(project.Spec.TestJob.Command) == 0 {
@@ -819,6 +819,9 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 			container.Env = append(container.Env, corev1.EnvVar{Name: "DOCKER_CONFIG", Value: "/var/run/sovereign/credentials"})
 		case utility.CredentialClassRepository:
 			secretSource.Items = []corev1.KeyToPath{{Key: controllermeta.RepositoryCredentialKey, Path: controllermeta.RepositoryCredentialKey}}
+			if operation.Spec.Operation.Name == utility.OperationGitMergeRequest {
+				container.Env = append(container.Env, corev1.EnvVar{Name: utility.RepositoryCredentialFileEnv, Value: "/var/run/sovereign/credentials/" + controllermeta.RepositoryCredentialKey})
+			}
 			container.Env = append(container.Env,
 				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: "2"},
 				corev1.EnvVar{Name: "GIT_CONFIG_KEY_0", Value: "credential.helper"}, corev1.EnvVar{Name: "GIT_CONFIG_VALUE_0", Value: ""},

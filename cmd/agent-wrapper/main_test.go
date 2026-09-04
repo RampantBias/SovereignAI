@@ -14,8 +14,8 @@ func TestWriteAgentFailureTerminationMessagePreservesBoundedDiagnostic(t *testin
 	result := agentcontract.Result{
 		Outcome: "Failed",
 		Error: &agentcontract.ResultError{
-			Code:    "InvalidUnifiedDiff",
-			Message: "patch\tfailed\nvalidation\x00",
+			Code:    "InvalidChangedFile",
+			Message: "changed file\tfailed\nvalidation\x00",
 		},
 	}
 	if err := writeAgentFailureTerminationMessage(path, result); err != nil {
@@ -29,7 +29,7 @@ func TestWriteAgentFailureTerminationMessagePreservesBoundedDiagnostic(t *testin
 	if err := json.Unmarshal(data, &detail); err != nil {
 		t.Fatal(err)
 	}
-	if detail.Code != "InvalidUnifiedDiff" || detail.Message != "patch failed validation" {
+	if detail.Code != "InvalidChangedFile" || detail.Message != "changed file failed validation" {
 		t.Fatalf("unexpected termination detail: %#v", detail)
 	}
 }

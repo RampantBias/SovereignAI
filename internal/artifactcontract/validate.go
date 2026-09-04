@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,11 +15,10 @@ import (
 )
 
 var (
-	digestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	gitOIDPattern          = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	ociRepositoryPattern   = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
-	branchPattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
-	unifiedDiffHunkPattern = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@(?: .*)?$`)
+	digestPattern        = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	gitOIDPattern        = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	ociRepositoryPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	branchPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 )
 
 func DigestBytes(data []byte) string {
@@ -143,17 +140,14 @@ func (v TestChangeSet) Validate() error {
 		return err
 	}
 	for _, file := range v.Files {
-		if !isTestPath(file) {
-			return fmt.Errorf("test change set file %q is not a recognized test path", file)
+		if !isTestPath(file.Path) {
+			return fmt.Errorf("test change set file %q is not a recognized test path", file.Path)
 		}
 	}
 	return nil
 }
 
 func (v ChangeSet) Validate() error {
-	if v.Format != "unified-diff" {
-		return fmt.Errorf("format must be unified-diff")
-	}
 	if err := boundedText("summary", v.Summary, 1024); err != nil {
 		return err
 	}
@@ -163,36 +157,62 @@ func (v ChangeSet) Validate() error {
 	for field, value := range map[string]string{
 		"changeRequestDigest":      v.ChangeRequestDigest,
 		"implementationPlanDigest": v.ImplementationPlanDigest,
-		"patchDigest":              v.PatchDigest,
 	} {
 		if err := validateDigestField(field, value); err != nil {
 			return err
 		}
 	}
-	patchBytes := []byte(v.Patch)
-	if len(patchBytes) == 0 || len(patchBytes) > MaxPatchBytes {
-		return fmt.Errorf("patch must contain 1 through %d UTF-8 bytes", MaxPatchBytes)
+	return validateChangedFiles(v.Files)
+}
+
+func validateChangedFiles(files []ChangedFile) error {
+	if len(files) == 0 || len(files) > 128 {
+		return fmt.Errorf("files must contain 1 through 128 changed files")
 	}
-	if !utf8.ValidString(v.Patch) || strings.ContainsRune(v.Patch, '\x00') {
-		return fmt.Errorf("patch must be UTF-8 text without NUL")
+	paths := make([]string, 0, len(files))
+	for index, file := range files {
+		field := fmt.Sprintf("files[%d]", index)
+		if err := validateRepositoryPath(file.Path); err != nil {
+			return fieldError(field+".path", err)
+		}
+		if !slices.Contains([]string{"add", "modify", "delete"}, file.Action) {
+			return fmt.Errorf("%s.action is invalid", field)
+		}
+		switch file.Action {
+		case "add":
+			if file.BaseDigest != "absent" {
+				return fmt.Errorf("%s.baseDigest must be absent for an added file", field)
+			}
+		case "modify", "delete":
+			if err := validateDigestField(field+".baseDigest", file.BaseDigest); err != nil {
+				return err
+			}
+		}
+		if file.Action == "delete" {
+			if file.ResultContent != nil || file.ResultDigest != "" {
+				return fmt.Errorf("%s delete must omit resultContent and resultDigest", field)
+			}
+		} else {
+			if file.ResultContent == nil {
+				return fmt.Errorf("%s.resultContent is required", field)
+			}
+			content := []byte(*file.ResultContent)
+			if len(content) > MaxChangedFileBytes || !utf8.Valid(content) || strings.ContainsRune(*file.ResultContent, '\x00') {
+				return fmt.Errorf("%s.resultContent must be UTF-8 text without NUL and at most %d bytes", field, MaxChangedFileBytes)
+			}
+			if err := validateDigestField(field+".resultDigest", file.ResultDigest); err != nil {
+				return err
+			}
+			if file.ResultDigest != DigestBytes(content) {
+				return fmt.Errorf("%s.resultDigest does not match resultContent", field)
+			}
+			if file.Action == "modify" && file.ResultDigest == file.BaseDigest {
+				return fmt.Errorf("%s modify does not change file content", field)
+			}
+		}
+		paths = append(paths, file.Path)
 	}
-	if v.ByteCount != len(patchBytes) {
-		return fmt.Errorf("byteCount does not match patch bytes")
-	}
-	if v.PatchDigest != DigestBytes(patchBytes) {
-		return fmt.Errorf("patchDigest does not match patch bytes")
-	}
-	files, added, deleted, err := inspectUnifiedDiff(v.Patch)
-	if err != nil {
-		return err
-	}
-	if !slices.Equal(files, v.Files) {
-		return fmt.Errorf("files does not match parsed patch paths")
-	}
-	if v.LineCounts.Added != added || v.LineCounts.Deleted != deleted {
-		return fmt.Errorf("lineCounts does not match parsed patch")
-	}
-	return nil
+	return requireSortedUnique("files", paths)
 }
 
 func (v PreparedCandidate) Validate() error {
@@ -519,202 +539,6 @@ func (v MergeRevision) Validate() error {
 		}
 	}
 	return fieldError("remoteProof", v.RemoteProof.Validate(v.TargetBranch, v.MergeCommit))
-}
-
-func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
-	if !utf8.ValidString(patch) || strings.ContainsRune(patch, '\x00') {
-		return nil, 0, 0, fmt.Errorf("patch must be UTF-8 text without NUL")
-	}
-	for index := 0; index < len(patch); index++ {
-		if patch[index] == '\r' && (index+1 == len(patch) || patch[index+1] != '\n') {
-			return nil, 0, 0, fmt.Errorf("patch contains a bare carriage return")
-		}
-	}
-	if strings.Contains(patch, "```") {
-		return nil, 0, 0, fmt.Errorf("patch contains Markdown fencing")
-	}
-	for _, forbidden := range []string{"GIT binary patch", "Binary files ", "Subproject commit ", "\nold mode ", "\nnew mode "} {
-		if strings.Contains(patch, forbidden) {
-			return nil, 0, 0, fmt.Errorf("patch contains forbidden binary, submodule, or mode content")
-		}
-	}
-	lines := strings.Split(patch, "\n")
-	files := make([]string, 0)
-	diffHeaders := 0
-	oldHeaders := 0
-	newHeaders := 0
-	hunks := 0
-	added := 0
-	deleted := 0
-	invalidMetadataLine := 0
-	type hunkState struct {
-		headerLine               int
-		expectedOld, expectedNew int
-		observedOld, observedNew int
-		sawContent               bool
-	}
-	var hunk *hunkState
-	finishHunk := func() error {
-		if hunk.observedOld != hunk.expectedOld || hunk.observedNew != hunk.expectedNew {
-			return fmt.Errorf(
-				"patch line %d hunk declares %d old and %d new lines but contains %d old and %d new lines",
-				hunk.headerLine, hunk.expectedOld, hunk.expectedNew, hunk.observedOld, hunk.observedNew,
-			)
-		}
-		return nil
-	}
-	for index, line := range lines {
-		lineNumber := index + 1
-		if hunk != nil {
-			if line == `\ No newline at end of file` {
-				if !hunk.sawContent {
-					return nil, 0, 0, fmt.Errorf("patch line %d has a misplaced no-newline marker", lineNumber)
-				}
-				hunk.sawContent = false
-				continue
-			}
-			if hunk.observedOld == hunk.expectedOld && hunk.observedNew == hunk.expectedNew {
-				if err := finishHunk(); err != nil {
-					return nil, 0, 0, err
-				}
-				hunk = nil
-			} else {
-				if line == "" {
-					return nil, 0, 0, fmt.Errorf("patch line %d is empty inside a hunk", lineNumber)
-				}
-				switch line[0] {
-				case ' ':
-					hunk.observedOld++
-					hunk.observedNew++
-				case '-':
-					hunk.observedOld++
-					deleted++
-				case '+':
-					hunk.observedNew++
-					added++
-				default:
-					return nil, 0, 0, fmt.Errorf("patch line %d is not a context, addition, or deletion line inside a hunk", lineNumber)
-				}
-				hunk.sawContent = true
-				if hunk.observedOld > hunk.expectedOld || hunk.observedNew > hunk.expectedNew {
-					return nil, 0, 0, fmt.Errorf(
-						"patch line %d exceeds hunk declaration at line %d: declared %d old and %d new lines",
-						lineNumber, hunk.headerLine, hunk.expectedOld, hunk.expectedNew,
-					)
-				}
-				continue
-			}
-		}
-		if strings.HasSuffix(line, "\r") {
-			return nil, 0, 0, fmt.Errorf("patch line %d uses CRLF outside hunk content", lineNumber)
-		}
-		if index == len(lines)-1 && line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "diff --git ") {
-			fields := strings.Fields(line)
-			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") {
-				return nil, 0, 0, fmt.Errorf("patch line %d has a malformed diff --git header", index)
-			}
-			oldPath := strings.TrimPrefix(fields[2], "a/")
-			newPath := strings.TrimPrefix(fields[3], "b/")
-			if err := validateRepositoryPath(oldPath); err != nil {
-				return nil, 0, 0, fieldError("old patch path", err)
-			}
-			if err := validateRepositoryPath(newPath); err != nil {
-				return nil, 0, 0, fieldError("new patch path", err)
-			}
-			diffHeaders++
-			files = append(files, oldPath, newPath)
-			continue
-		}
-		if strings.HasPrefix(line, "--- ") {
-			oldHeaders++
-			continue
-		}
-		if strings.HasPrefix(line, "+++ ") {
-			newHeaders++
-			continue
-		}
-		if strings.HasPrefix(line, "@@ ") {
-			expectedOld, expectedNew, err := parseUnifiedDiffHunkHeader(line)
-			if err != nil {
-				return nil, 0, 0, fmt.Errorf("patch line %d has a malformed hunk header: %w", lineNumber, err)
-			}
-			hunks++
-			hunk = &hunkState{headerLine: lineNumber, expectedOld: expectedOld, expectedNew: expectedNew}
-			continue
-		}
-		if !isUnifiedDiffMetadata(line) {
-			if invalidMetadataLine == 0 {
-				invalidMetadataLine = lineNumber
-			}
-		}
-	}
-	if hunk != nil {
-		if err := finishHunk(); err != nil {
-			return nil, 0, 0, err
-		}
-	}
-	if diffHeaders == 0 {
-		return nil, 0, 0, fmt.Errorf("patch line 0 must be a diff --git a/<path> b/<path> header")
-	}
-	if oldHeaders < diffHeaders {
-		return nil, 0, 0, fmt.Errorf("patch is missing a standalone --- old-file header; each patchLines entry must contain exactly one diff line")
-	}
-	if newHeaders < diffHeaders {
-		return nil, 0, 0, fmt.Errorf("patch is missing a standalone +++ new-file header; each patchLines entry must contain exactly one diff line")
-	}
-	if hunks == 0 {
-		return nil, 0, 0, fmt.Errorf("patch is missing an @@ -old,count +new,count @@ hunk header")
-	}
-	if invalidMetadataLine != 0 {
-		return nil, 0, 0, fmt.Errorf("patch line %d is not valid unified diff metadata", invalidMetadataLine)
-	}
-	if added+deleted == 0 {
-		return nil, 0, 0, fmt.Errorf("patch must include at least one added or deleted hunk line")
-	}
-	sort.Strings(files)
-	files = slices.Compact(files)
-	return files, added, deleted, nil
-}
-
-func parseUnifiedDiffHunkHeader(line string) (int, int, error) {
-	matches := unifiedDiffHunkPattern.FindStringSubmatch(line)
-	if matches == nil {
-		return 0, 0, fmt.Errorf("must use @@ -old[,count] +new[,count] @@ form")
-	}
-	parse := func(start, count string) (int, error) {
-		if _, err := strconv.ParseUint(start, 10, 64); err != nil {
-			return 0, err
-		}
-		if count == "" {
-			return 1, nil
-		}
-		value, err := strconv.ParseUint(count, 10, 31)
-		return int(value), err
-	}
-	oldCount, err := parse(matches[1], matches[2])
-	if err != nil {
-		return 0, 0, fmt.Errorf("invalid old range")
-	}
-	newCount, err := parse(matches[3], matches[4])
-	if err != nil {
-		return 0, 0, fmt.Errorf("invalid new range")
-	}
-	return oldCount, newCount, nil
-}
-
-func isUnifiedDiffMetadata(line string) bool {
-	for _, prefix := range []string{
-		"index ", "new file mode ", "deleted file mode ", "similarity index ", "dissimilarity index ",
-		"rename from ", "rename to ", "copy from ", "copy to ",
-	} {
-		if strings.HasPrefix(line, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func boundedText(field, value string, maximum int) error {

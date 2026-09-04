@@ -46,10 +46,6 @@ func writeOperationArtifact(input utilitycontract.Input, payload any) ([]utility
 }
 
 func runCommand(ctx context.Context, workspace string, name string, args ...string) (commandOutput, error) {
-	return runCommandWithInput(ctx, workspace, nil, name, args...)
-}
-
-func runCommandWithInput(ctx context.Context, workspace string, input []byte, name string, args ...string) (commandOutput, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workspace
 	// Utility-created commits use a platform identity. The workflow, attempt,
@@ -63,9 +59,6 @@ func runCommandWithInput(ctx context.Context, workspace string, input []byte, na
 	)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if input != nil {
-		cmd.Stdin = bytes.NewReader(input)
-	}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -78,10 +71,6 @@ func runCommandWithInput(ctx context.Context, workspace string, input []byte, na
 
 func runGit(ctx context.Context, workspace string, args ...string) (commandOutput, error) {
 	return runCommand(ctx, workspace, "git", gitCommandArgs(workspace, args...)...)
-}
-
-func runGitWithInput(ctx context.Context, workspace string, input []byte, args ...string) (commandOutput, error) {
-	return runCommandWithInput(ctx, workspace, input, "git", gitCommandArgs(workspace, args...)...)
 }
 
 func gitCommandArgs(workspace string, args ...string) []string {

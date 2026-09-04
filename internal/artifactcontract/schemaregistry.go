@@ -34,10 +34,3 @@ func NewSchemaRegistry() (SchemaRegistry, error) {
 func LoadSchemaRegistry(schemaFS fs.FS) (SchemaRegistry, error) {
 	return contractschema.Load(schemaFS, schemaFS, contractSchemaFiles, "")
 }
-
-// DerivePatchMetadata shares the canonical unified-diff parser with generation
-// finalizers; validation remains authoritative for the resulting artifact.
-func DerivePatchMetadata(patch string) ([]string, LineCounts, error) {
-	files, added, deleted, err := inspectUnifiedDiff(patch)
-	return files, LineCounts{Added: added, Deleted: deleted}, err
-}
