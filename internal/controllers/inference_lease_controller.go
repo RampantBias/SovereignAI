@@ -2,11 +2,13 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/domain/state"
@@ -49,7 +51,10 @@ func (r *InferenceLeaseReconciler) Reconcile(ctx context.Context, request ctrl.R
 	if reason := lease.Annotations[controllermeta.InferenceLeaseReleaseRequestAnnotation]; reason != "" && !state.IsTerminal(lease.Status.Phase) {
 		return ctrl.Result{}, r.releaseLease(ctx, &lease, reason)
 	}
-	if lease.Status.Phase == v1alpha1.PhaseRunning || state.IsTerminal(lease.Status.Phase) {
+	if lease.Status.Phase == v1alpha1.PhaseRunning {
+		return ctrl.Result{}, r.appendInferenceLeaseAdmissionEvents(ctx, &lease)
+	}
+	if state.IsTerminal(lease.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
 
@@ -295,17 +300,28 @@ func (r *InferenceLeaseReconciler) bind(ctx context.Context, lease *v1alpha1.Inf
 	if err := r.Status().Update(ctx, lease); err != nil {
 		return err
 	}
+	return r.appendInferenceLeaseAdmissionEvents(ctx, lease)
+}
+
+// appendInferenceLeaseAdmissionEvents is safe to replay from the Running state:
+// event IDs are deterministic, so it also repairs a crash between committing
+// the binding and recording its audit evidence.
+func (r *InferenceLeaseReconciler) appendInferenceLeaseAdmissionEvents(ctx context.Context, lease *v1alpha1.InferenceLease) error {
 	references := map[string]string{
-		"endpoint":    endpointRef.Name,
+		"endpoint":    lease.Status.EndpointRef.Name,
 		"endpointURL": lease.Status.EndpointURL,
 	}
-	if decisionID != "" {
-		references["policyDecision"] = decisionID
+	if lease.Status.DecisionID != "" {
+		references["policyDecision"] = lease.Status.DecisionID
 	}
-	if err := r.appendLeaseEvent(ctx, lease, "InferenceLeaseAdmitted", "admit", lease.Name, "admitted", reason, references); err != nil {
+	decisionPayload, err := inferenceLeaseAdmissionDecision(lease, lease.Status.EndpointRef, lease.Status.DecisionID, lease.Status.Reason)
+	if err != nil {
 		return err
 	}
-	return r.appendLeaseEvent(ctx, lease, "InferenceLeaseBound", "bind", lease.Name, "bound", reason, references)
+	if err := r.appendLeaseEventWithData(ctx, lease, "InferenceLeaseAdmitted", "admit", lease.Name, "admitted", lease.Status.Reason, references, decisionPayload); err != nil {
+		return err
+	}
+	return r.appendLeaseEvent(ctx, lease, "InferenceLeaseBound", "bind", lease.Name, "bound", lease.Status.Reason, references)
 }
 
 func (r *InferenceLeaseReconciler) interruptLease(ctx context.Context, ref v1alpha1.NamespacedReference, reason string) error {
@@ -361,11 +377,19 @@ func (r *InferenceLeaseReconciler) removeEndpointReservation(ctx context.Context
 }
 
 func (r *InferenceLeaseReconciler) appendLeaseEvent(ctx context.Context, lease *v1alpha1.InferenceLease, eventType, action, target, outcome, reason string, references map[string]string) error {
+	return r.appendLeaseEventWithData(ctx, lease, eventType, action, target, outcome, reason, references, inferenceLeaseEventData(lease))
+}
+
+func (r *InferenceLeaseReconciler) appendLeaseEventWithData(ctx context.Context, lease *v1alpha1.InferenceLease, eventType, action, target, outcome, reason string, references map[string]string, data any) error {
 	if references == nil {
 		references = make(map[string]string)
 	}
 	references["lease"] = lease.Name
 	references["attempt"] = lease.Spec.AttemptRef
+	decisionEventID := lease.Status.DecisionID
+	if payload, ok := data.(audit.DecisionEvaluated); ok {
+		decisionEventID = payload.Decision.ID
+	}
 	return audit.AppendControllerEvent(ctx, r.Audit, "inferencelease-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
@@ -378,17 +402,95 @@ func (r *InferenceLeaseReconciler) appendLeaseEvent(ctx context.Context, lease *
 		Target:     target,
 		Outcome:    outcome,
 		Reason:     reason,
-		DecisionID: lease.Status.DecisionID,
+		DecisionID: decisionEventID,
 		References: references,
-		Data: map[string]any{
-			"model":             lease.Spec.Model,
-			"modelRevision":     lease.Spec.ModelRevision,
-			"tenant":            lease.Spec.Tenant,
-			"classification":    lease.Spec.Classification,
-			"sharingScope":      lease.Spec.SharingScope,
-			"estimatedKVRAMMiB": lease.Spec.EstimatedKVRAMMiB,
-			"priority":          lease.Spec.Priority,
-			"evictable":         lease.Spec.Evictable,
-		},
+		Data:       data,
 	})
+}
+
+func inferenceLeaseEventData(lease *v1alpha1.InferenceLease) map[string]any {
+	return map[string]any{
+		"model":             lease.Spec.Model,
+		"modelRevision":     lease.Spec.ModelRevision,
+		"tenant":            lease.Spec.Tenant,
+		"classification":    lease.Spec.Classification,
+		"sharingScope":      lease.Spec.SharingScope,
+		"estimatedKVRAMMiB": lease.Spec.EstimatedKVRAMMiB,
+		"priority":          lease.Spec.Priority,
+		"evictable":         lease.Spec.Evictable,
+	}
+}
+
+func inferenceLeaseAdmissionDecision(lease *v1alpha1.InferenceLease, endpointRef v1alpha1.NamespacedReference, policyDecisionID, reason string) (audit.DecisionEvaluated, error) {
+	decisionInput, err := json.Marshal(struct {
+		LeaseSpec        v1alpha1.InferenceLeaseSpec  `json:"leaseSpec"`
+		EndpointRef      v1alpha1.NamespacedReference `json:"endpointRef"`
+		PolicyDecisionID string                       `json:"policyDecisionId"`
+		Reason           string                       `json:"reason"`
+	}{
+		LeaseSpec:        lease.Spec,
+		EndpointRef:      endpointRef,
+		PolicyDecisionID: policyDecisionID,
+		Reason:           reason,
+	})
+	if err != nil {
+		return audit.DecisionEvaluated{}, fmt.Errorf("marshal inference admission decision input: %w", err)
+	}
+	inputDigest := artifactcontract.DigestBytes(decisionInput)
+	decisionID := audit.DeterministicID("inference-lease-admission", string(lease.UID), inputDigest)
+	policyOutcome := "passed"
+	policyExpected := policyDecisionID
+	policyObserved := policyDecisionID
+	if policyObserved == "" {
+		policyOutcome = "not-evaluated"
+		policyExpected = "missing"
+		policyObserved = "missing"
+	}
+	expectedEndpoint := endpointRef.Namespace + "/" + endpointRef.Name
+	observedEndpoint := lease.Status.EndpointRef.Namespace + "/" + lease.Status.EndpointRef.Name
+	return audit.DecisionEvaluated{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Primitive: audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "InferenceLease",
+			Namespace:     lease.Namespace,
+			Name:          lease.Name,
+			UID:           string(lease.UID),
+		},
+		Decision: audit.DecisionRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			ID:            decisionID,
+			Kind:          "scheduler",
+			Revision:      policyDecisionID,
+			InputDigest:   inputDigest,
+			Outcome:       "selected",
+		},
+		Invariants: []audit.InvariantResult{
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "inference-policy-decision-recorded",
+				Outcome:       policyOutcome,
+				Expected:      policyExpected,
+				Observed:      policyObserved,
+				Reason:        "the scheduler selection records the policy evaluation that constrained admission",
+			},
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "endpoint-binding-committed",
+				Outcome:       "passed",
+				Expected:      expectedEndpoint,
+				Observed:      observedEndpoint,
+				Reason:        "the admitted endpoint is the endpoint committed to lease status",
+			},
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "inference-lease-running",
+				Outcome:       "passed",
+				Expected:      string(v1alpha1.PhaseRunning),
+				Observed:      string(lease.Status.Phase),
+				Reason:        "the selected endpoint reservation was committed before admission was recorded",
+			},
+		},
+	}, nil
 }

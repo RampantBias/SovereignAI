@@ -2,6 +2,7 @@ package validationrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -43,10 +44,20 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	// Check for deletion
 	if !run.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(&run, ValidationFinalizer) {
-			if run.Status.ProviderRef != "" {
-				if err := r.Provider.Destroy(ctx, run.Status.ProviderRef); err != nil && !apierrors.IsNotFound(err) {
+			reference := run.Status.ProviderRef
+			if reference == "" {
+				reference = validation.ApplicationName(run.Namespace, run.Name, string(run.UID))
+			}
+			if err := r.Provider.Destroy(ctx, reference); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+			// Argo's resources finalizer, not DELETE acceptance, determines when
+			// the preview is gone. Keep our finalizer until actual absence.
+			if _, err := r.Provider.Status(ctx, reference); !apierrors.IsNotFound(err) {
+				if err != nil {
 					return ctrl.Result{}, err
 				}
+				return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 			}
 			controllerutil.RemoveFinalizer(&run, ValidationFinalizer)
 			return ctrl.Result{}, r.Update(ctx, &run)
@@ -60,6 +71,9 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		return ctrl.Result{}, err
 	}
 	if terminating {
+		return ctrl.Result{}, nil
+	}
+	if run.Status.Phase == v1alpha1.PhaseSucceeded || run.Status.Phase == v1alpha1.PhaseFailed {
 		return ctrl.Result{}, nil
 	}
 
@@ -111,6 +125,34 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		default:
 			return ctrl.Result{}, fmt.Errorf("unexpected validation input resolution %q", resolution)
 		}
+		if r.Audit != nil {
+			authorityEventID, err := r.appendExecutionAuthorityEstablished(ctx, &run, project)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			evidence, evidenceReady, invalidReason, err := controllers.ResolveArtifactEvidence(
+				ctx,
+				r.Client,
+				run.Namespace,
+				run.Spec.WorkflowRef,
+				run.Spec.Inputs,
+			)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if invalidReason != "" {
+				return ctrl.Result{}, r.failInvalidInputs(ctx, &run, invalidReason)
+			}
+			if !evidenceReady {
+				return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			}
+			inputEventID, err := r.appendInputsResolved(ctx, &run, evidence)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			_ = authorityEventID
+			_ = inputEventID
+		}
 		reference, err := r.Provider.Start(ctx, request)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -135,6 +177,9 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	} else {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
+	if err := r.appendValidationEvaluated(ctx, &run, status); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.Status().Update(ctx, &run); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -148,16 +193,36 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 }
 
 func (r *ValidationRunReconciler) appendValidationEvent(ctx context.Context, run *v1alpha1.ValidationRun, eventType, action, outcome, reason string) error {
-	return audit.AppendControllerEvent(ctx, r.Audit, "validationrun-controller", r.Now, audit.EventOptions{
+	return r.appendValidationEventWithData(ctx, run, eventType, action, outcome, reason, map[string]any{
+		"provider":    run.Spec.Provider,
+		"overlayPath": run.Spec.OverlayPath,
+		"destination": run.Spec.Destination,
+	})
+}
+
+func (r *ValidationRunReconciler) appendValidationEventWithData(ctx context.Context, run *v1alpha1.ValidationRun, eventType, action, outcome, reason string, data any) error {
+	_, err := r.appendValidationEventWithDataResult(ctx, run, eventType, action, outcome, reason, data)
+	return err
+}
+
+func (r *ValidationRunReconciler) appendValidationEventWithDataResult(ctx context.Context, run *v1alpha1.ValidationRun, eventType, action, outcome, reason string, data any) (audit.Event, error) {
+	decisionID := ""
+	if payload, ok := data.(audit.DecisionEvaluated); ok {
+		decisionID = payload.Decision.ID
+	}
+	return audit.BuildAndAppendControllerEvent(ctx, r.Audit, "validationrun-controller", r.Now, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
 			Namespace: run.Namespace,
 			Workflow:  run.Spec.WorkflowRef.Name,
+			Step:      run.Spec.StepName,
+			Attempt:   run.Spec.Attempt,
 		},
-		Action:  action,
-		Target:  run.Name,
-		Outcome: outcome,
-		Reason:  reason,
+		Action:     action,
+		Target:     run.Name,
+		Outcome:    outcome,
+		Reason:     reason,
+		DecisionID: decisionID,
 		References: map[string]string{
 			"validationRun": run.Name,
 			"providerRef":   run.Status.ProviderRef,
@@ -165,12 +230,144 @@ func (r *ValidationRunReconciler) appendValidationEvent(ctx context.Context, run
 			"commit":        run.Spec.Commit,
 			"imageDigest":   run.Spec.ImageDigest,
 		},
-		Data: map[string]any{
-			"provider":    run.Spec.Provider,
-			"overlayPath": run.Spec.OverlayPath,
-			"destination": run.Spec.Destination,
-		},
+		Data: data,
 	})
+}
+
+func (r *ValidationRunReconciler) appendInputsResolved(ctx context.Context, run *v1alpha1.ValidationRun, evidence []audit.ArtifactEvidence) (string, error) {
+	payload := controllers.InputsResolvedPayload("ValidationRun", run, evidence)
+	event, err := r.appendValidationEventWithDataResult(ctx, run, "InputsResolved", "resolve-inputs", "resolved", "", payload)
+	if err != nil {
+		return "", err
+	}
+	return event.ID, nil
+}
+
+func (r *ValidationRunReconciler) appendExecutionAuthorityEstablished(ctx context.Context, run *v1alpha1.ValidationRun, project *v1alpha1.SovereignProject) (string, error) {
+	var workflow v1alpha1.SovereignWorkflow
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
+		return "", fmt.Errorf("read workflow for validation authority evidence: %w", err)
+	}
+	var attempt v1alpha1.StepAttempt
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.AttemptRef}, &attempt); err != nil {
+		return "", fmt.Errorf("read step attempt for validation authority evidence: %w", err)
+	}
+	owner := metav1.GetControllerOf(run)
+	if workflow.UID == "" || attempt.UID == "" || run.UID == "" {
+		return "", fmt.Errorf("validation authority evidence requires workflow, step attempt, and primitive UIDs")
+	}
+	if workflow.UID != run.Spec.WorkflowRef.UID || owner == nil || owner.UID != attempt.UID {
+		return "", fmt.Errorf("validation authority evidence does not match workflow and step-attempt ownership")
+	}
+	payload := audit.AuthorityEstablished{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Workflow:      validationResourceRef("SovereignWorkflow", &workflow),
+		StepAttempt:   validationResourceRef("StepAttempt", &attempt),
+		Primitive:     validationResourceRef("ValidationRun", run),
+		Invariants: []audit.InvariantResult{
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "workflow-uid-bound", Outcome: "passed", Expected: string(workflow.UID), Observed: string(run.Spec.WorkflowRef.UID), Reason: "the validation primitive is bound to the admitted workflow"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "step-attempt-owns-primitive", Outcome: "passed", Expected: string(attempt.UID), Observed: string(owner.UID), Reason: "the authorized step attempt controls the validation primitive"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "validation-provider-authority-ready", Outcome: "passed", Expected: project.Status.ValidationProviderRef, Observed: project.Status.ValidationProviderRef, Reason: "the project-owned validation provider policy was ready before deployment"},
+		},
+	}
+	event, err := r.appendValidationEventWithDataResult(ctx, run, "ExecutionAuthorityEstablished", "authorize", "established", "", payload)
+	if err != nil {
+		return "", err
+	}
+	return event.ID, nil
+}
+
+func validationResourceRef(kind string, object client.Object) audit.ResourceRef {
+	return audit.ResourceRef{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		APIVersion:    v1alpha1.GroupVersion.String(),
+		Kind:          kind,
+		Namespace:     object.GetNamespace(),
+		Name:          object.GetName(),
+		UID:           string(object.GetUID()),
+	}
+}
+
+func (r *ValidationRunReconciler) appendValidationEvaluated(ctx context.Context, run *v1alpha1.ValidationRun, status validation.Status) error {
+	authorityEventID, err := r.findValidationEventID(ctx, run, "ExecutionAuthorityEstablished")
+	if err != nil {
+		return err
+	}
+	inputEventID, err := r.findValidationEventID(ctx, run, "InputsResolved")
+	if err != nil {
+		return err
+	}
+	decisionInput, err := json.Marshal(struct {
+		RunSpec     v1alpha1.ValidationRunSpec `json:"runSpec"`
+		ProviderRef string                     `json:"providerRef"`
+		Status      validation.Status          `json:"status"`
+	}{run.Spec, run.Status.ProviderRef, status})
+	if err != nil {
+		return fmt.Errorf("marshal validation evaluation input: %w", err)
+	}
+	inputDigest := artifactcontract.DigestBytes(decisionInput)
+	outcome := "failed"
+	decisionOutcome := "denied"
+	if status.Ready {
+		outcome = "passed"
+		decisionOutcome = "allowed"
+	}
+	syncStatus := status.SyncStatus
+	if syncStatus == "" && status.Ready {
+		syncStatus = "Synced"
+	}
+	healthStatus := status.HealthStatus
+	if healthStatus == "" {
+		healthStatus = status.Phase
+	}
+	payload := audit.DecisionEvaluated{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Primitive:     validationResourceRef("ValidationRun", run),
+		Decision: audit.DecisionRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			ID:            audit.DeterministicID("validation-evaluation", string(run.UID), inputDigest),
+			Kind:          "controller",
+			Revision:      "validation-provider/v1",
+			InputDigest:   inputDigest,
+			Outcome:       decisionOutcome,
+		},
+		AuthorityEvent: authorityEventID,
+		InputEvent:     inputEventID,
+		Invariants: []audit.InvariantResult{
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "validation-authority-linked", Outcome: "passed", Expected: authorityEventID, Observed: authorityEventID, Reason: "workflow and provider authority were established before validation"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "validation-inputs-linked", Outcome: "passed", Expected: inputEventID, Observed: inputEventID, Reason: "the exact candidate, remote proof, and image evidence were resolved before validation"},
+			validationInvariant("validation-provider-synced", "Synced", syncStatus),
+			validationInvariant("validation-provider-healthy", "Healthy", healthStatus),
+			validationInvariant("validation-provider-ready", "true", fmt.Sprint(status.Ready)),
+		},
+	}
+	_, err = r.appendValidationEventWithDataResult(ctx, run, "ValidationEvaluated", "evaluate", outcome, status.Message, payload)
+	return err
+}
+
+func validationInvariant(id, expected, observed string) audit.InvariantResult {
+	outcome := "failed"
+	if expected == observed {
+		outcome = "passed"
+	}
+	return audit.InvariantResult{SchemaVersion: audit.PayloadSchemaVersionV1, ID: id, Outcome: outcome, Expected: expected, Observed: observed}
+}
+
+func (r *ValidationRunReconciler) findValidationEventID(ctx context.Context, run *v1alpha1.ValidationRun, eventType string) (string, error) {
+	if r.Audit == nil {
+		return "", nil
+	}
+	events, err := r.Audit.ListWorkflow(ctx, run.Spec.WorkflowRef.Name)
+	if err != nil {
+		return "", err
+	}
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if event.Type == eventType && event.References["validationRun"] == run.Name {
+			return event.ID, nil
+		}
+	}
+	return "", fmt.Errorf("required %s event for ValidationRun %s was not recorded", eventType, run.Name)
 }
 
 // providerRequest returns a ready, pending, or invalid resolution with an
@@ -188,7 +385,7 @@ func (r *ValidationRunReconciler) providerRequest(ctx context.Context, run *v1al
 		return validation.Request{}, resolution, message, err
 	}
 	return validation.Request{
-		Name: run.Name, WorkflowNamespace: run.Namespace, Project: project.Status.ValidationProviderRef,
+		Name: validation.ApplicationName(run.Namespace, run.Name, string(run.UID)), WorkflowNamespace: run.Namespace, Project: project.Status.ValidationProviderRef,
 		InfrastructureRepo: project.Spec.Validation.InfrastructureRepo, InfrastructureRevision: subject.commit,
 		OverlayPath: project.Spec.Validation.OverlayPath, ImageName: project.Spec.Validation.ImageName,
 		ImageDigest: subject.imageReference, Commit: subject.commit,

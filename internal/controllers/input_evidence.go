@@ -115,7 +115,7 @@ func InputsResolvedPayload(kind string, consumer client.Object, inputs []audit.A
 }
 
 func artifactEvidence(artifact *v1alpha1.Artifact) audit.ArtifactEvidence {
-	return audit.ArtifactEvidence{
+	evidence := audit.ArtifactEvidence{
 		SchemaVersion: audit.PayloadSchemaVersionV1,
 		Artifact: audit.ResourceRef{
 			SchemaVersion: audit.PayloadSchemaVersionV1,
@@ -138,4 +138,22 @@ func artifactEvidence(artifact *v1alpha1.Artifact) audit.ArtifactEvidence {
 		SourceRevision: artifact.Spec.SourceRevision,
 		Classification: artifact.Spec.Classification,
 	}
+	if artifact.Spec.ProducerGrantRef.Name != "" {
+		evidence.ProducerGrant = &audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "StepAttempt",
+			Namespace:     artifact.Namespace,
+			Name:          artifact.Spec.ProducerGrantRef.Name,
+			UID:           string(artifact.Spec.ProducerGrantRef.UID),
+		}
+	}
+	return evidence
+}
+
+// ArtifactEvidence exposes the canonical audit representation for an already
+// resolved Artifact so controllers can record consequences without copying the
+// provenance mapping.
+func ArtifactEvidence(artifact *v1alpha1.Artifact) audit.ArtifactEvidence {
+	return artifactEvidence(artifact)
 }

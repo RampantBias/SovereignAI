@@ -21,7 +21,7 @@ spec:
     command: ["go", "test", "./..."]
   buildJob:
     image: sovereign-build-runner:dev
-    command: ["/home/user/bin/buildctl-daemonless.sh", "build"]
+    command: ["/usr/bin/buildctl-daemonless.sh", "build"]
     args:
       - --frontend
       - dockerfile.v0

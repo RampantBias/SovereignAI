@@ -2,10 +2,12 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/inference"
 	corev1 "k8s.io/api/core/v1"
@@ -33,16 +35,17 @@ func TestInferenceLeaseBindsCompatibleWarmEndpoint(t *testing.T) {
 		Status:     v1alpha1.InferenceEndpointStatus{Phase: v1alpha1.PhaseRunning},
 	}
 	lease := &v1alpha1.InferenceLease{
-		ObjectMeta: metav1.ObjectMeta{Name: "lease", Namespace: "workflow"},
+		ObjectMeta: metav1.ObjectMeta{Name: "lease", Namespace: "workflow", UID: "lease-uid"},
 		Spec:       v1alpha1.InferenceLeaseSpec{WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, AttemptRef: "developer-001", ProjectRef: "project", Tenant: "team", Classification: "internal", SharingScope: v1alpha1.SharingWithinProject, Model: "code", ModelRevision: "v1", EstimatedKVRAMMiB: 2000},
 	}
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controllermeta.InferenceNamespace}}
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.InferenceLease{}, &v1alpha1.InferenceEndpoint{}).
 		WithObjects(namespace, endpoint, lease).Build()
-	reconciler := &InferenceLeaseReconciler{Client: client, Scheme: scheme}
+	recorder := audit.NewMemoryRecorder()
+	reconciler := &InferenceLeaseReconciler{Client: client, Scheme: scheme, Audit: recorder}
 	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: lease.Namespace, Name: lease.Name}}
-	for range 2 {
+	for range 3 {
 		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 			t.Fatal(err)
 		}
@@ -60,6 +63,36 @@ func TestInferenceLeaseBindsCompatibleWarmEndpoint(t *testing.T) {
 	}
 	if updatedEndpoint.Status.AllocatedKVRAMMiB != 2000 || len(updatedEndpoint.Status.ActiveLeases) != 1 {
 		t.Fatalf("endpoint reservation is wrong: %#v", updatedEndpoint.Status)
+	}
+	var admitted audit.Event
+	admittedCount := 0
+	for _, event := range recorder.AllEvents() {
+		if event.Type == "InferenceLeaseAdmitted" {
+			admitted = event
+			admittedCount++
+		}
+	}
+	if admitted.ID == "" {
+		t.Fatal("InferenceLeaseAdmitted event was not recorded")
+	}
+	if admittedCount != 1 {
+		t.Fatalf("replaying Running inference admission recorded %d events, want one", admittedCount)
+	}
+	var decision audit.DecisionEvaluated
+	if err := json.Unmarshal(admitted.Data, &decision); err != nil {
+		t.Fatalf("decode InferenceLeaseAdmitted payload: %v", err)
+	}
+	if decision.SchemaVersion != audit.PayloadSchemaVersionV1 || decision.Primitive.Kind != "InferenceLease" ||
+		decision.Primitive.UID != string(lease.UID) || decision.Decision.ID == "" ||
+		decision.Decision.Kind != "scheduler" || decision.Decision.Revision != "development-no-policy" ||
+		decision.Decision.InputDigest == "" || decision.Decision.Outcome != "selected" ||
+		admitted.DecisionID != decision.Decision.ID || len(decision.Invariants) != 3 {
+		t.Fatalf("unexpected InferenceLeaseAdmitted decision: event=%#v payload=%#v", admitted, decision)
+	}
+	for _, invariant := range decision.Invariants {
+		if invariant.Outcome != "passed" || invariant.Expected != invariant.Observed {
+			t.Fatalf("InferenceLeaseAdmitted invariant did not pass: %#v", invariant)
+		}
 	}
 }
 
