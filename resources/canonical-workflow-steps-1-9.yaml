@@ -65,7 +65,7 @@ spec:
           content before editing and make the smallest targeted workspace changes.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "workspace_write", "workspace_replace", "workspace_create", "workspace_tree", "workspace_search", "agent_complete"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_create", "workspace_tree", "workspace_search", "agent_complete"]
         inference:
           model: code-small
           modelRevision: "488639f1ff808d1d3d0ba301aef8c11461451ec5"
@@ -73,7 +73,6 @@ spec:
           sharingScope: SharedWithinWorkflow
       inputs:
         - name: change-request
-        - name: implementation-plan
         - name: repository-revision
       outputs:
         - name: change-set
@@ -111,7 +110,6 @@ spec:
           sharingScope: SharedWithinWorkflow
       inputs:
         - name: change-request
-        - name: implementation-plan
         - name: repository-revision
         - name: change-set
       outputs:

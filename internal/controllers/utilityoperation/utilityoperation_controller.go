@@ -20,6 +20,7 @@ import (
 	"github.com/SovereignAI/internal/utility"
 	"github.com/SovereignAI/internal/utilitycontract"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -166,7 +167,11 @@ func (r *UtilityOperationReconciler) ensureValidOperation(ctx context.Context, o
 			return true, ctrl.Result{}, err
 		}
 		operation.Status.PolicyDecisionID = decisionID
-		if err := r.appendEvent(ctx, operation, map[bool]string{true: "UtilityOperationAdmitted", false: "UtilityOperationRejected"}[allowed], "admit", operation.Spec.Operation.Name, map[bool]string{true: "admitted", false: "rejected"}[allowed], reason, nil); err != nil {
+		payload, err := utilityAdmissionDecision(operation, decisionID, allowed, reason)
+		if err != nil {
+			return true, ctrl.Result{}, err
+		}
+		if _, err := r.appendEventWithDataResult(ctx, operation, map[bool]string{true: "UtilityOperationAdmitted", false: "UtilityOperationRejected"}[allowed], "admit", operation.Spec.Operation.Name, map[bool]string{true: "admitted", false: "rejected"}[allowed], reason, payload); err != nil {
 			return true, ctrl.Result{}, err
 		}
 		if err := r.recordPolicyDecision(ctx, operation); err != nil {
@@ -348,6 +353,52 @@ func (r *UtilityOperationReconciler) admit(ctx context.Context, operation *v1alp
 	return decision.Allowed, decision.ID, fmt.Sprint(decision.Reasons), nil
 }
 
+func utilityAdmissionDecision(operation *v1alpha1.UtilityOperation, policyDecisionID string, allowed bool, reason string) (audit.DecisionEvaluated, error) {
+	decisionInput, err := json.Marshal(struct {
+		OperationSpec   v1alpha1.UtilityOperationSpec `json:"operationSpec"`
+		CredentialClass string                        `json:"credentialClass"`
+		PolicyDecision  string                        `json:"policyDecisionId"`
+		Reason          string                        `json:"reason"`
+	}{
+		OperationSpec:   operation.Spec,
+		CredentialClass: utility.ExpectedCredentialClass(operation.Spec.Operation.Name),
+		PolicyDecision:  policyDecisionID,
+		Reason:          reason,
+	})
+	if err != nil {
+		return audit.DecisionEvaluated{}, fmt.Errorf("marshal utility admission decision input: %w", err)
+	}
+	inputDigest := artifactcontract.DigestBytes(decisionInput)
+	outcome := "denied"
+	if allowed {
+		outcome = "allowed"
+	}
+	return audit.DecisionEvaluated{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Primitive: audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "UtilityOperation",
+			Namespace:     operation.Namespace,
+			Name:          operation.Name,
+			UID:           string(operation.UID),
+		},
+		Decision: audit.DecisionRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			ID:            audit.DeterministicID("utility-operation-admission", string(operation.UID), inputDigest),
+			Kind:          "policy",
+			Revision:      policyDecisionID,
+			InputDigest:   inputDigest,
+			Outcome:       outcome,
+		},
+		Invariants: []audit.InvariantResult{
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "utility-operation-supported", Outcome: "passed", Expected: "supported operation", Observed: operation.Spec.Operation.Name, Reason: "only registered utility operations can reach policy admission"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "utility-policy-decision-recorded", Outcome: "passed", Expected: "policy decision identity", Observed: policyDecisionID, Reason: reason},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "utility-credential-class-derived", Outcome: "passed", Expected: "operation-derived credential class", Observed: utility.ExpectedCredentialClass(operation.Spec.Operation.Name), Reason: "the credential class is derived from the admitted operation rather than caller input"},
+		},
+	}, nil
+}
+
 func utilityCredentialReference(project *v1alpha1.SovereignProject, operation string) v1alpha1.NamespacedReference {
 	switch utility.ExpectedCredentialClass(operation) {
 	case utility.CredentialClassRepository:
@@ -408,10 +459,55 @@ func (r *UtilityOperationReconciler) ensureWorkload(ctx context.Context, operati
 	if err != nil {
 		return err
 	}
+	var evidence []audit.ArtifactEvidence
+	if r.Audit != nil {
+		var ready bool
+		var invalidReason string
+		evidence, ready, invalidReason, err = controllers.ResolveArtifactEvidence(
+			ctx,
+			r.Client,
+			operation.Namespace,
+			operation.Spec.WorkflowRef,
+			operation.Spec.Inputs,
+		)
+		if err != nil {
+			return err
+		}
+		if invalidReason != "" {
+			return fmt.Errorf("resolve utility input evidence: %s", invalidReason)
+		}
+		if !ready {
+			return fmt.Errorf("utility input evidence is not ready")
+		}
+	}
 	if workload.credentialRef.Name != "" {
 		workload.credentialSecret, err = r.ensureCredential(ctx, operation, workload.credentialRef, workload.credentialClass)
 		if err != nil {
 			return err
+		}
+	}
+	if r.Audit != nil {
+		admissionEventID, err := r.findOperationEventID(ctx, operation, "UtilityOperationAdmitted")
+		if err != nil {
+			return err
+		}
+		authorityEventID, err := r.appendExecutionAuthorityEstablished(ctx, operation, grant)
+		if err != nil {
+			return err
+		}
+		inputEventID, err := r.appendInputsResolved(ctx, operation, evidence)
+		if err != nil {
+			return err
+		}
+		executionDecisionEventID, err := r.appendUtilityExecutionAuthorized(ctx, operation, workload, admissionEventID, authorityEventID, inputEventID)
+		if err != nil {
+			return err
+		}
+		workload.input.Lineage = &utilitycontract.LineageReferences{
+			AdmissionDecisionEvent: admissionEventID,
+			AuthorityEvent:         authorityEventID,
+			InputsEvent:            inputEventID,
+			ExecutionDecisionEvent: executionDecisionEventID,
 		}
 	}
 	data, err := json.Marshal(workload.input)
@@ -921,13 +1017,181 @@ func (r *UtilityOperationReconciler) updateStatus(ctx context.Context, key types
 	return &updated, changed, err
 }
 
+func (r *UtilityOperationReconciler) appendExecutionAuthorityEstablished(ctx context.Context, operation *v1alpha1.UtilityOperation, grant controllers.WorkspaceWriterGrant) (string, error) {
+	var workflow v1alpha1.SovereignWorkflow
+	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.WorkflowRef.Name}, &workflow); err != nil {
+		return "", fmt.Errorf("read workflow for utility authority evidence: %w", err)
+	}
+	var attempt v1alpha1.StepAttempt
+	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: operation.Spec.AttemptRef}, &attempt); err != nil {
+		return "", fmt.Errorf("read step attempt for utility authority evidence: %w", err)
+	}
+	var lease coordinationv1.Lease
+	if err := r.Get(ctx, types.NamespacedName{Namespace: operation.Namespace, Name: grant.LeaseName}, &lease); err != nil {
+		return "", fmt.Errorf("read workspace writer lease for utility authority evidence: %w", err)
+	}
+	owner := metav1.GetControllerOf(operation)
+	if workflow.UID == "" || attempt.UID == "" || operation.UID == "" || lease.UID == "" {
+		return "", fmt.Errorf("utility authority evidence requires workflow, step attempt, primitive, and lease UIDs")
+	}
+	if workflow.UID != operation.Spec.WorkflowRef.UID {
+		return "", fmt.Errorf("utility authority evidence workflow UID does not match primitive workflow reference")
+	}
+	if owner == nil || owner.UID != attempt.UID {
+		return "", fmt.Errorf("utility authority evidence step attempt does not control primitive")
+	}
+	observedHolder := ""
+	if lease.Spec.HolderIdentity != nil {
+		observedHolder = *lease.Spec.HolderIdentity
+	}
+	observedEpoch := int32(0)
+	if lease.Spec.LeaseTransitions != nil {
+		observedEpoch = *lease.Spec.LeaseTransitions
+	}
+	if observedHolder != grant.HolderIdentity || observedEpoch != grant.Epoch {
+		return "", fmt.Errorf("utility authority evidence workspace writer grant is no longer current")
+	}
+	payload := audit.AuthorityEstablished{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Workflow:      utilityResourceRef("SovereignWorkflow", &workflow),
+		StepAttempt:   utilityResourceRef("StepAttempt", &attempt),
+		Primitive:     utilityResourceRef("UtilityOperation", operation),
+		WorkspaceWrite: &audit.WorkspaceAuthority{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			Lease: audit.ResourceRef{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				APIVersion:    coordinationv1.SchemeGroupVersion.String(),
+				Kind:          "Lease",
+				Namespace:     lease.Namespace,
+				Name:          lease.Name,
+				UID:           string(lease.UID),
+			},
+			HolderIdentity: grant.HolderIdentity,
+			WriterEpoch:    grant.Epoch,
+			Capabilities:   []string{operation.Spec.Operation.Name},
+		},
+		Invariants: []audit.InvariantResult{
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "workflow-uid-bound", Outcome: "passed", Expected: string(workflow.UID), Observed: string(operation.Spec.WorkflowRef.UID), Reason: "the utility primitive is bound to the admitted workflow"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "step-attempt-owns-primitive", Outcome: "passed", Expected: string(attempt.UID), Observed: string(owner.UID), Reason: "the authorized step attempt controls the utility primitive"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "workspace-writer-fence-current", Outcome: "passed", Expected: fmt.Sprintf("%s@%d", grant.HolderIdentity, grant.Epoch), Observed: fmt.Sprintf("%s@%d", observedHolder, observedEpoch), Reason: "the utility primitive holds the current exclusive writer term"},
+		},
+	}
+	event, err := r.appendEventWithDataResult(ctx, operation, "ExecutionAuthorityEstablished", "authorize", operation.Name, "established", "", payload)
+	if err != nil {
+		return "", err
+	}
+	return event.ID, nil
+}
+
+func (r *UtilityOperationReconciler) appendUtilityExecutionAuthorized(ctx context.Context, operation *v1alpha1.UtilityOperation, workload utilityWorkloadConfig, admissionEventID, authorityEventID, inputEventID string) (string, error) {
+	decisionInput, err := json.Marshal(struct {
+		Input          utilitycontract.Input `json:"input"`
+		AdmissionEvent string                `json:"admissionEvent"`
+		AuthorityEvent string                `json:"authorityEvent"`
+		InputsEvent    string                `json:"inputsEvent"`
+		Credential     string                `json:"credential"`
+	}{workload.input, admissionEventID, authorityEventID, inputEventID, workload.credentialSecret})
+	if err != nil {
+		return "", fmt.Errorf("marshal utility execution authorization input: %w", err)
+	}
+	inputDigest := artifactcontract.DigestBytes(decisionInput)
+	payload := audit.DecisionEvaluated{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Primitive:     utilityResourceRef("UtilityOperation", operation),
+		Decision: audit.DecisionRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			ID:            audit.DeterministicID("utility-execution-authorization", string(operation.UID), inputDigest),
+			Kind:          "controller",
+			Revision:      "utilityoperation-execution/v1",
+			InputDigest:   inputDigest,
+			Outcome:       "allowed",
+		},
+		AuthorityEvent: authorityEventID,
+		InputEvent:     inputEventID,
+		EvidenceEvents: []string{admissionEventID},
+		Invariants: []audit.InvariantResult{
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "utility-admission-linked", Outcome: "passed", Expected: admissionEventID, Observed: admissionEventID, Reason: "policy admitted this exact utility operation"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "execution-authority-linked", Outcome: "passed", Expected: authorityEventID, Observed: authorityEventID, Reason: "workflow, attempt ownership, and writer authority were established"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "execution-inputs-linked", Outcome: "passed", Expected: inputEventID, Observed: inputEventID, Reason: "resolved input evidence was recorded before utility execution"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "credential-scope-resolved", Outcome: "passed", Expected: workload.credentialClass, Observed: workload.credentialClass, Reason: "any credential is operation-scoped and derived from project policy"},
+		},
+	}
+	event, err := r.appendEventWithDataResult(ctx, operation, "UtilityExecutionAuthorized", "authorize-execution", operation.Name, "authorized", "", payload)
+	if err != nil {
+		return "", err
+	}
+	return event.ID, nil
+}
+
+func utilityResourceRef(kind string, object client.Object) audit.ResourceRef {
+	return audit.ResourceRef{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		APIVersion:    v1alpha1.GroupVersion.String(),
+		Kind:          kind,
+		Namespace:     object.GetNamespace(),
+		Name:          object.GetName(),
+		UID:           string(object.GetUID()),
+	}
+}
+
+func (r *UtilityOperationReconciler) findOperationEventID(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType string) (string, error) {
+	if r.Audit == nil {
+		return "", nil
+	}
+	events, err := r.Audit.ListWorkflow(ctx, operation.Spec.WorkflowRef.Name)
+	if err != nil {
+		return "", fmt.Errorf("list utility lineage events: %w", err)
+	}
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if event.Type == eventType && event.Subject.Step == operation.Spec.StepName && event.Subject.Attempt == operation.Spec.Attempt && event.References["utilityOperation"] == operation.Name {
+			return event.ID, nil
+		}
+	}
+	return "", fmt.Errorf("required %s event for UtilityOperation %s was not recorded", eventType, operation.Name)
+}
+
 func (r *UtilityOperationReconciler) appendEvent(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType, action, target, outcome, reason string, data any) error {
-	return audit.AppendControllerEvent(ctx, r.Audit, "utilityoperation-controller", r.Now, audit.EventOptions{
+	_, err := r.appendEventWithDataResult(ctx, operation, eventType, action, target, outcome, reason, data)
+	return err
+}
+
+func (r *UtilityOperationReconciler) appendEventWithDataResult(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType, action, target, outcome, reason string, data any) (audit.Event, error) {
+	decisionID := operation.Status.PolicyDecisionID
+	if payload, ok := data.(audit.DecisionEvaluated); ok {
+		decisionID = payload.Decision.ID
+	}
+	return audit.BuildAndAppendControllerEvent(ctx, r.Audit, "utilityoperation-controller", r.Now, audit.EventOptions{
 		Type: eventType, Subject: audit.Subject{Namespace: operation.Namespace, Workflow: operation.Spec.WorkflowRef.Name, Step: operation.Spec.StepName, Attempt: operation.Spec.Attempt},
-		Action: action, Target: target, Outcome: outcome, Reason: reason, DecisionID: operation.Status.PolicyDecisionID,
+		Action: action, Target: target, Outcome: outcome, Reason: reason, DecisionID: decisionID,
 		References: map[string]string{"utilityOperation": operation.Name, "stepAttempt": operation.Spec.AttemptRef, "job": operation.Status.JobRef, "collector": operation.Status.CollectorJobRef, "workspaceWriterLease": operation.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(operation.Status.WorkspaceWriterEpoch)},
 		Data:       data,
 	})
+}
+
+func (r *UtilityOperationReconciler) appendInputsResolved(ctx context.Context, operation *v1alpha1.UtilityOperation, evidence []audit.ArtifactEvidence) (string, error) {
+	payload := controllers.InputsResolvedPayload("UtilityOperation", operation, evidence)
+	event, err := audit.BuildAndAppendControllerEvent(ctx, r.Audit, "utilityoperation-controller", r.Now, audit.EventOptions{
+		Type: "InputsResolved",
+		Subject: audit.Subject{
+			Namespace: operation.Namespace,
+			Workflow:  operation.Spec.WorkflowRef.Name,
+			Step:      operation.Spec.StepName,
+			Attempt:   operation.Spec.Attempt,
+		},
+		Action:  "resolve-inputs",
+		Target:  operation.Name,
+		Outcome: "resolved",
+		References: map[string]string{
+			"utilityOperation": operation.Name,
+			"stepAttempt":      operation.Spec.AttemptRef,
+		},
+		Data: payload,
+	})
+	if err != nil {
+		return "", err
+	}
+	return event.ID, nil
 }
 
 func copyStringMap(source map[string]string) map[string]string {

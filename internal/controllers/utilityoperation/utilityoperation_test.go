@@ -8,6 +8,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/controllers"
 	policyengine "github.com/SovereignAI/internal/policy"
@@ -100,7 +101,8 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.UtilityOperation{}).
 		WithObjects(workflow, workspaceLeaseFixture(), project, attempt, operation).Build()
-	reconciler := &UtilityOperationReconciler{Client: client, Scheme: scheme, Policy: allowPolicy{}}
+	recorder := audit.NewMemoryRecorder()
+	reconciler := &UtilityOperationReconciler{Client: client, Scheme: scheme, Policy: allowPolicy{}, Audit: recorder}
 	for range 2 {
 		if _, err := reconciler.Reconcile(context.Background(), requestFor(operation)); err != nil {
 			t.Fatal(err)
@@ -139,6 +141,58 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	}
 	if contract.WorkspaceWrite.WriterEpoch != 1 || contract.WorkspaceWrite.LeaseName != workflow.Status.WorkspaceWriterLeaseRef {
 		t.Fatalf("utility contract lost workspace writer authority: %#v", contract.WorkspaceWrite)
+	}
+	var resolved audit.Event
+	for _, event := range recorder.AllEvents() {
+		if event.Type == "InputsResolved" {
+			resolved = event
+			break
+		}
+	}
+	if resolved.ID == "" {
+		t.Fatal("UtilityOperation did not record InputsResolved before creating its job")
+	}
+	var inputs audit.InputsResolved
+	if err := json.Unmarshal(resolved.Data, &inputs); err != nil {
+		t.Fatalf("decode UtilityOperation InputsResolved payload: %v", err)
+	}
+	if inputs.SchemaVersion != audit.PayloadSchemaVersionV1 || inputs.Consumer.Kind != "UtilityOperation" ||
+		inputs.Consumer.UID != string(operation.UID) || len(inputs.Inputs) != 0 {
+		t.Fatalf("unexpected UtilityOperation InputsResolved payload: %#v", inputs)
+	}
+	var admitted, authority, authorized audit.Event
+	for _, event := range recorder.AllEvents() {
+		switch event.Type {
+		case "UtilityOperationAdmitted":
+			admitted = event
+		case "ExecutionAuthorityEstablished":
+			authority = event
+		case "UtilityExecutionAuthorized":
+			authorized = event
+		}
+	}
+	if admitted.ID == "" || authority.ID == "" || authorized.ID == "" {
+		t.Fatalf("missing utility decision lineage events: admitted=%q authority=%q authorized=%q", admitted.ID, authority.ID, authorized.ID)
+	}
+	var admissionDecision, executionDecision audit.DecisionEvaluated
+	var authorityPayload audit.AuthorityEstablished
+	if err := json.Unmarshal(admitted.Data, &admissionDecision); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(authority.Data, &authorityPayload); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(authorized.Data, &executionDecision); err != nil {
+		t.Fatal(err)
+	}
+	if admissionDecision.Decision.Outcome != "allowed" || authorityPayload.WorkspaceWrite == nil || authorityPayload.WorkspaceWrite.WriterEpoch != 1 {
+		t.Fatalf("utility authority payloads are incomplete: admission=%#v authority=%#v", admissionDecision, authorityPayload)
+	}
+	if executionDecision.AuthorityEvent != authority.ID || executionDecision.InputEvent != resolved.ID || len(executionDecision.EvidenceEvents) != 1 || executionDecision.EvidenceEvents[0] != admitted.ID {
+		t.Fatalf("utility execution decision did not join its evidence: %#v", executionDecision)
+	}
+	if contract.Lineage == nil || contract.Lineage.AdmissionDecisionEvent != admitted.ID || contract.Lineage.AuthorityEvent != authority.ID || contract.Lineage.InputsEvent != resolved.ID || contract.Lineage.ExecutionDecisionEvent != authorized.ID {
+		t.Fatalf("runtime contract did not carry control-plane lineage: %#v", contract.Lineage)
 	}
 }
 
@@ -485,7 +539,7 @@ func workspaceLeaseFixture() *coordinationv1.Lease {
 	zero := int32(0)
 	controller := true
 	return &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{
-		Name: "wf-workspace-writer", Namespace: "wf",
+		Name: "wf-workspace-writer", Namespace: "wf", UID: "workspace-writer-uid",
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: v1alpha1.GroupVersion.String(), Kind: "SovereignWorkflow", Name: "wf", UID: "workflow-uid", Controller: &controller}},
 	}, Spec: coordinationv1.LeaseSpec{LeaseTransitions: &zero}}
 }
