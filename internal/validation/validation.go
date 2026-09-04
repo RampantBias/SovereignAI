@@ -34,11 +34,13 @@ type Request struct {
 }
 
 type Status struct {
-	Phase     string
-	Ready     bool
-	Failed    bool
-	AccessURL string
-	Message   string
+	Phase        string
+	SyncStatus   string
+	HealthStatus string
+	Ready        bool
+	Failed       bool
+	AccessURL    string
+	Message      string
 }
 
 type Provider interface {

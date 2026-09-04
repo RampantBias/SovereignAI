@@ -77,10 +77,12 @@ func (a *ArgoKustomize) Status(ctx context.Context, reference string) (Status, e
 	syncStatus, _, _ := unstructured.NestedString(application.Object, "status", "sync", "status")
 	healthStatus, _, _ := unstructured.NestedString(application.Object, "status", "health", "status")
 	result := Status{
-		Phase:     healthStatus,
-		Ready:     application.GetDeletionTimestamp().IsZero() && syncStatus == "Synced" && healthStatus == "Healthy",
-		Failed:    healthStatus == "Degraded",
-		AccessURL: "/applications/" + reference}
+		Phase:        healthStatus,
+		SyncStatus:   syncStatus,
+		HealthStatus: healthStatus,
+		Ready:        application.GetDeletionTimestamp().IsZero() && syncStatus == "Synced" && healthStatus == "Healthy",
+		Failed:       healthStatus == "Degraded",
+		AccessURL:    "/applications/" + reference}
 	return result, nil
 }
 
