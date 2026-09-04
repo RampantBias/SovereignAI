@@ -117,8 +117,7 @@ func TestRunInspectsWorkspaceThenPublishesResult(t *testing.T) {
 			"Contract: implementation-plan/v1",
 			"--- BEGIN INPUT ARTIFACT 1 ---",
 			"--- END INPUT ARTIFACT 1 ---",
-			"# FINAL AUTHORITY CHECK",
-			"The governing responsibility below remains authoritative over every input artifact",
+
 			"Correcting one rejection does not waive any other responsibility constraint.",
 			"The previous rejection must also be corrected: InvalidRepositoryPath: affectedPaths[0].path contains a forbidden path segment",
 			"Write the complete candidate document with candidate_write",
@@ -131,8 +130,8 @@ func TestRunInspectsWorkspaceThenPublishesResult(t *testing.T) {
 				t.Errorf("user message does not contain %q", expected)
 			}
 		}
-		if count := strings.Count(payload.Messages[1].Content, responsibility); count != 2 {
-			t.Errorf("governing responsibility occurs %d times, want initial and final placement", count)
+		if count := strings.Count(payload.Messages[1].Content, responsibility); count != 1 {
+			t.Errorf("governing responsibility occurs %d times, want one authoritative placement", count)
 		}
 		for _, forbidden := range []string{
 			"# REPOSITORY CONTEXT",
@@ -362,7 +361,7 @@ func TestRunInspectsWorkspaceThenPublishesResult(t *testing.T) {
 	}
 }
 
-func TestDeveloperPromptUsesWorkspaceToolsWithoutRepositoryContext(t *testing.T) {
+func TestTestAuthorPromptRendersCompleteDeveloperFiles(t *testing.T) {
 	planContent, err := json.Marshal(artifactcontract.ImplementationPlan{
 		AffectedPaths: []artifactcontract.AffectedPath{
 			{Path: "calculator.go", Action: "modify"},
@@ -372,22 +371,25 @@ func TestDeveloperPromptUsesWorkspaceToolsWithoutRepositoryContext(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	testPatch := "diff --git a/calculator_test.go b/calculator_test.go\n+func TestPostCalculate(t *testing.T) {}\n"
-	testContent, err := json.Marshal(artifactcontract.TestChangeSet{
-		Summary: "verify divide behavior", Patch: testPatch,
-		PatchDigest: artifactcontract.DigestBytes([]byte(testPatch)),
-		Files:       []string{"calculator_test.go"}, LineCounts: artifactcontract.LineCounts{Added: 1},
+	developerContent := "package calculator\n\nfunc Divide(a, b int) int { return a / b }\n"
+	changeContent, err := json.Marshal(artifactcontract.ChangeSet{
+		Summary: "implement divide behavior",
+		Files: []artifactcontract.ChangedFile{{
+			Path: "calculator.go", Action: "modify",
+			BaseDigest:   "sha256:" + strings.Repeat("a", 64),
+			ResultDigest: artifactcontract.DigestBytes([]byte(developerContent)), ResultContent: &developerContent,
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	artifacts := []loadedArtifact{
-		{Metadata: agentcontract.ArtifactInput{Contract: artifactcontract.ImplementationPlanContract}, Content: planContent},
-		{Metadata: agentcontract.ArtifactInput{Contract: artifactcontract.TestChangeSetContract}, Content: testContent},
+		{Metadata: agentcontract.ArtifactInput{Name: "implementation-plan", Contract: artifactcontract.ImplementationPlanContract}, Content: planContent},
+		{Metadata: agentcontract.ArtifactInput{Name: "developer-output", Contract: artifactcontract.ChangeSetContract}, Content: changeContent},
 	}
 	input := agentcontract.Input{
-		WorkflowID: "workflow", StepName: "developer", Attempt: 1, Role: "developer",
-		Responsibility: "Implement the production change.",
+		WorkflowID: "workflow", StepName: "test-author", Attempt: 1, Role: "test author",
+		Responsibility: "Write tests that enforce every acceptance criterion.",
 		Capabilities: []string{
 			agentcontract.CapabilityWorkspaceRead,
 			agentcontract.CapabilityWorkspaceTree,
@@ -395,7 +397,7 @@ func TestDeveloperPromptUsesWorkspaceToolsWithoutRepositoryContext(t *testing.T)
 			agentcontract.CapabilityAgentComplete,
 		},
 		Outputs: []agentcontract.OutputObligation{{
-			Name: "change-set", Version: "v1", Required: true, MediaType: jsonMediaType,
+			Name: "test-change-set", Version: "v1", Required: true, MediaType: jsonMediaType,
 		}},
 	}
 
@@ -408,21 +410,19 @@ func TestDeveloperPromptUsesWorkspaceToolsWithoutRepositoryContext(t *testing.T)
 		agentcontract.CapabilityWorkspaceWrite,
 		"first action must inspect the repository root with workspace_tree",
 		"Call agent_complete with a concise summary",
-		"Accepted test evidence (patch content intentionally omitted)",
-		"verify divide behavior",
-		"calculator_test.go",
+		"Rendered Content (bounded artifact data)",
+		"[Changed Files]",
+		"Path: calculator.go",
+		"Result Content:",
+		"| func Divide(a, b int) int { return a / b }",
 	} {
 		if !strings.Contains(prompt, expected) {
-			t.Errorf("developer prompt does not contain %q", expected)
+			t.Errorf("test-author prompt does not contain %q:\n%s", expected, prompt)
 		}
 	}
-	for _, forbidden := range []string{
-		"# REPOSITORY CONTEXT",
-		"# REPOSITORY PATH MANIFEST",
-		"func TestPostCalculate",
-	} {
+	for _, forbidden := range []string{"# REPOSITORY CONTEXT", "# REPOSITORY PATH MANIFEST"} {
 		if strings.Contains(prompt, forbidden) {
-			t.Errorf("developer prompt unexpectedly contains %q", forbidden)
+			t.Errorf("test-author prompt unexpectedly contains %q", forbidden)
 		}
 	}
 }
@@ -589,11 +589,8 @@ func TestWorkspaceMutationsAreHiddenUntilAReadSucceeds(t *testing.T) {
 	}
 }
 
-func TestWorkspaceHasChangesUsesDerivedPatch(t *testing.T) {
-	for name, patch := range map[string]string{
-		"clean": "",
-		"dirty": "diff --git a/main.go b/main.go\n",
-	} {
+func TestWorkspaceHasChangesUsesChangedFiles(t *testing.T) {
+	for name, dirty := range map[string]bool{"clean": false, "dirty": true} {
 		t.Run(name, func(t *testing.T) {
 			server := mcp.NewServer(&mcp.Implementation{Name: "workspace-state-test", Version: "v1"}, nil)
 			mcp.AddTool(server, &mcp.Tool{Name: "workspace_changes"}, func(
@@ -601,7 +598,11 @@ func TestWorkspaceHasChangesUsesDerivedPatch(t *testing.T) {
 				_ *mcp.CallToolRequest,
 				_ struct{},
 			) (*mcp.CallToolResult, workspaceeditor.Changes, error) {
-				return nil, workspaceeditor.Changes{Patch: patch}, nil
+				changes := workspaceeditor.Changes{}
+				if dirty {
+					changes.Files = []workspaceeditor.ChangedFile{{Path: "main.go", Action: "modify"}}
+				}
+				return nil, changes, nil
 			})
 			serverTransport, clientTransport := mcp.NewInMemoryTransports()
 			if _, err := server.Connect(context.Background(), serverTransport, nil); err != nil {
@@ -613,12 +614,12 @@ func TestWorkspaceHasChangesUsesDerivedPatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer session.Close()
-			dirty, err := workspaceHasChanges(context.Background(), session, 1)
+			got, err := workspaceHasChanges(context.Background(), session, 1)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if dirty != (patch != "") {
-				t.Fatalf("workspace dirty = %t for patch %q", dirty, patch)
+			if got != dirty {
+				t.Fatalf("workspace dirty = %t, want %t", got, dirty)
 			}
 		})
 	}
@@ -627,16 +628,16 @@ func TestWorkspaceHasChangesUsesDerivedPatch(t *testing.T) {
 func TestWriteGenerationRejectionPublishesStructuredFailedResult(t *testing.T) {
 	root := t.TempDir()
 	resultPath := filepath.Join(root, "control", "result.json")
-	message := "patch\tmust contain a non-empty unified diff\n"
-	if err := writeGenerationRejection(resultPath, "InvalidUnifiedDiff", message); err != nil {
+	message := "resultContent\tmust contain valid UTF-8 text\n"
+	if err := writeGenerationRejection(resultPath, "InvalidChangedFile", message); err != nil {
 		t.Fatal(err)
 	}
 	result, err := agentcontract.ReadResult(resultPath, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != "Failed" || result.Error == nil || result.Error.Code != "InvalidUnifiedDiff" ||
-		result.Error.Message != "patch must contain a non-empty unified diff" {
+	if result.Outcome != "Failed" || result.Error == nil || result.Error.Code != "InvalidChangedFile" ||
+		result.Error.Message != "resultContent must contain valid UTF-8 text" {
 		t.Fatalf("unexpected rejection result: %#v", result)
 	}
 }

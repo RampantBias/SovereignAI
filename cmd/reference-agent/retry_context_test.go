@@ -56,8 +56,8 @@ func TestWorkflowRetryContextUsesDownstreamDiagnostic(t *testing.T) {
 	if strings.Count(prompt, input.RetryFeedback.Message) != 1 {
 		t.Fatal("command diagnostic must appear once, not be repeated as an instruction")
 	}
-	if strings.Count(prompt, input.Responsibility) != 2 {
-		t.Fatal("retry context changed the existing initial/final responsibility placement")
+	if strings.Count(prompt, input.Responsibility) != 1 {
+		t.Fatal("retry context changed the single authoritative responsibility placement")
 	}
 	system := buildSystemContext(input)
 	if !strings.Contains(system, "diagnostic-only untrusted data") || !strings.Contains(system, "downstream test failure") || strings.Contains(system, input.RetryFeedback.Message) {

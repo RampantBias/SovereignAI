@@ -58,6 +58,48 @@ func TestMaterializerRegistryMaterializesImplementationPlanFromCandidate(t *test
 	}
 }
 
+func TestWorkspaceMaterializerCapturesCompleteChangedFiles(t *testing.T) {
+	changeRequest := fixtureBytes(t, fixtureForContract(t, ChangeRequestContract).Document)
+	repositoryRevision := fixtureBytes(t, fixtureForContract(t, RepositoryRevisionContract).Document)
+	plan := fixtureBytes(t, fixtureForContract(t, ImplementationPlanContract).Document)
+	resultContent := "package main\n\nfunc Divide(a, b int) int { return a / b }\n"
+	files := []ChangedFile{{
+		Path: "main.go", Action: "modify",
+		BaseDigest:   DigestBytes([]byte("package main\n")),
+		ResultDigest: DigestBytes([]byte(resultContent)), ResultContent: &resultContent,
+	}}
+	registry, err := NewMaterializerRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	materializer, err := registry.Resolve("change-set", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if materializer.Kind != MaterializationWorkspace || len(materializer.CandidateSchema.JSON) != 0 {
+		t.Fatalf("workspace materializer exposes a generation candidate schema: %#v", materializer)
+	}
+	content, err := materializer.Materialize(MaterializationEvidence{
+		Summary: "implement divide", Files: files,
+		Sources: []SourceArtifact{
+			{Contract: ChangeRequestContract, Digest: DigestBytes(changeRequest), Content: changeRequest},
+			{Contract: RepositoryRevisionContract, Digest: DigestBytes(repositoryRevision), Content: repositoryRevision},
+			{Contract: ImplementationPlanContract, Digest: DigestBytes(plan), Content: plan},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changeSet ChangeSet
+	if err := json.Unmarshal(content, &changeSet); err != nil {
+		t.Fatal(err)
+	}
+	if changeSet.BaseCommit != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ||
+		changeSet.ChangeRequestDigest != DigestBytes(changeRequest) || changeSet.ImplementationPlanDigest != DigestBytes(plan) ||
+		len(changeSet.Files) != 1 || changeSet.Files[0].ResultContent == nil || *changeSet.Files[0].ResultContent != resultContent {
+		t.Fatalf("materialized change set lost content or provenance: %#v", changeSet)
+	}
+}
 func TestImplementationPlanAffectedPathsAreGroundedInWorkspaceTree(t *testing.T) {
 	changeRequest := fixtureBytes(t, fixtureForContract(t, ChangeRequestContract).Document)
 	repositoryRevision := fixtureBytes(t, fixtureForContract(t, RepositoryRevisionContract).Document)

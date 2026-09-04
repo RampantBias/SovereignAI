@@ -21,7 +21,7 @@ func TestWorkspaceToolsEditOverlayAndDeriveChanges(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "main.go"), []byte("package main\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	server := newServer(contextrepo.Repository{Root: base, Revision: "abc"}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay})
+	server := newMcpServer(contextrepo.Repository{Root: base, Revision: "abc"}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay})
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	ctx := context.Background()
 	if _, err := server.Connect(ctx, serverTransport, nil); err != nil {
@@ -44,17 +44,30 @@ func TestWorkspaceToolsEditOverlayAndDeriveChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := decodeStructured[workspaceeditor.File](t, written.StructuredContent)
-	if file.Digest == updated.Digest || updated.Content != "package changed\n" {
-		t.Fatalf("trusted write did not normalize content or update digest: %#v", updated)
+	updated := decodeStructured[WriteOutput](t, written.StructuredContent)
+	updatedRead, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceRead, Arguments: map[string]any{"path": "main.go"},
+	})
+	if err != nil || updatedRead.IsError {
+		t.Fatalf("failed to read updated workspace file: result=%#v err=%v", updatedRead, err)
+	}
+	updatedFile := decodeStructured[workspaceeditor.File](t, updatedRead.StructuredContent)
+	updatedContent := updatedFile.Content
+	if file.Digest == updated.Digest || updatedFile.Digest != updated.Digest || updatedContent != "package changed\n" {
+		t.Fatalf("trusted write did not normalize content or update digest: receipt=%#v file=%#v", updated, updatedFile)
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "workspace_changes", Arguments: map[string]any{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	changes := decodeStructured[workspaceeditor.Changes](t, result.StructuredContent)
-	if len(changes.Files) != 1 || changes.Files[0] != "main.go" || changes.Patch == "" {
+	if len(changes.Files) != 1 || changes.EvidenceDigest == "" {
 		t.Fatalf("unexpected changes: %#v", changes)
+	}
+	changed := changes.Files[0]
+	if changed.Path != "main.go" || changed.Action != "modify" || changed.BaseDigest != file.Digest ||
+		changed.ResultDigest != updated.Digest || changed.ResultContent == nil || *changed.ResultContent != updatedContent {
+		t.Fatalf("unexpected changed file: %#v", changed)
 	}
 	baseContent, _ := os.ReadFile(filepath.Join(base, "main.go"))
 	if string(baseContent) != "package main\n" {
@@ -67,7 +80,7 @@ func TestWorkspaceMutationRequiresSuccessfulRead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "main.go"), []byte("package main\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	server := newServer(contextrepo.Repository{Root: base}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay})
+	server := newMcpServer(contextrepo.Repository{Root: base}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay})
 	session := connectTestMCP(t, server)
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: agentcontract.CapabilityWorkspaceWrite,
@@ -128,7 +141,7 @@ func TestWorkspaceReadMissingPathSuggestsTreePaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "main.go"), []byte("package main\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	server := newServer(contextrepo.Repository{Root: base}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay})
+	server := newMcpServer(contextrepo.Repository{Root: base}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay})
 	session := connectTestMCP(t, server)
 	if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: agentcontract.CapabilityWorkspaceTree, Arguments: map[string]any{"path": ".", "maxEntries": 5000},
@@ -150,6 +163,82 @@ func TestWorkspaceReadMissingPathSuggestsTreePaths(t *testing.T) {
 	}
 }
 
+func TestWorkspaceReplaceEditsInspectedFileAndRecoversWrongPath(t *testing.T) {
+	base, overlay := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, "src"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	original := "package main\n\nfunc TestAdd(t *testing.T) {}\n"
+	if err := os.WriteFile(filepath.Join(base, "src", "main_test.go"), []byte(original), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	server := newMcpServer(contextrepo.Repository{Root: base}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay})
+	session := connectTestMCP(t, server)
+	ctx := context.Background()
+	if result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceTree, Arguments: map[string]any{"path": ".", "maxEntries": 5000},
+	}); err != nil || result.IsError {
+		t.Fatalf("workspace_tree failed: result=%#v err=%v", result, err)
+	}
+	if result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceRead, Arguments: map[string]any{"path": "src/main_test.go"},
+	}); err != nil || result.IsError {
+		t.Fatalf("workspace_read failed: result=%#v err=%v", result, err)
+	}
+
+	missing, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceReplace,
+		Arguments: map[string]any{
+			"path": "main_test.go", "oldText": "TestAdd", "newText": "TestDivide",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := json.Marshal(missing.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"src/main_test.go", "workspace_search", "workspace_read", "workspace_replace"} {
+		if !missing.IsError || !strings.Contains(string(message), expected) {
+			t.Fatalf("missing-path error does not contain %q: %#v", expected, missing.Content)
+		}
+	}
+
+	replaced, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceReplace,
+		Arguments: map[string]any{
+			"path": "src/main_test.go", "oldText": "TestAdd", "newText": "TestDivide", "expectedOccurrences": 1,
+		},
+	})
+	if err != nil || replaced.IsError {
+		t.Fatalf("workspace_replace failed: result=%#v err=%v", replaced, err)
+	}
+	output := decodeStructured[WriteOutput](t, replaced.StructuredContent)
+	expectedContent := "package main\n\nfunc TestDivide(t *testing.T) {}\n"
+	if output.Path != "src/main_test.go" || !output.Changed || output.ByteCount != len([]byte(expectedContent)) || output.Digest == "" {
+		t.Fatalf("unexpected workspace_replace receipt: %#v", output)
+	}
+
+	read, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceRead, Arguments: map[string]any{"path": "src/main_test.go"},
+	})
+	if err != nil || read.IsError {
+		t.Fatalf("read replaced file failed: result=%#v err=%v", read, err)
+	}
+	file := decodeStructured[workspaceeditor.File](t, read.StructuredContent)
+	if file.Content != expectedContent || file.Source != "overlay" || file.Digest != output.Digest {
+		t.Fatalf("unexpected replaced file: %#v", file)
+	}
+	baseContent, err := os.ReadFile(filepath.Join(base, "src", "main_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(baseContent) != original {
+		t.Fatalf("workspace_replace mutated the base checkout: %q", baseContent)
+	}
+}
 func TestWorkspaceWriteRecoversOnlyAuthorizedInspectedPath(t *testing.T) {
 	base, overlay := t.TempDir(), t.TempDir()
 	for path, content := range map[string]string{
@@ -169,7 +258,7 @@ func TestWorkspaceWriteRecoversOnlyAuthorizedInspectedPath(t *testing.T) {
 		},
 		Outputs: []agentcontract.OutputObligation{{Name: "test-change-set", Version: "v1", Required: true, MediaType: "application/json"}},
 	}
-	server := newServer(contextrepo.Repository{Root: base}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay}, &input)
+	server := newMcpServer(contextrepo.Repository{Root: base}, &workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay}, &input)
 	session := connectTestMCP(t, server)
 	for _, path := range []string{"main.go", "main_test.go"} {
 		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -188,9 +277,16 @@ func TestWorkspaceWriteRecoversOnlyAuthorizedInspectedPath(t *testing.T) {
 	if err != nil || written.IsError {
 		t.Fatalf("path recovery failed: result=%#v err=%v", written, err)
 	}
-	file := decodeStructured[workspaceeditor.File](t, written.StructuredContent)
-	if file.Path != "main_test.go" || !strings.Contains(file.Content, "TestRecovered") {
-		t.Fatalf("write recovered the wrong path: %#v", file)
+	receipt := decodeStructured[WriteOutput](t, written.StructuredContent)
+	read, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: agentcontract.CapabilityWorkspaceRead, Arguments: map[string]any{"path": receipt.Path},
+	})
+	if err != nil || read.IsError {
+		t.Fatalf("read recovered write failed: result=%#v err=%v", read, err)
+	}
+	file := decodeStructured[workspaceeditor.File](t, read.StructuredContent)
+	if receipt.Path != "main_test.go" || file.Digest != receipt.Digest || !strings.Contains(file.Content, "TestRecovered") {
+		t.Fatalf("write recovered the wrong path: receipt=%#v file=%#v", receipt, file)
 	}
 }
 
@@ -223,7 +319,7 @@ func TestAgentToolsWriteCandidateAndCompleteWithItsDigest(t *testing.T) {
 		},
 		StagingPath: staging,
 	}
-	server := newServer(
+	server := newMcpServer(
 		contextrepo.Repository{Root: base, Revision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		&workspaceeditor.Editor{BaseRoot: base, OverlayRoot: overlay},
 		&input,
