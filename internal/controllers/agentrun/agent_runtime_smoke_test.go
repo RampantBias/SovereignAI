@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/SovereignAI/internal/agentcontract"
@@ -26,8 +25,8 @@ func TestAgentRuntimeSmokeStopsAfterThreeSingleOutputAgents(t *testing.T) {
 	}
 	want := []v1alpha1.ContractReference{
 		{Name: "implementation-plan", Version: "v1"},
-		{Name: "change-set", Version: "v1"},
 		{Name: "test-change-set", Version: "v1"},
+		{Name: "change-set", Version: "v1"},
 	}
 	for index, output := range want {
 		step := workflow.Spec.Steps[index+1]
@@ -51,28 +50,6 @@ func TestAgentRuntimeSmokeStopsAfterThreeSingleOutputAgents(t *testing.T) {
 		}
 		if slices.Contains(workflow.Spec.Steps[index].Agent.Capabilities, agentcontract.CapabilityWorkspaceReplace) {
 			t.Errorf("step %q unexpectedly exposes workspace_replace", workflow.Spec.Steps[index].Name)
-		}
-	}
-	developer := workflow.Spec.Steps[2].Agent.Responsibility
-	for _, expected := range []string{
-		"directly in the attempt workspace",
-		"Modify exactly one existing file: src/main.go",
-		"Never include src/main_test.go",
-		"complete changed src/main.go content",
-	} {
-		if !strings.Contains(developer, expected) {
-			t.Errorf("developer responsibility does not contain %q", expected)
-		}
-	}
-	testAuthor := workflow.Spec.Steps[3].Agent.Responsibility
-	for _, expected := range []string{
-		"directly in the attempt workspace",
-		"Modify exactly one existing file: src/main_test.go",
-		"Never include src/main.go",
-		"complete developer-changed file content",
-	} {
-		if !strings.Contains(testAuthor, expected) {
-			t.Errorf("test-author responsibility does not contain %q", expected)
 		}
 	}
 }

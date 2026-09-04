@@ -8,11 +8,13 @@ import (
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/domain/state"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -77,6 +79,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	}
 
 	var resolvedInputs []agentcontract.ArtifactInput
+	inputEventID := ""
 	if run.Status.PodRef == "" {
 		var ready bool
 		var invalidReason string
@@ -95,6 +98,28 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 				"WaitingForArtifactInputs",
 				"waiting for all declared input artifacts to be accepted",
 			)
+		}
+		if r.Audit != nil {
+			evidence, evidenceReady, evidenceInvalidReason, err := controllers.ResolveArtifactEvidence(
+				ctx,
+				r.Client,
+				run.Namespace,
+				run.Spec.WorkflowRef,
+				run.Spec.Inputs,
+			)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if evidenceInvalidReason != "" {
+				return ctrl.Result{}, r.fail(ctx, &run, "InvalidArtifactInputs", false)
+			}
+			if !evidenceReady {
+				return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			}
+			inputEventID, err = r.appendInputsResolved(ctx, &run, evidence)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
@@ -142,6 +167,13 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, request ctrl.Request
 
 	// ensure workload
 	if run.Status.PodRef == "" {
+		authorityEventID, err := r.appendExecutionAuthorityEstablished(ctx, &run, grant)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.appendAgentExecutionAuthorized(ctx, &run, authorityEventID, inputEventID); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := r.ensureWorkload(ctx, &run, endpoint, grant, resolvedInputs); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -635,11 +667,204 @@ func (r *AgentRunReconciler) updateStatus(ctx context.Context, key types.Namespa
 	return &updated, changed, err
 }
 
+func (r *AgentRunReconciler) appendExecutionAuthorityEstablished(ctx context.Context, run *v1alpha1.AgentRun, grant controllers.WorkspaceWriterGrant) (string, error) {
+	if r.Audit == nil {
+		return "", nil
+	}
+	var workflow v1alpha1.SovereignWorkflow
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.WorkflowRef.Name}, &workflow); err != nil {
+		return "", fmt.Errorf("read workflow for execution authority evidence: %w", err)
+	}
+	var attempt v1alpha1.StepAttempt
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.AttemptRef}, &attempt); err != nil {
+		return "", fmt.Errorf("read step attempt for execution authority evidence: %w", err)
+	}
+	var lease coordinationv1.Lease
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: grant.LeaseName}, &lease); err != nil {
+		return "", fmt.Errorf("read workspace writer lease for execution authority evidence: %w", err)
+	}
+	owner := metav1.GetControllerOf(run)
+	if workflow.UID == "" || attempt.UID == "" || run.UID == "" || lease.UID == "" {
+		return "", fmt.Errorf("execution authority evidence requires workflow, step attempt, primitive, and lease UIDs")
+	}
+	if workflow.UID != run.Spec.WorkflowRef.UID {
+		return "", fmt.Errorf("execution authority evidence workflow UID does not match primitive workflow reference")
+	}
+	if owner == nil || owner.UID != attempt.UID {
+		return "", fmt.Errorf("execution authority evidence step attempt does not control primitive")
+	}
+	observedHolder := ""
+	if lease.Spec.HolderIdentity != nil {
+		observedHolder = *lease.Spec.HolderIdentity
+	}
+	observedEpoch := int32(0)
+	if lease.Spec.LeaseTransitions != nil {
+		observedEpoch = *lease.Spec.LeaseTransitions
+	}
+	if observedHolder != grant.HolderIdentity || observedEpoch != grant.Epoch {
+		return "", fmt.Errorf("execution authority evidence workspace writer grant is no longer current")
+	}
+	payload := audit.AuthorityEstablished{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Workflow: audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "SovereignWorkflow",
+			Namespace:     workflow.Namespace,
+			Name:          workflow.Name,
+			UID:           string(workflow.UID),
+		},
+		StepAttempt: audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "StepAttempt",
+			Namespace:     attempt.Namespace,
+			Name:          attempt.Name,
+			UID:           string(attempt.UID),
+		},
+		Primitive: audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "AgentRun",
+			Namespace:     run.Namespace,
+			Name:          run.Name,
+			UID:           string(run.UID),
+		},
+		WorkspaceWrite: &audit.WorkspaceAuthority{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			Lease: audit.ResourceRef{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				APIVersion:    coordinationv1.SchemeGroupVersion.String(),
+				Kind:          "Lease",
+				Namespace:     lease.Namespace,
+				Name:          lease.Name,
+				UID:           string(lease.UID),
+			},
+			HolderIdentity: grant.HolderIdentity,
+			WriterEpoch:    grant.Epoch,
+			Capabilities:   append([]string(nil), run.Spec.Capabilities...),
+		},
+		Invariants: []audit.InvariantResult{
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "workflow-uid-bound",
+				Outcome:       "passed",
+				Expected:      string(workflow.UID),
+				Observed:      string(run.Spec.WorkflowRef.UID),
+				Reason:        "the primitive is bound to the admitted workflow",
+			},
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "step-attempt-owns-primitive",
+				Outcome:       "passed",
+				Expected:      string(attempt.UID),
+				Observed:      string(owner.UID),
+				Reason:        "the authorized step attempt controls the primitive",
+			},
+			{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				ID:            "workspace-writer-fence-current",
+				Outcome:       "passed",
+				Expected:      fmt.Sprintf("%s@%d", grant.HolderIdentity, grant.Epoch),
+				Observed:      fmt.Sprintf("%s@%d", observedHolder, observedEpoch),
+				Reason:        "the primitive holds the current exclusive writer term",
+			},
+		},
+	}
+	event, err := r.appendEventWithDataResult(ctx, run, "ExecutionAuthorityEstablished", "authorize", run.Name, "established", "", payload)
+	if err != nil {
+		return "", err
+	}
+	return event.ID, nil
+}
+
+func (r *AgentRunReconciler) appendInputsResolved(ctx context.Context, run *v1alpha1.AgentRun, evidence []audit.ArtifactEvidence) (string, error) {
+	if r.Audit == nil {
+		return "", nil
+	}
+	payload := controllers.InputsResolvedPayload("AgentRun", run, evidence)
+	event, err := r.appendEventWithDataResult(ctx, run, "InputsResolved", "resolve-inputs", run.Name, "resolved", "", payload)
+	if err != nil {
+		return "", err
+	}
+	return event.ID, nil
+}
+
+func (r *AgentRunReconciler) appendAgentExecutionAuthorized(ctx context.Context, run *v1alpha1.AgentRun, authorityEventID, inputEventID string) error {
+	if r.Audit == nil {
+		return nil
+	}
+	decisionInput, err := json.Marshal(struct {
+		RunSpec        v1alpha1.AgentRunSpec `json:"runSpec"`
+		AuthorityEvent string                `json:"authorityEvent"`
+		InputEvent     string                `json:"inputEvent"`
+	}{
+		RunSpec:        run.Spec,
+		AuthorityEvent: authorityEventID,
+		InputEvent:     inputEventID,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal agent execution authorization input: %w", err)
+	}
+	inputDigest := artifactcontract.DigestBytes(decisionInput)
+	decisionID := audit.DeterministicID("agent-execution-authorization", string(run.UID), inputDigest)
+	inferenceExpected := "not-required"
+	inferenceObserved := "not-required"
+	inferenceReason := "the primitive does not require an inference lease"
+	if run.Spec.Inference != nil {
+		inferenceExpected = run.Status.InferenceLeaseRef
+		inferenceObserved = run.Status.InferenceLeaseRef
+		inferenceReason = "the requested inference lease was admitted before agent execution"
+	}
+	payload := audit.DecisionEvaluated{
+		SchemaVersion: audit.PayloadSchemaVersionV1,
+		Primitive: audit.ResourceRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			APIVersion:    v1alpha1.GroupVersion.String(),
+			Kind:          "AgentRun",
+			Namespace:     run.Namespace,
+			Name:          run.Name,
+			UID:           string(run.UID),
+		},
+		Decision: audit.DecisionRef{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			ID:            decisionID,
+			Kind:          "controller",
+			Revision:      "agentrun-execution/v1",
+			InputDigest:   inputDigest,
+			Outcome:       "allowed",
+		},
+		AuthorityEvent: authorityEventID,
+		InputEvent:     inputEventID,
+		Invariants: []audit.InvariantResult{
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "execution-authority-linked", Outcome: "passed", Expected: authorityEventID, Observed: authorityEventID, Reason: "execution authority was established for this exact primitive"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "execution-inputs-linked", Outcome: "passed", Expected: inputEventID, Observed: inputEventID, Reason: "resolved input evidence was recorded before execution"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "inference-authority-ready", Outcome: "passed", Expected: inferenceExpected, Observed: inferenceObserved, Reason: inferenceReason},
+		},
+	}
+	_, err = r.appendEventWithDataResult(ctx, run, "AgentExecutionAuthorized", "authorize-execution", run.Name, "authorized", "", payload)
+	return err
+}
+
 func (r *AgentRunReconciler) appendEvent(ctx context.Context, run *v1alpha1.AgentRun, eventType, action, target, outcome, reason string) error {
-	return audit.AppendControllerEvent(ctx, r.Audit, "agentrun-controller", r.Now, audit.EventOptions{
+	return r.appendEventWithData(ctx, run, eventType, action, target, outcome, reason, nil)
+}
+
+func (r *AgentRunReconciler) appendEventWithData(ctx context.Context, run *v1alpha1.AgentRun, eventType, action, target, outcome, reason string, data any) error {
+	_, err := r.appendEventWithDataResult(ctx, run, eventType, action, target, outcome, reason, data)
+	return err
+}
+
+func (r *AgentRunReconciler) appendEventWithDataResult(ctx context.Context, run *v1alpha1.AgentRun, eventType, action, target, outcome, reason string, data any) (audit.Event, error) {
+	decisionID := ""
+	if payload, ok := data.(audit.DecisionEvaluated); ok {
+		decisionID = payload.Decision.ID
+	}
+	return audit.BuildAndAppendControllerEvent(ctx, r.Audit, "agentrun-controller", r.Now, audit.EventOptions{
 		Type: eventType, Subject: audit.Subject{Namespace: run.Namespace, Workflow: run.Spec.WorkflowRef.Name, Step: run.Spec.StepName, Attempt: run.Spec.Attempt},
-		Action: action, Target: target, Outcome: outcome, Reason: reason,
+		Action: action, Target: target, Outcome: outcome, Reason: reason, DecisionID: decisionID,
 		References: map[string]string{"agentRun": run.Name, "stepAttempt": run.Spec.AttemptRef, "pod": run.Status.PodRef, "collector": run.Status.CollectorJobRef, "lease": run.Status.InferenceLeaseRef, "workspaceWriterLease": run.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(run.Status.WorkspaceWriterEpoch)},
+		Data:       data,
 	})
 }
 
