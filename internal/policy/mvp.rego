@@ -73,6 +73,9 @@ decision := {"allowed": true, "reasons": [], "evict": []} if {
 decision := {"allowed": true, "reasons": [], "evict": []} if {
   input.operation == "utility.execute"
   input.request.operation == "git.mergeRequest"
+  input.request.approval.admitted == true
+  input.request.approval.subjectMatches == true
+  input.request.approval.binding.admissionEventId != ""
   input.request.credentialClass == "repository"
   input.request.hasCredential
 }

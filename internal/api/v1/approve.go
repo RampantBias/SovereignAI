@@ -8,6 +8,7 @@ import (
 	"github.com/SovereignAI/internal/api/requestidentity"
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/domain/state"
 	"google.golang.org/grpc/codes"
@@ -74,7 +75,7 @@ func (s *Server) SubmitApproval(ctx context.Context, req *pb.ApprovalSubmission)
 
 	var existing v1alpha1.ApprovalDecision
 	if err := s.Client.Get(ctx, client.ObjectKeyFromObject(decision), &existing); err == nil {
-		return approvalSubmissionResult(&existing, decision, workflowID)
+		return s.recordApprovalSubmission(ctx, approval, &existing, decision, workflowID)
 	} else if !apierrors.IsNotFound(err) {
 		return nil, status.Errorf(codes.Internal, "failed to read approval decision: %v", err)
 	}
@@ -88,7 +89,10 @@ func (s *Server) SubmitApproval(ctx context.Context, req *pb.ApprovalSubmission)
 		if err := s.Client.Get(ctx, client.ObjectKeyFromObject(decision), &existing); err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to read existing approval decision: %v", err)
 		}
-		return approvalSubmissionResult(&existing, decision, workflowID)
+		return s.recordApprovalSubmission(ctx, approval, &existing, decision, workflowID)
+	}
+	if err := audit.RecordApprovalSubmission(ctx, s.Auditor, approval, decision); err != nil {
+		return nil, status.Errorf(codes.Internal, "decision persisted but audit submission failed: %v", err)
 	}
 	return &pb.ApprovalResponse{Success: true, Message: fmt.Sprintf("%s decision %s submitted for %s; awaiting controller processing", choice, decision.Name, workflowID)}, nil
 }
@@ -193,4 +197,15 @@ func approvalLookupError(resource string, err error) error {
 		return status.Errorf(codes.FailedPrecondition, "active %s was not found", resource)
 	}
 	return status.Errorf(codes.Internal, "failed to read %s: %v", resource, err)
+}
+
+func (s *Server) recordApprovalSubmission(ctx context.Context, approval *v1alpha1.ApprovalRequest, existing, requested *v1alpha1.ApprovalDecision, workflowID string) (*pb.ApprovalResponse, error) {
+	response, err := approvalSubmissionResult(existing, requested, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	if err := audit.RecordApprovalSubmission(ctx, s.Auditor, approval, existing); err != nil {
+		return nil, status.Errorf(codes.Internal, "decision persisted but audit submission failed: %v", err)
+	}
+	return response, nil
 }

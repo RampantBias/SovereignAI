@@ -19,17 +19,18 @@ type ProjectValidationSpec struct {
 // +kubebuilder:validation:XValidation:rule="self.kind != 'Validation' || has(self.validation)",message="validation is required for Validation steps"
 // +kubebuilder:validation:XValidation:rule="self.kind == 'Validation' || !has(self.validation)",message="validation is only allowed for Validation steps"
 type StepConfig struct {
-	Name        string                   `json:"name"`
-	Kind        ExecutionKind            `json:"kind"`
-	Agent       *AgentStepSpec           `json:"agent,omitempty"`
-	Utility     *UtilityOperationRequest `json:"utility,omitempty"`
-	Approval    *ApprovalSpec            `json:"approval,omitempty"`
-	Validation  *ValidationStepSpec      `json:"validation,omitempty"`
-	Inputs      []ArtifactReference      `json:"inputs,omitempty"`
-	Outputs     []ContractReference      `json:"outputs,omitempty"`
-	Timeout     *metav1.Duration         `json:"timeout,omitempty"`
-	MaxAttempts int32                    `json:"maxAttempts,omitempty"`
-	Order       int                      `json:"order"`
+	RequiresApproval *ApprovalRequirement     `json:"requiresApproval,omitempty"`
+	Name             string                   `json:"name"`
+	Kind             ExecutionKind            `json:"kind"`
+	Agent            *AgentStepSpec           `json:"agent,omitempty"`
+	Utility          *UtilityOperationRequest `json:"utility,omitempty"`
+	Approval         *ApprovalSpec            `json:"approval,omitempty"`
+	Validation       *ValidationStepSpec      `json:"validation,omitempty"`
+	Inputs           []ArtifactReference      `json:"inputs,omitempty"`
+	Outputs          []ContractReference      `json:"outputs,omitempty"`
+	Timeout          *metav1.Duration         `json:"timeout,omitempty"`
+	MaxAttempts      int32                    `json:"maxAttempts,omitempty"`
+	Order            int                      `json:"order"`
 }
 
 // AgentStepSpec declares delegated autonomous work. These fields are never

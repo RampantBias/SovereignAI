@@ -2,6 +2,11 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/SovereignAI/internal/audit"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"strings"
 	"testing"
 
 	"github.com/SovereignAI/internal/api/requestidentity"
@@ -31,12 +36,21 @@ func TestWorkflowShowsApprovalWaitUntilActiveAttemptCompletes(t *testing.T) {
 				}
 			}
 			workflow := changeRequestWorkflow()
+			candidate := changeRequestArtifact(workflow).DeepCopy()
+			candidate.Name, candidate.UID = "reviewed-candidate", "candidate-uid"
+			candidate.Spec.Contract = v1alpha1.ContractReference{Name: "candidate-revision", Version: "v1"}
+			candidate.Spec.Digest = "sha256:" + strings.Repeat("a", 64)
+			candidate.Spec.ProducerRef = v1alpha1.TypedLocalReference{Kind: "ImportedSnapshot", Name: "fixture"}
+			candidate.Spec.Claims = &v1alpha1.ArtifactClaims{CandidateRevision: &v1alpha1.CandidateRevisionClaims{
+				RepositoryURL: "https://github.com/example/calculator.git", Branch: "demo", Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40)}}
+			pin := v1alpha1.ArtifactReference{Name: "candidate-revision", Digest: candidate.Spec.Digest, ArtifactRef: &v1alpha1.UIDReference{Name: candidate.Name, UID: candidate.UID}}
+			recorder := audit.NewMemoryRecorder()
 			workflow.Generation = 1
 			workflow.Labels = map[string]string{controllermeta.LabelWorkflow: workflow.Spec.WorkflowID}
 			workflow.Spec.Steps = []v1alpha1.StepConfig{
-				{Name: "product-approval", Kind: v1alpha1.ExecutionKindHumanGate, Order: 1, MaxAttempts: 1,
+				{Name: "product-approval", Kind: v1alpha1.ExecutionKindHumanGate, Order: 1, MaxAttempts: 1, Inputs: []v1alpha1.ArtifactReference{pin},
 					Approval: &v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, RequiredGroups: []string{"maintainers"}, DenyBehavior: "Fail"}},
-				{Name: "request-merge", Kind: v1alpha1.ExecutionKindUtility, Order: 2,
+				{Name: "request-merge", Kind: v1alpha1.ExecutionKindUtility, Order: 2, Inputs: []v1alpha1.ArtifactReference{pin}, RequiresApproval: &v1alpha1.ApprovalRequirement{Step: "product-approval", Subject: "candidate-revision"},
 					Utility: &v1alpha1.UtilityOperationRequest{Name: "git.mergeRequest"}},
 			}
 			workflow.Status.Phase = string(v1alpha1.PhaseRunning)
@@ -59,19 +73,25 @@ func TestWorkflowShowsApprovalWaitUntilActiveAttemptCompletes(t *testing.T) {
 				Spec: v1alpha1.ApprovalRequestSpec{
 					AttemptRef:  v1alpha1.UIDReference{Name: attempt.Name, UID: attempt.UID},
 					WorkflowRef: attempt.Spec.WorkflowRef, StepName: attempt.Spec.StepName, Attempt: attempt.Spec.RetryNumber,
-					Approval: *workflow.Spec.Steps[0].Approval,
+					Approval: *workflow.Spec.Steps[0].Approval, Inputs: []v1alpha1.ArtifactReference{pin},
 				},
 			}
 			kube := fake.NewClientBuilder().WithScheme(scheme).
 				WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.StepAttempt{}, &v1alpha1.ApprovalRequest{}, &v1alpha1.UtilityOperation{}).
-				WithObjects(workflow, changeRequestArtifact(workflow), attempt, approval).Build()
-			approvalReconciler := &controllers.ApprovalRequestReconciler{Client: kube}
+				WithObjects(workflow, changeRequestArtifact(workflow), candidate, attempt, approval).
+				WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
+					if object.GetUID() == "" {
+						object.SetUID(types.UID("uid-" + object.GetName()))
+					}
+					return c.Create(ctx, object, opts...)
+				}}).Build()
+			approvalReconciler := &controllers.ApprovalRequestReconciler{Client: kube, Audit: recorder}
 			if _, err := approvalReconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(approval)}); err != nil {
 				t.Fatal(err)
 			}
 
 			attemptReconciler := &stepattempt.StepAttemptReconciler{Client: kube, Reader: kube, Scheme: scheme}
-			reconciler := &WorkflowReconciler{Client: kube, Reader: kube, Scheme: scheme}
+			reconciler := &WorkflowReconciler{Client: kube, Reader: kube, Scheme: scheme, Audit: recorder}
 			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflow)}
 			reconcile := func() {
 				t.Helper()
@@ -111,7 +131,7 @@ func TestWorkflowShowsApprovalWaitUntilActiveAttemptCompletes(t *testing.T) {
 				action = "deny"
 			}
 			humanCtx := requestidentity.WithIdentity(ctx, requestidentity.Identity{Subject: "maintainer", Groups: []string{"maintainers"}})
-			response, err := v1.NewServer(kube, nil).SubmitApproval(humanCtx, &pb.ApprovalSubmission{
+			response, err := v1.NewServer(kube, recorder).SubmitApproval(humanCtx, &pb.ApprovalSubmission{
 				Action: action, WorkflowId: workflow.Spec.WorkflowID, RequestUid: string(approval.UID),
 			})
 			if err != nil || !response.GetSuccess() {
@@ -126,7 +146,30 @@ func TestWorkflowShowsApprovalWaitUntilActiveAttemptCompletes(t *testing.T) {
 			if err := kube.List(ctx, &attempts); err != nil {
 				t.Fatal(err)
 			}
+			var submitted, admitted audit.Event
+			for _, event := range recorder.AllEvents() {
+				if event.Type == "ApprovalDecisionSubmitted" {
+					submitted = event
+				}
+				if event.Type == "ApprovalDecisionAdmitted" {
+					admitted = event
+				}
+			}
+			if submitted.ID == "" || admitted.CausationID != submitted.ID {
+				t.Fatal("missing linked human submission/admission")
+			}
+			var payload audit.ApprovalDecisionEvidence
+			if err := json.Unmarshal(admitted.Data, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Approver.SubjectId != "maintainer" || payload.AdmittedAt == nil || payload.ReviewedInputs[0].Digest != pin.Digest {
+				t.Fatalf("incomplete approval evidence: %#v", payload)
+			}
 			if outcome == v1alpha1.PhaseSucceeded {
+				binding := operations.Items[0].Spec.Approval
+				if binding == nil || binding.Subject.Digest != pin.Digest || binding.Subject.ArtifactRef.UID != candidate.UID || binding.AdmissionEventID != admitted.ID || binding.DecisionRef.UID == "" {
+					t.Fatalf("missing exact approval binding: %#v", binding)
+				}
 				if workflow.Status.Phase != string(v1alpha1.PhaseRunning) || workflow.Status.ActiveStepName != "request-merge" || workflow.Status.ActiveAttemptRef == attempt.Name || len(operations.Items) != 1 || len(attempts.Items) != 2 {
 					t.Fatalf("workflow did not resume exactly once: status=%#v operations=%d attempts=%d", workflow.Status, len(operations.Items), len(attempts.Items))
 				}

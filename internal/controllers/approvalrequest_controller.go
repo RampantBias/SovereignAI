@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -39,12 +40,15 @@ func (r *ApprovalRequestReconciler) Reconcile(ctx context.Context, request ctrl.
 	if err := r.Get(ctx, request.NamespacedName, &approval); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if !approval.DeletionTimestamp.IsZero() || state.IsTerminal(approval.Status.Phase) {
+	if !approval.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 	terminating, err := NamespaceTerminating(ctx, r.Client, approval.Namespace)
 	if err != nil || terminating {
 		return ctrl.Result{}, err
+	}
+	if state.IsTerminal(approval.Status.Phase) {
+		return ctrl.Result{}, r.recordAdmittedDecision(ctx, &approval)
 	}
 	if approval.Status.Phase == v1alpha1.PhaseAwaitingApproval {
 		return ctrl.Result{}, r.resolveDecision(ctx, &approval)
@@ -152,7 +156,7 @@ func (r *ApprovalRequestReconciler) updateApprovalStatus(ctx context.Context, ap
 }
 
 func (r *ApprovalRequestReconciler) resolveDecision(ctx context.Context, approval *v1alpha1.ApprovalRequest) error {
-	return r.updateApprovalStatus(ctx, approval, func(latest *v1alpha1.ApprovalRequest) (bool, error) {
+	err := r.updateApprovalStatus(ctx, approval, func(latest *v1alpha1.ApprovalRequest) (bool, error) {
 		if latest.Status.Phase != v1alpha1.PhaseAwaitingApproval {
 			return false, nil
 		}
@@ -185,6 +189,17 @@ func (r *ApprovalRequestReconciler) resolveDecision(ctx context.Context, approva
 			r.finishApproval(latest, v1alpha1.PhaseFailed, "InvalidWorkflowAuthority", "approval request is not the workflow's active gate", "")
 			return true, nil
 		}
+		_, ready, invalid, err := ResolveArtifactEvidence(ctx, r.Client, latest.Namespace, latest.Spec.WorkflowRef, latest.Spec.Inputs)
+		if err != nil {
+			return false, err
+		}
+		if invalid != "" || !ready {
+			return false, fmt.Errorf("approval inputs are unavailable or invalid: %s", invalid)
+		}
+		if err := audit.RecordApprovalSubmission(ctx, r.Audit, latest, &decision); err != nil {
+			return false, err
+		}
+		latest.Status.DecisionUID = decision.UID
 		if decision.Spec.Decision == v1alpha1.Denied {
 			r.finishApproval(latest, v1alpha1.PhaseFailed, "ApprovalDenied", "human approval was denied", decision.Name)
 		} else {
@@ -192,6 +207,26 @@ func (r *ApprovalRequestReconciler) resolveDecision(ctx context.Context, approva
 		}
 		return true, nil
 	})
+	if err != nil {
+		return err
+	}
+	var completed v1alpha1.ApprovalRequest
+	if err := r.Get(ctx, client.ObjectKeyFromObject(approval), &completed); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	return r.recordAdmittedDecision(ctx, &completed)
+}
+
+// Terminal reconciliation repairs an audit failure without changing the decision.
+func (r *ApprovalRequestReconciler) recordAdmittedDecision(ctx context.Context, approval *v1alpha1.ApprovalRequest) error {
+	if approval.Status.DecisionRef == "" || approval.Status.DecisionUID == "" {
+		return nil
+	}
+	var decision v1alpha1.ApprovalDecision
+	if err := r.Get(ctx, client.ObjectKey{Namespace: approval.Namespace, Name: approval.Status.DecisionRef}, &decision); err != nil {
+		return err
+	}
+	return audit.RecordApprovalAdmission(ctx, r.Audit, approval, &decision)
 }
 
 // Separate read failures from invalid bindings so temporary API errors never fail the gate.

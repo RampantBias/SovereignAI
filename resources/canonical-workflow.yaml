@@ -217,6 +217,9 @@ spec:
       maxAttempts: 1
     - name: request-merge
       kind: Utility
+      requiresApproval:
+        step: product-approval
+        subject: candidate-revision
       order: 12
       utility:
         name: git.mergeRequest

@@ -39,6 +39,84 @@ spec:
             type: object
           spec:
             properties:
+              approval:
+                description: ResolvedApproval pins the human authority used to admit
+                  a utility operation.
+                properties:
+                  admissionEventId:
+                    type: string
+                  decisionRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  requestRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  requirement:
+                    description: ApprovalRequirement names the earlier human gate
+                      and shared artifact input.
+                    properties:
+                      step:
+                        type: string
+                      subject:
+                        type: string
+                    required:
+                    - step
+                    - subject
+                    type: object
+                  subject:
+                    properties:
+                      artifactRef:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      digest:
+                        type: string
+                      name:
+                        type: string
+                      producerAttemptRef:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - admissionEventId
+                - decisionRef
+                - requestRef
+                - requirement
+                - subject
+                type: object
               attempt:
                 format: int32
                 type: integer

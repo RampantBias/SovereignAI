@@ -161,6 +161,15 @@ func (r *UtilityOperationReconciler) ensureValidOperation(ctx context.Context, o
 	if !utility.IsSupportedOperation(operation.Spec.Operation.Name) {
 		return true, ctrl.Result{}, r.fail(ctx, operation, "UnsupportedUtilityOperation", false)
 	}
+	if operation.Spec.Approval != nil || operation.Spec.Operation.Name == utility.OperationGitMergeRequest {
+		workflow, _, err := r.resolveContext(ctx, operation)
+		if err != nil {
+			return true, ctrl.Result{}, err
+		}
+		if err := controllers.ValidateOperationApproval(ctx, r.Client, r.Audit, operation, workflow); err != nil {
+			return true, ctrl.Result{}, err
+		}
+	}
 	if operation.Status.PolicyDecisionID == "" {
 		allowed, decisionID, reason, err := r.admit(ctx, operation)
 		if err != nil {
@@ -174,11 +183,11 @@ func (r *UtilityOperationReconciler) ensureValidOperation(ctx context.Context, o
 		if _, err := r.appendEventWithDataResult(ctx, operation, map[bool]string{true: "UtilityOperationAdmitted", false: "UtilityOperationRejected"}[allowed], "admit", operation.Spec.Operation.Name, map[bool]string{true: "admitted", false: "rejected"}[allowed], reason, payload); err != nil {
 			return true, ctrl.Result{}, err
 		}
-		if err := r.recordPolicyDecision(ctx, operation); err != nil {
-			return true, ctrl.Result{}, err
-		}
 		if !allowed {
 			return true, ctrl.Result{}, r.fail(ctx, operation, "UtilityOperationDenied", false)
+		}
+		if err := r.recordPolicyDecision(ctx, operation); err != nil {
+			return true, ctrl.Result{}, err
 		}
 	}
 	return false, ctrl.Result{}, nil
@@ -331,6 +340,13 @@ func (r *UtilityOperationReconciler) admit(ctx context.Context, operation *v1alp
 	if err != nil {
 		return false, "", "", err
 	}
+	var approvalFacts any
+	if operation.Spec.Approval != nil || operation.Spec.Operation.Name == utility.OperationGitMergeRequest {
+		if err := controllers.ValidateOperationApproval(ctx, r.Client, r.Audit, operation, workflow); err != nil {
+			return false, "", "", err
+		}
+		approvalFacts = map[string]any{"admitted": true, "subjectMatches": true, "binding": operation.Spec.Approval}
+	}
 	credentialRef := utilityCredentialReference(project, operation.Spec.Operation.Name)
 	parameters := copyStringMap(operation.Spec.Operation.Parameters)
 	if operation.Spec.Operation.Name == utility.OperationBuildImage && project.Spec.Validation.ImageName != "" {
@@ -341,7 +357,7 @@ func (r *UtilityOperationReconciler) admit(ctx context.Context, operation *v1alp
 		"request": map[string]any{
 			"operation": operation.Spec.Operation.Name, "workflow": operation.Spec.WorkflowRef,
 			"step": operation.Spec.StepName, "attempt": operation.Spec.Attempt, "project": project.Name,
-			"policyProfile": project.Spec.PolicyProfileRef, "parameters": parameters,
+			"policyProfile": project.Spec.PolicyProfileRef, "parameters": parameters, "approval": approvalFacts,
 			"credentialClass": utility.ExpectedCredentialClass(operation.Spec.Operation.Name), "hasCredential": credentialRef.Name != "",
 			"authorityResource": map[string]any{"kind": "UtilityOperation", "name": operation.Name, "uid": string(operation.UID)},
 		},
@@ -373,8 +389,12 @@ func utilityAdmissionDecision(operation *v1alpha1.UtilityOperation, policyDecisi
 	if allowed {
 		outcome = "allowed"
 	}
+	var evidenceEvents []string
+	if allowed && operation.Spec.Approval != nil {
+		evidenceEvents = []string{operation.Spec.Approval.AdmissionEventID}
+	}
 	return audit.DecisionEvaluated{
-		SchemaVersion: audit.PayloadSchemaVersionV1,
+		EvidenceEvents: evidenceEvents, SchemaVersion: audit.PayloadSchemaVersionV1,
 		Primitive: audit.ResourceRef{
 			SchemaVersion: audit.PayloadSchemaVersionV1,
 			APIVersion:    v1alpha1.GroupVersion.String(),

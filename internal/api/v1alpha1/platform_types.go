@@ -206,6 +206,7 @@ type UtilityOperation struct {
 }
 
 type UtilityOperationSpec struct {
+	Approval        *ResolvedApproval       `json:"approval,omitempty"`
 	AttemptRef      string                  `json:"attemptRef"`
 	WorkflowRef     UIDReference            `json:"workflowRef"`
 	StepName        string                  `json:"stepName"`
@@ -262,6 +263,7 @@ type ApprovalRequestSpec struct {
 }
 
 type ApprovalRequestStatus struct {
+	DecisionUID        types.UID          `json:"decisionUID,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Phase              ResourcePhase      `json:"phase,omitempty"`
 	DecisionRef        string             `json:"decisionRef,omitempty"`

@@ -79,6 +79,9 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "InvalidDefinition", "workflow must contain at least one step")
 	}
 
+	if err := v1alpha1.ValidateApprovalRequirements(workflow.Spec.Steps); err != nil {
+		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "InvalidApprovalBinding", err.Error())
+	}
 	// Trigger new workflow into pending
 	if workflow.Status.Phase == "" {
 		_, err := r.updateWorkflowStatus(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
@@ -559,7 +562,12 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, workflow
 		if step.Utility == nil {
 			return nil, fmt.Errorf("utility step %s has no utility operation", step.Name)
 		}
+		approval, err := controllers.ResolveRequiredApproval(ctx, r.stepAttemptReader(), r.Audit, workflow, attempt, step, inputs)
+		if err != nil {
+			return nil, err
+		}
 		object = &v1alpha1.UtilityOperation{ObjectMeta: metadata, Spec: v1alpha1.UtilityOperationSpec{
+			Approval:        approval,
 			AttemptRef:      attempt.Name,
 			WorkflowRef:     attempt.Spec.WorkflowRef,
 			StepName:        step.Name,

@@ -264,6 +264,9 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		}
 		return nil, status.Error(codes.InvalidArgument, "workflow must contain at least one step")
 	}
+	if err := v1alpha1.ValidateApprovalRequirements(workflowCRD.Spec.Steps); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid approval binding: %v", err)
+	}
 	// normalize workflow and namespace names
 	baseName := normalizeName(workflowCRD.Name)
 	if baseName == "" {

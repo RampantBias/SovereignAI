@@ -231,6 +231,18 @@ spec:
                         - version
                         type: object
                       type: array
+                    requiresApproval:
+                      description: ApprovalRequirement names the earlier human gate
+                        and shared artifact input.
+                      properties:
+                        step:
+                          type: string
+                        subject:
+                          type: string
+                      required:
+                      - step
+                      - subject
+                      type: object
                     timeout:
                       type: string
                     utility:
