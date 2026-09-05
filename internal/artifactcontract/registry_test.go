@@ -77,8 +77,12 @@ func TestCheckedInCalculatorChangeRequestMatchesFrozenContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateContract(ChangeRequestContract, data); err != nil {
-		t.Fatalf("checked-in calculator change request is invalid: %v", err)
+	prepared, err := PrepareChangeRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateContract(ChangeRequestContract, prepared); err != nil {
+		t.Fatalf("prepared calculator change request is invalid: %v", err)
 	}
 }
 

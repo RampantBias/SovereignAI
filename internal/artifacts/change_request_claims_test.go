@@ -2,10 +2,11 @@ package artifacts
 
 import (
 	"encoding/json"
-	"github.com/SovereignAI/internal/api/v1alpha1"
-	"github.com/SovereignAI/internal/artifactcontract"
 	"strings"
 	"testing"
+
+	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
 )
 
 func TestChangeRequestClaimsRequireExactValidatedCriteria(t *testing.T) {
@@ -23,7 +24,7 @@ func TestChangeRequestClaimsRequireExactValidatedCriteria(t *testing.T) {
 	}
 	for _, mutate := range []func(*v1alpha1.ArtifactClaims){
 		func(c *v1alpha1.ArtifactClaims) { c.ChangeRequest.AcceptanceCriteria = nil },
-		func(c *v1alpha1.ArtifactClaims) { c.ChangeRequest.AcceptanceCriteria[0].ID = "AC-999" },
+		func(c *v1alpha1.ArtifactClaims) { c.ChangeRequest.AcceptanceCriteria[0].ID = "RQ-999" },
 		func(c *v1alpha1.ArtifactClaims) {
 			c.ChangeRequest.AcceptanceCriteria[0].Digest = "sha256:" + strings.Repeat("0", 64)
 		},

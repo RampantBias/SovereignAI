@@ -104,6 +104,15 @@ func ValidateClaims(contract v1alpha1.ContractReference, claims *v1alpha1.Artifa
 	}
 
 	switch key {
+	case artifactcontract.ChangeRequestContract:
+		if claims.ChangeRequest == nil {
+			return fmt.Errorf("contract %q requires changeRequest claims", key)
+		}
+		identities := make([]artifactcontract.CriterionIdentityV1, len(claims.ChangeRequest.AcceptanceCriteria))
+		for i, criterion := range claims.ChangeRequest.AcceptanceCriteria {
+			identities[i] = artifactcontract.CriterionIdentityV1{ID: criterion.ID, Digest: criterion.Digest}
+		}
+		return artifactcontract.ValidateCriterionIdentities(identities, claims.ChangeRequest.AcceptanceCriteriaSetDigest)
 	case artifactcontract.CandidateRevisionContract:
 		value := claims.CandidateRevision
 		if value == nil {
