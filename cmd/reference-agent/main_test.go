@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/artifactcontract"
@@ -610,6 +611,247 @@ func TestCompactWorkspaceMutationHistoryPreservesFailedMutation(t *testing.T) {
 	gotCall, gotResult := compactWorkspaceMutationHistory(call, resultText, nil, true)
 	if gotCall != call || gotResult != resultText {
 		t.Fatalf("failed mutation was compacted: call=%#v result=%q", gotCall, gotResult)
+	}
+}
+
+func TestWorkspaceModelHistoryCompactsSupersededIdenticalRead(t *testing.T) {
+	history := workspaceModelHistory{
+		latestReads:          map[string]workspaceReadHistory{},
+		rejectedReplacements: map[string][]workspaceHistoryLocation{},
+	}
+	content := strings.Repeat("package calculator\n", 200)
+	result := map[string]any{
+		"path": "src/main_test.go", "digest": "sha256:same", "content": content, "source": "base",
+	}
+	encodedResult, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCall := inference.ToolCall{
+		ID: "read-1", Type: "function",
+		Function: inference.ToolCallFunction{
+			Name: agentcontract.CapabilityWorkspaceRead, Arguments: `{"path":"src/main_test.go"}`,
+		},
+	}
+	messages := []inference.Message{
+		{Role: "assistant", ToolCalls: []inference.ToolCall{firstCall}},
+		{Role: "tool", ToolCallID: firstCall.ID, Content: string(encodedResult)},
+	}
+	history.observe(
+		messages,
+		firstCall,
+		string(encodedResult),
+		result,
+		false,
+		workspaceHistoryLocation{assistantMessageIndex: 0, toolCallIndex: 0, toolMessageIndex: 1},
+	)
+
+	secondCall := firstCall
+	secondCall.ID = "read-2"
+	messages = append(messages,
+		inference.Message{Role: "assistant", ToolCalls: []inference.ToolCall{secondCall}},
+		inference.Message{Role: "tool", ToolCallID: secondCall.ID, Content: string(encodedResult)},
+	)
+	history.observe(
+		messages,
+		secondCall,
+		string(encodedResult),
+		result,
+		false,
+		workspaceHistoryLocation{assistantMessageIndex: 2, toolCallIndex: 0, toolMessageIndex: 3},
+	)
+
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(messages[1].Content), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := receipt["content"]; exists {
+		t.Fatal("superseded workspace read retained full file content")
+	}
+	if receipt["path"] != "src/main_test.go" ||
+		receipt["digest"] != "sha256:same" ||
+		receipt["historyCompacted"] != true ||
+		receipt["supersededByIdenticalRead"] != true ||
+		receipt["contentBytes"] != float64(len([]byte(content))) {
+		t.Fatalf("unexpected compacted read receipt: %#v", receipt)
+	}
+	var latest map[string]any
+	if err := json.Unmarshal([]byte(messages[3].Content), &latest); err != nil {
+		t.Fatal(err)
+	}
+	if latest["content"] != content {
+		t.Fatal("newest workspace read did not retain full file content")
+	}
+}
+
+func TestWorkspaceModelHistoryCompactsRejectedReplaceAfterReread(t *testing.T) {
+	history := workspaceModelHistory{
+		latestReads:          map[string]workspaceReadHistory{},
+		rejectedReplacements: map[string][]workspaceHistoryLocation{},
+	}
+	oldText := strings.Repeat("invented stale test\n", 100)
+	newText := strings.Repeat("replacement test\n", 100)
+	arguments, err := json.Marshal(map[string]any{
+		"path": "src/main_test.go", "oldText": oldText, "newText": newText, "expectedOccurrences": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaceCall := inference.ToolCall{
+		ID: "replace-1", Type: "function",
+		Function: inference.ToolCallFunction{
+			Name: agentcontract.CapabilityWorkspaceReplace, Arguments: string(arguments),
+		},
+	}
+	rejection := `oldText occurs 0 times in "src/main_test.go", expected 1`
+	messages := []inference.Message{
+		{Role: "assistant", ToolCalls: []inference.ToolCall{replaceCall}},
+		{Role: "tool", ToolCallID: replaceCall.ID, Content: rejection},
+	}
+	replaceLocation := workspaceHistoryLocation{assistantMessageIndex: 0, toolCallIndex: 0, toolMessageIndex: 1}
+	history.observe(messages, replaceCall, rejection, nil, true, replaceLocation)
+	var retainedArguments map[string]any
+	if err := json.Unmarshal([]byte(messages[0].ToolCalls[0].Function.Arguments), &retainedArguments); err != nil {
+		t.Fatal(err)
+	}
+	if retainedArguments["oldText"] != oldText || retainedArguments["newText"] != newText {
+		t.Fatal("rejected replacement was compacted before a recovery read")
+	}
+
+	fileContent := "package calculator\n\nfunc TestCalculator(t *testing.T) {}\n"
+	readResult := map[string]any{
+		"path": "src/main_test.go", "digest": "sha256:current", "content": fileContent, "source": "base",
+	}
+	encodedRead, err := json.Marshal(readResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readCall := inference.ToolCall{
+		ID: "read-1", Type: "function",
+		Function: inference.ToolCallFunction{
+			Name: agentcontract.CapabilityWorkspaceRead, Arguments: `{"path":"src/main_test.go"}`,
+		},
+	}
+	messages = append(messages,
+		inference.Message{Role: "assistant", ToolCalls: []inference.ToolCall{readCall}},
+		inference.Message{Role: "tool", ToolCallID: readCall.ID, Content: string(encodedRead)},
+	)
+	history.observe(
+		messages,
+		readCall,
+		string(encodedRead),
+		readResult,
+		false,
+		workspaceHistoryLocation{assistantMessageIndex: 2, toolCallIndex: 0, toolMessageIndex: 3},
+	)
+
+	compactedArguments := messages[0].ToolCalls[0].Function.Arguments
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(compactedArguments), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := receipt["oldText"]; exists {
+		t.Fatal("rejected replacement retained stale oldText after recovery read")
+	}
+	if _, exists := receipt["newText"]; exists {
+		t.Fatal("rejected replacement retained stale newText after recovery read")
+	}
+	if receipt["path"] != "src/main_test.go" ||
+		receipt["oldTextDigest"] != artifactcontract.DigestBytes([]byte(oldText)) ||
+		receipt["newTextDigest"] != artifactcontract.DigestBytes([]byte(newText)) ||
+		receipt["historyCompacted"] != true {
+		t.Fatalf("unexpected compacted replacement arguments: %#v", receipt)
+	}
+	var rejectionReceipt map[string]any
+	if err := json.Unmarshal([]byte(messages[1].Content), &rejectionReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if rejectionReceipt["code"] != "AnchorNotFound" ||
+		rejectionReceipt["supersededByWorkspaceRead"] != true {
+		t.Fatalf("unexpected compacted rejection result: %#v", rejectionReceipt)
+	}
+	var recoveryRead map[string]any
+	if err := json.Unmarshal([]byte(messages[3].Content), &recoveryRead); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryRead["content"] != fileContent {
+		t.Fatal("recovery read did not remain complete")
+	}
+}
+
+func TestChatWithContextRetryUsesReducedOutputBudget(t *testing.T) {
+	var requestedTokens []int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		requestedTokens = append(requestedTokens, payload.MaxTokens)
+		if len(requestedTokens) == 1 {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":{"message":"This model's maximum context length is 12288 tokens."}}`))
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"tool_calls":[{"id":"complete-1","type":"function","function":{"name":"agent_complete","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := inference.NewClient(server.URL, time.Second, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := chatWithContextRetry(context.Background(), client, inference.ChatRequest{
+		Model:           "test-model",
+		Messages:        []inference.Message{{Role: "user", Content: "finish"}},
+		MaxOutputTokens: maxOutputTokens,
+		Tools: []inference.ToolDefinition{{Type: "function", Function: inference.ToolFunctionDefinition{
+			Name: agentcontract.CapabilityAgentComplete, Parameters: json.RawMessage(`{"type":"object"}`),
+		}}},
+		ToolChoice: inference.ToolChoice{Mode: inference.ToolChoiceRequired},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != agentcontract.CapabilityAgentComplete {
+		t.Fatalf("unexpected retry response: %#v", response)
+	}
+	if len(requestedTokens) != 2 ||
+		requestedTokens[0] != maxOutputTokens ||
+		requestedTokens[1] != contextRetryOutputTokens {
+		t.Fatalf("requested output-token budgets = %v", requestedTokens)
+	}
+}
+
+func TestChatWithContextRetryDoesNotRetryOtherFailures(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = writer.Write([]byte("inference backend unavailable"))
+	}))
+	defer server.Close()
+
+	client, err := inference.NewClient(server.URL, time.Second, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = chatWithContextRetry(context.Background(), client, inference.ChatRequest{
+		Model:           "test-model",
+		Messages:        []inference.Message{{Role: "user", Content: "finish"}},
+		MaxOutputTokens: maxOutputTokens,
+		Tools: []inference.ToolDefinition{{Type: "function", Function: inference.ToolFunctionDefinition{
+			Name: agentcontract.CapabilityAgentComplete, Parameters: json.RawMessage(`{"type":"object"}`),
+		}}},
+		ToolChoice: inference.ToolChoice{Mode: inference.ToolChoiceRequired},
+	})
+	if err == nil {
+		t.Fatal("non-context inference failure unexpectedly succeeded")
+	}
+	if requests != 1 {
+		t.Fatalf("non-context inference failure made %d requests, want 1", requests)
 	}
 }
 

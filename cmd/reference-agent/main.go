@@ -26,6 +26,7 @@ import (
 const (
 	maxResponseBytes                          = 65792
 	maxOutputTokens                           = 4096
+	contextRetryOutputTokens                  = 2048
 	maxPromptBytes                            = 4 << 20 // 4 MB
 	timeout                                   = 600 * time.Second
 	temperature                               = 0.2
@@ -55,6 +56,25 @@ func (r *materializationRejection) Error() string { return r.diagnostic.Message 
 
 type toolCallTracker struct {
 	counts map[string]int
+}
+
+type workspaceHistoryLocation struct {
+	assistantMessageIndex int
+	toolCallIndex         int
+	toolMessageIndex      int
+}
+
+type workspaceReadHistory struct {
+	location        workspaceHistoryLocation
+	compactedResult string
+}
+
+// workspaceModelHistory keeps the inference transcript focused on the current
+// workspace state. rawInferenceHistory remains append-only for diagnostics and
+// lineage; only the model-facing messages referenced here are compacted.
+type workspaceModelHistory struct {
+	latestReads          map[string]workspaceReadHistory
+	rejectedReplacements map[string][]workspaceHistoryLocation
 }
 
 func main() {
@@ -238,6 +258,10 @@ func generateWithMCP(
 	workspaceInspected := false
 	workspaceDirty := false
 	tracker := toolCallTracker{counts: map[string]int{}}
+	modelHistory := workspaceModelHistory{
+		latestReads:          map[string]workspaceReadHistory{},
+		rejectedReplacements: map[string][]workspaceHistoryLocation{},
+	}
 	for round := 0; round < maxToolRounds; round++ {
 		evidenceReady := candidateReady
 		if materializer.Kind == artifactcontract.MaterializationWorkspace {
@@ -264,7 +288,7 @@ func generateWithMCP(
 			ToolChoice: toolChoice,
 		}
 		writeDebugContext(input, artifacts, round+1, request, rawMessages)
-		response, err := client.Chat(ctx, request)
+		response, err := chatWithContextRetry(ctx, client, request)
 		if err != nil {
 			return generationOutcome{}, fmt.Errorf("inference tool round %d: %w", round+1, err)
 		}
@@ -328,6 +352,18 @@ func generateWithMCP(
 			messages[modelAssistantIndex].ToolCalls[index] = modelCall
 			messages = append(messages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: modelResultText})
 			rawMessages = append(rawMessages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: resultText})
+			modelHistory.observe(
+				messages,
+				call,
+				resultText,
+				result.StructuredContent,
+				result.IsError,
+				workspaceHistoryLocation{
+					assistantMessageIndex: modelAssistantIndex,
+					toolCallIndex:         index,
+					toolMessageIndex:      len(messages) - 1,
+				},
+			)
 			if materializer.Kind == artifactcontract.MaterializationWorkspace &&
 				call.Function.Name == agentcontract.CapabilityWorkspaceRead && !result.IsError {
 				workspaceInspected = true
@@ -410,6 +446,185 @@ func generateWithMCP(
 	return generationOutcome{Content: content, Summary: completion.Summary}, nil
 }
 
+func chatWithContextRetry(
+	ctx context.Context,
+	client *inference.Client,
+	request inference.ChatRequest,
+) (inference.ChatResponse, error) {
+	response, err := client.Chat(ctx, request)
+	if err == nil || request.MaxOutputTokens <= contextRetryOutputTokens || !isContextLengthError(err) {
+		return response, err
+	}
+
+	retry := request
+	retry.MaxOutputTokens = contextRetryOutputTokens
+	log.Printf(
+		"retrying inference after context-length rejection maxOutputTokens=%d retryMaxOutputTokens=%d error=%q",
+		request.MaxOutputTokens,
+		retry.MaxOutputTokens,
+		agentcontract.SanitizeRetryFeedbackMessage(err.Error()),
+	)
+	return client.Chat(ctx, retry)
+}
+
+func isContextLengthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"maximum context length",
+		"context length exceeded",
+		"context_length_exceeded",
+		"max_model_len",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (history *workspaceModelHistory) observe(
+	messages []inference.Message,
+	call inference.ToolCall,
+	resultText string,
+	structuredResult any,
+	isError bool,
+	location workspaceHistoryLocation,
+) {
+	if isError && call.Function.Name == agentcontract.CapabilityWorkspaceReplace {
+		if path := workspaceToolCallPath(call); path != "" {
+			history.rejectedReplacements[path] = append(history.rejectedReplacements[path], location)
+		}
+		return
+	}
+	if isError || call.Function.Name != agentcontract.CapabilityWorkspaceRead {
+		return
+	}
+
+	key, path, compactedResult, ok := compactWorkspaceReadResult(resultText, structuredResult)
+	if !ok {
+		return
+	}
+	if previous, exists := history.latestReads[key]; exists &&
+		validWorkspaceHistoryLocation(messages, previous.location) {
+		originalBytes := len([]byte(messages[previous.location.toolMessageIndex].Content))
+		messages[previous.location.toolMessageIndex].Content = previous.compactedResult
+		log.Printf(
+			"compacted superseded workspace read history path=%s resultBytes=%d compactResultBytes=%d",
+			path,
+			originalBytes,
+			len([]byte(previous.compactedResult)),
+		)
+	}
+	history.latestReads[key] = workspaceReadHistory{
+		location:        location,
+		compactedResult: compactedResult,
+	}
+	history.compactRejectedWorkspaceReplacements(messages, path)
+}
+
+func (history *workspaceModelHistory) compactRejectedWorkspaceReplacements(
+	messages []inference.Message,
+	path string,
+) {
+	locations := history.rejectedReplacements[path]
+	for _, location := range locations {
+		if !validWorkspaceHistoryLocation(messages, location) {
+			continue
+		}
+		call := messages[location.assistantMessageIndex].ToolCalls[location.toolCallIndex]
+		compactedCall, ok := compactWorkspaceMutationArguments(call)
+		if !ok {
+			continue
+		}
+		originalArgumentBytes := len([]byte(call.Function.Arguments))
+		originalResult := messages[location.toolMessageIndex].Content
+		compactedResult := compactRejectedWorkspaceReplaceResult(originalResult)
+		messages[location.assistantMessageIndex].ToolCalls[location.toolCallIndex] = compactedCall
+		messages[location.toolMessageIndex].Content = compactedResult
+		log.Printf(
+			"compacted rejected workspace replacement history path=%s argumentBytes=%d compactArgumentBytes=%d resultBytes=%d compactResultBytes=%d",
+			path,
+			originalArgumentBytes,
+			len([]byte(compactedCall.Function.Arguments)),
+			len([]byte(originalResult)),
+			len([]byte(compactedResult)),
+		)
+	}
+	delete(history.rejectedReplacements, path)
+}
+
+func validWorkspaceHistoryLocation(messages []inference.Message, location workspaceHistoryLocation) bool {
+	return location.assistantMessageIndex >= 0 &&
+		location.assistantMessageIndex < len(messages) &&
+		location.toolCallIndex >= 0 &&
+		location.toolCallIndex < len(messages[location.assistantMessageIndex].ToolCalls) &&
+		location.toolMessageIndex >= 0 &&
+		location.toolMessageIndex < len(messages)
+}
+
+func workspaceToolCallPath(call inference.ToolCall) string {
+	var arguments struct {
+		Path string `json:"path"`
+	}
+	if json.Unmarshal([]byte(call.Function.Arguments), &arguments) != nil {
+		return ""
+	}
+	return arguments.Path
+}
+
+func compactWorkspaceReadResult(
+	resultText string,
+	structuredResult any,
+) (key string, path string, compactedResult string, ok bool) {
+	var result map[string]any
+	if structuredResult != nil {
+		if encoded, err := json.Marshal(structuredResult); err == nil {
+			_ = json.Unmarshal(encoded, &result)
+		}
+	}
+	if result == nil {
+		if json.Unmarshal([]byte(resultText), &result) != nil {
+			return "", "", "", false
+		}
+	}
+	path, pathOK := result["path"].(string)
+	digest, digestOK := result["digest"].(string)
+	if !pathOK || path == "" || !digestOK || digest == "" {
+		return "", "", "", false
+	}
+	if content, exists := result["content"].(string); exists {
+		result["contentBytes"] = len([]byte(content))
+	}
+	delete(result, "content")
+	delete(result, "source")
+	result["historyCompacted"] = true
+	result["supersededByIdenticalRead"] = true
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", "", "", false
+	}
+	return path + "\x00" + digest, path, string(encoded), true
+}
+
+func compactRejectedWorkspaceReplaceResult(resultText string) string {
+	code := "WorkspaceReplaceRejected"
+	if strings.Contains(resultText, "oldText occurs 0 times") {
+		code = "AnchorNotFound"
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"code":                      code,
+		"historyCompacted":          true,
+		"supersededByWorkspaceRead": true,
+	})
+	if err != nil {
+		return resultText
+	}
+	return string(encoded)
+}
+
 func toolsForEvidenceState(
 	tools []inference.ToolDefinition,
 	kind artifactcontract.MaterializationKind,
@@ -440,26 +655,18 @@ func toolsForWorkspaceInspectionState(
 	)
 }
 
-func compactWorkspaceMutationHistory(
-	call inference.ToolCall,
-	resultText string,
-	structuredResult any,
-	isError bool,
-) (inference.ToolCall, string) {
-	if isError {
-		return call, resultText
-	}
+func compactWorkspaceMutationArguments(call inference.ToolCall) (inference.ToolCall, bool) {
 	switch call.Function.Name {
 	case agentcontract.CapabilityWorkspaceWrite,
 		agentcontract.CapabilityWorkspaceCreate,
 		agentcontract.CapabilityWorkspaceReplace:
 	default:
-		return call, resultText
+		return call, false
 	}
 
 	var arguments map[string]any
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
-		return call, resultText
+		return call, false
 	}
 	compactedArguments := map[string]any{"historyCompacted": true}
 	if path, ok := arguments["path"].(string); ok && path != "" {
@@ -478,6 +685,23 @@ func compactWorkspaceMutationHistory(
 	}
 	encodedArguments, err := json.Marshal(compactedArguments)
 	if err != nil {
+		return call, false
+	}
+	call.Function.Arguments = string(encodedArguments)
+	return call, true
+}
+
+func compactWorkspaceMutationHistory(
+	call inference.ToolCall,
+	resultText string,
+	structuredResult any,
+	isError bool,
+) (inference.ToolCall, string) {
+	if isError {
+		return call, resultText
+	}
+	compactedCall, ok := compactWorkspaceMutationArguments(call)
+	if !ok {
 		return call, resultText
 	}
 
@@ -497,8 +721,7 @@ func compactWorkspaceMutationHistory(
 		return call, resultText
 	}
 
-	call.Function.Arguments = string(encodedArguments)
-	return call, string(encodedResult)
+	return compactedCall, string(encodedResult)
 }
 
 func isWorkspaceMutation(name string) bool {
