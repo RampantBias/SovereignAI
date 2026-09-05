@@ -164,6 +164,17 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 
 	// Handle step transition
 	switch attempt.Status.Phase {
+	case v1alpha1.PhaseAwaitingApproval:
+		// The active attempt carries approval state from its ApprovalRequest.
+		// Preserve the gate as active until that attempt completes.
+		if workflow.Status.Phase == string(v1alpha1.PhaseAwaitingApproval) && workflow.Status.ObservedGeneration == workflow.Generation {
+			return ctrl.Result{}, nil
+		}
+		_, err := r.updateWorkflowStatus(ctx, request.NamespacedName, func(latest *v1alpha1.SovereignWorkflow) {
+			latest.Status.Phase = string(v1alpha1.PhaseAwaitingApproval)
+			latest.Status.ObservedGeneration = latest.Generation
+		})
+		return ctrl.Result{}, err
 	// On PhaseSucceeded, we either create an attempt for the next step or we mark workflow as succeeded
 	case v1alpha1.PhaseSucceeded:
 		next, found := nextStep(workflow.Spec.Steps, attempt.Spec.StepName)
