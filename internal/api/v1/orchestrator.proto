@@ -10,6 +10,7 @@ service OrchestratorService {
   rpc CreateWorkflow(CreateWorkflowRequest) returns (CreateWorkflowResponse);
   rpc ListWorkflows (ListWorkflowsRequest) returns (ListWorkflowsResponse);
   rpc GetWorkflowTimeline (GetWorkflowTimelineRequest) returns (GetWorkflowTimelineResponse);
+  rpc SubmitApproval (ApprovalSubmission) returns (ApprovalResponse);
 }
 
 message CreateProjectRequest {
@@ -106,4 +107,16 @@ message AuditEventDTO {
 
 message GetWorkflowTimelineResponse {
   repeated AuditEventDTO events = 1;
+}
+
+message ApprovalSubmission {
+  // show is read-only; approve and deny require the inspected request UID.
+  string action = 1;
+  string workflow_id = 2;
+  string request_uid = 3;
+}
+
+message ApprovalResponse {
+  bool success = 1;
+  string message = 2;
 }

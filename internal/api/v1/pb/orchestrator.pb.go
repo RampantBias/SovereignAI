@@ -7,12 +7,11 @@
 package pb
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -625,7 +624,7 @@ type AuditSubjectDTO struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Namespace     string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	WorkflowName  string                 `protobuf:"bytes,3,opt,name=workflowName,proto3" json:"workflow,omitempty"`
+	Workflow      string                 `protobuf:"bytes,3,opt,name=workflow,proto3" json:"workflow,omitempty"`
 	Step          string                 `protobuf:"bytes,4,opt,name=step,proto3" json:"step,omitempty"`
 	Attempt       int32                  `protobuf:"varint,5,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -678,7 +677,7 @@ func (x *AuditSubjectDTO) GetNamespace() string {
 
 func (x *AuditSubjectDTO) GetWorkflow() string {
 	if x != nil {
-		return x.WorkflowName
+		return x.Workflow
 	}
 	return ""
 }
@@ -905,6 +904,119 @@ func (x *GetWorkflowTimelineResponse) GetEvents() []*AuditEventDTO {
 	return nil
 }
 
+type ApprovalSubmission struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// show is read-only; approve and deny require the inspected request UID.
+	Action        string `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	WorkflowId    string `protobuf:"bytes,2,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	RequestUid    string `protobuf:"bytes,3,opt,name=request_uid,json=requestUid,proto3" json:"request_uid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApprovalSubmission) Reset() {
+	*x = ApprovalSubmission{}
+	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApprovalSubmission) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApprovalSubmission) ProtoMessage() {}
+
+func (x *ApprovalSubmission) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApprovalSubmission.ProtoReflect.Descriptor instead.
+func (*ApprovalSubmission) Descriptor() ([]byte, []int) {
+	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ApprovalSubmission) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *ApprovalSubmission) GetWorkflowId() string {
+	if x != nil {
+		return x.WorkflowId
+	}
+	return ""
+}
+
+func (x *ApprovalSubmission) GetRequestUid() string {
+	if x != nil {
+		return x.RequestUid
+	}
+	return ""
+}
+
+type ApprovalResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApprovalResponse) Reset() {
+	*x = ApprovalResponse{}
+	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApprovalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApprovalResponse) ProtoMessage() {}
+
+func (x *ApprovalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApprovalResponse.ProtoReflect.Descriptor instead.
+func (*ApprovalResponse) Descriptor() ([]byte, []int) {
+	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ApprovalResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ApprovalResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_internal_api_v1_orchestrator_proto protoreflect.FileDescriptor
 
 const file_internal_api_v1_orchestrator_proto_rawDesc = "" +
@@ -987,13 +1099,23 @@ const file_internal_api_v1_orchestrator_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"L\n" +
 	"\x1bGetWorkflowTimelineResponse\x12-\n" +
-	"\x06events\x18\x01 \x03(\v2\x15.api.v1.AuditEventDTOR\x06events2\xb0\x03\n" +
+	"\x06events\x18\x01 \x03(\v2\x15.api.v1.AuditEventDTOR\x06events\"n\n" +
+	"\x12ApprovalSubmission\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x12\x1f\n" +
+	"\vworkflow_id\x18\x02 \x01(\tR\n" +
+	"workflowId\x12\x1f\n" +
+	"\vrequest_uid\x18\x03 \x01(\tR\n" +
+	"requestUid\"F\n" +
+	"\x10ApprovalResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xf8\x03\n" +
 	"\x13OrchestratorService\x12L\n" +
 	"\rCreateProject\x12\x1c.api.v1.CreateProjectRequest\x1a\x1d.api.v1.CreateProjectResponse\x12L\n" +
 	"\rCleanWorkflow\x12\x1c.api.v1.CleanWorkflowRequest\x1a\x1d.api.v1.CleanWorkflowResponse\x12O\n" +
 	"\x0eCreateWorkflow\x12\x1d.api.v1.CreateWorkflowRequest\x1a\x1e.api.v1.CreateWorkflowResponse\x12L\n" +
 	"\rListWorkflows\x12\x1c.api.v1.ListWorkflowsRequest\x1a\x1d.api.v1.ListWorkflowsResponse\x12^\n" +
-	"\x13GetWorkflowTimeline\x12\".api.v1.GetWorkflowTimelineRequest\x1a#.api.v1.GetWorkflowTimelineResponseB\vZ\tapi/v1/pbb\x06proto3"
+	"\x13GetWorkflowTimeline\x12\".api.v1.GetWorkflowTimelineRequest\x1a#.api.v1.GetWorkflowTimelineResponse\x12F\n" +
+	"\x0eSubmitApproval\x12\x1a.api.v1.ApprovalSubmission\x1a\x18.api.v1.ApprovalResponseB\vZ\tapi/v1/pbb\x06proto3"
 
 var (
 	file_internal_api_v1_orchestrator_proto_rawDescOnce sync.Once
@@ -1007,7 +1129,7 @@ func file_internal_api_v1_orchestrator_proto_rawDescGZIP() []byte {
 	return file_internal_api_v1_orchestrator_proto_rawDescData
 }
 
-var file_internal_api_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_internal_api_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_internal_api_v1_orchestrator_proto_goTypes = []any{
 	(*CreateProjectRequest)(nil),        // 0: api.v1.CreateProjectRequest
 	(*CreateProjectResponse)(nil),       // 1: api.v1.CreateProjectResponse
@@ -1023,28 +1145,32 @@ var file_internal_api_v1_orchestrator_proto_goTypes = []any{
 	(*AuditSubjectDTO)(nil),             // 11: api.v1.AuditSubjectDTO
 	(*AuditEventDTO)(nil),               // 12: api.v1.AuditEventDTO
 	(*GetWorkflowTimelineResponse)(nil), // 13: api.v1.GetWorkflowTimelineResponse
-	nil,                                 // 14: api.v1.CreateProjectRequest.ExtendedMetadataEntry
-	nil,                                 // 15: api.v1.AuditEventDTO.ReferencesEntry
+	(*ApprovalSubmission)(nil),          // 14: api.v1.ApprovalSubmission
+	(*ApprovalResponse)(nil),            // 15: api.v1.ApprovalResponse
+	nil,                                 // 16: api.v1.CreateProjectRequest.ExtendedMetadataEntry
+	nil,                                 // 17: api.v1.AuditEventDTO.ReferencesEntry
 }
 var file_internal_api_v1_orchestrator_proto_depIdxs = []int32{
-	14, // 0: api.v1.CreateProjectRequest.extended_metadata:type_name -> api.v1.CreateProjectRequest.ExtendedMetadataEntry
+	16, // 0: api.v1.CreateProjectRequest.extended_metadata:type_name -> api.v1.CreateProjectRequest.ExtendedMetadataEntry
 	7,  // 1: api.v1.ListWorkflowsResponse.workflows:type_name -> api.v1.WorkflowStatusDTO
 	10, // 2: api.v1.AuditEventDTO.actor:type_name -> api.v1.AuditActorDTO
 	11, // 3: api.v1.AuditEventDTO.subject:type_name -> api.v1.AuditSubjectDTO
-	15, // 4: api.v1.AuditEventDTO.references:type_name -> api.v1.AuditEventDTO.ReferencesEntry
+	17, // 4: api.v1.AuditEventDTO.references:type_name -> api.v1.AuditEventDTO.ReferencesEntry
 	12, // 5: api.v1.GetWorkflowTimelineResponse.events:type_name -> api.v1.AuditEventDTO
 	0,  // 6: api.v1.OrchestratorService.CreateProject:input_type -> api.v1.CreateProjectRequest
 	2,  // 7: api.v1.OrchestratorService.CleanWorkflow:input_type -> api.v1.CleanWorkflowRequest
 	4,  // 8: api.v1.OrchestratorService.CreateWorkflow:input_type -> api.v1.CreateWorkflowRequest
 	6,  // 9: api.v1.OrchestratorService.ListWorkflows:input_type -> api.v1.ListWorkflowsRequest
 	9,  // 10: api.v1.OrchestratorService.GetWorkflowTimeline:input_type -> api.v1.GetWorkflowTimelineRequest
-	1,  // 11: api.v1.OrchestratorService.CreateProject:output_type -> api.v1.CreateProjectResponse
-	3,  // 12: api.v1.OrchestratorService.CleanWorkflow:output_type -> api.v1.CleanWorkflowResponse
-	5,  // 13: api.v1.OrchestratorService.CreateWorkflow:output_type -> api.v1.CreateWorkflowResponse
-	8,  // 14: api.v1.OrchestratorService.ListWorkflows:output_type -> api.v1.ListWorkflowsResponse
-	13, // 15: api.v1.OrchestratorService.GetWorkflowTimeline:output_type -> api.v1.GetWorkflowTimelineResponse
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
+	14, // 11: api.v1.OrchestratorService.SubmitApproval:input_type -> api.v1.ApprovalSubmission
+	1,  // 12: api.v1.OrchestratorService.CreateProject:output_type -> api.v1.CreateProjectResponse
+	3,  // 13: api.v1.OrchestratorService.CleanWorkflow:output_type -> api.v1.CleanWorkflowResponse
+	5,  // 14: api.v1.OrchestratorService.CreateWorkflow:output_type -> api.v1.CreateWorkflowResponse
+	8,  // 15: api.v1.OrchestratorService.ListWorkflows:output_type -> api.v1.ListWorkflowsResponse
+	13, // 16: api.v1.OrchestratorService.GetWorkflowTimeline:output_type -> api.v1.GetWorkflowTimelineResponse
+	15, // 17: api.v1.OrchestratorService.SubmitApproval:output_type -> api.v1.ApprovalResponse
+	12, // [12:18] is the sub-list for method output_type
+	6,  // [6:12] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -1061,7 +1187,7 @@ func file_internal_api_v1_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_api_v1_orchestrator_proto_rawDesc), len(file_internal_api_v1_orchestrator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

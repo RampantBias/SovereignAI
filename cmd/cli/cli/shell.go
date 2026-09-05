@@ -17,7 +17,6 @@ type ShellDependencies struct {
 }
 
 func RunShell(ctx context.Context, shellDependencies ShellDependencies) {
-	rootCmd := NewRootCmd(shellDependencies.Client)
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Sovereign Orchestrator Shell Ready.")
 
@@ -33,6 +32,8 @@ func RunShell(ctx context.Context, shellDependencies ShellDependencies) {
 		if len(args) == 0 {
 			continue
 		}
+		// Each shell submission gets fresh flags, including the inspected approval UID.
+		rootCmd := NewRootCmd(shellDependencies.Client)
 		rootCmd.SetArgs(args)
 		if err := rootCmd.ExecuteContext(ctx); err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -52,6 +53,7 @@ func NewRootCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 		NewCreateCmd(client),
 		NewCleanCmd(client),
 		NewPlaybackCmd(client),
+		NewApprovalCmd(client),
 	)
 	return rootCmd
 }

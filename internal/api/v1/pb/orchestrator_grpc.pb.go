@@ -24,6 +24,7 @@ const (
 	OrchestratorService_CreateWorkflow_FullMethodName      = "/api.v1.OrchestratorService/CreateWorkflow"
 	OrchestratorService_ListWorkflows_FullMethodName       = "/api.v1.OrchestratorService/ListWorkflows"
 	OrchestratorService_GetWorkflowTimeline_FullMethodName = "/api.v1.OrchestratorService/GetWorkflowTimeline"
+	OrchestratorService_SubmitApproval_FullMethodName      = "/api.v1.OrchestratorService/SubmitApproval"
 )
 
 // OrchestratorServiceClient is the client API for OrchestratorService service.
@@ -37,6 +38,7 @@ type OrchestratorServiceClient interface {
 	CreateWorkflow(ctx context.Context, in *CreateWorkflowRequest, opts ...grpc.CallOption) (*CreateWorkflowResponse, error)
 	ListWorkflows(ctx context.Context, in *ListWorkflowsRequest, opts ...grpc.CallOption) (*ListWorkflowsResponse, error)
 	GetWorkflowTimeline(ctx context.Context, in *GetWorkflowTimelineRequest, opts ...grpc.CallOption) (*GetWorkflowTimelineResponse, error)
+	SubmitApproval(ctx context.Context, in *ApprovalSubmission, opts ...grpc.CallOption) (*ApprovalResponse, error)
 }
 
 type orchestratorServiceClient struct {
@@ -97,6 +99,16 @@ func (c *orchestratorServiceClient) GetWorkflowTimeline(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *orchestratorServiceClient) SubmitApproval(ctx context.Context, in *ApprovalSubmission, opts ...grpc.CallOption) (*ApprovalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApprovalResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_SubmitApproval_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorServiceServer is the server API for OrchestratorService service.
 // All implementations must embed UnimplementedOrchestratorServiceServer
 // for forward compatibility.
@@ -108,6 +120,7 @@ type OrchestratorServiceServer interface {
 	CreateWorkflow(context.Context, *CreateWorkflowRequest) (*CreateWorkflowResponse, error)
 	ListWorkflows(context.Context, *ListWorkflowsRequest) (*ListWorkflowsResponse, error)
 	GetWorkflowTimeline(context.Context, *GetWorkflowTimelineRequest) (*GetWorkflowTimelineResponse, error)
+	SubmitApproval(context.Context, *ApprovalSubmission) (*ApprovalResponse, error)
 	mustEmbedUnimplementedOrchestratorServiceServer()
 }
 
@@ -132,6 +145,9 @@ func (UnimplementedOrchestratorServiceServer) ListWorkflows(context.Context, *Li
 }
 func (UnimplementedOrchestratorServiceServer) GetWorkflowTimeline(context.Context, *GetWorkflowTimelineRequest) (*GetWorkflowTimelineResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWorkflowTimeline not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) SubmitApproval(context.Context, *ApprovalSubmission) (*ApprovalResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitApproval not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) mustEmbedUnimplementedOrchestratorServiceServer() {}
 func (UnimplementedOrchestratorServiceServer) testEmbeddedByValue()                             {}
@@ -244,6 +260,24 @@ func _OrchestratorService_GetWorkflowTimeline_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorService_SubmitApproval_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApprovalSubmission)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).SubmitApproval(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_SubmitApproval_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).SubmitApproval(ctx, req.(*ApprovalSubmission))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorService_ServiceDesc is the grpc.ServiceDesc for OrchestratorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -270,6 +304,10 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetWorkflowTimeline",
 			Handler:    _OrchestratorService_GetWorkflowTimeline_Handler,
+		},
+		{
+			MethodName: "SubmitApproval",
+			Handler:    _OrchestratorService_SubmitApproval_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
