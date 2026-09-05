@@ -357,7 +357,10 @@ func TestAgentToolsWriteCandidateAndCompleteWithItsDigest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "main.go"), []byte("package main\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	changeRequest := []byte(`{"summary":"Add division","description":"Add division","acceptanceCriteria":[{"id":"AC-001","text":"84 / 2 returns 42","digest":"sha256:6b0a2b1a3065d86f8de1c2b62492721cc4e4b54c5b28f0b353481051ab377f55"}],"repositoryURL":"https://git.example.test/calculator.git","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteriaSetDigest":"sha256:7a432d61f057775ebbaf6bff186867999926106081dbd3725367d981348ecfaf"}`)
+	changeRequest := []byte(`{"summary":"Add division","description":"Add division","acceptanceCriteria":[{"id":"RQ-001","text":"84 / 2 returns 42","digest":"sha256:6ed7267c4acbd814ac73e6ff6fe256964162eee90ef24f2050da07a3d15687b9"}],"repositoryURL":"https://git.example.test/calculator.git","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","acceptanceCriteriaSetDigest":"sha256:9a78ef314f7aab43e9c0f3d5d410f4d6579473d01184189573b0699f5ab2383b"}`)
+	if err := artifactcontract.ValidateContract(artifactcontract.ChangeRequestContract, changeRequest); err != nil {
+		t.Fatalf("invalid change-request fixture: %v", err)
+	}
 	repositoryRevision := []byte(`{"repositoryURL":"https://git.example.test/calculator.git","requestedRevision":"main","resolvedCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","utilityOperation":{"namespace":"workflow","name":"initialize-001","uid":"utility-operation-uid"}}`)
 	changeRequestPath := filepath.Join(inputs, "change-request.json")
 	repositoryRevisionPath := filepath.Join(inputs, "repository-revision.json")
