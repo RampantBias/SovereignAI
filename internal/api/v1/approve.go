@@ -8,6 +8,7 @@ import (
 	"github.com/SovereignAI/internal/api/requestidentity"
 	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/domain/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -133,7 +134,7 @@ func buildApprovalDecision(identity requestidentity.Identity, choice v1alpha1.Ap
 	return &v1alpha1.ApprovalDecision{
 		ObjectMeta: metav1.ObjectMeta{
 			// One immutable decision per request. Kubernetes create arbitrates concurrent submissions.
-			Name:            "approval-" + string(approval.UID),
+			Name:            controllermeta.ApprovalDecisionName(approval.UID),
 			Namespace:       approval.Namespace,
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(approval, v1alpha1.GroupVersion.WithKind("ApprovalRequest"))},
 		},

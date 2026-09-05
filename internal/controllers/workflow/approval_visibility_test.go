@@ -4,7 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/SovereignAI/internal/api/requestidentity"
+	v1 "github.com/SovereignAI/internal/api/v1"
+	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/controllers/stepattempt"
 	batchv1 "k8s.io/api/batch/v1"
@@ -28,6 +32,7 @@ func TestWorkflowShowsApprovalWaitUntilActiveAttemptCompletes(t *testing.T) {
 			}
 			workflow := changeRequestWorkflow()
 			workflow.Generation = 1
+			workflow.Labels = map[string]string{controllermeta.LabelWorkflow: workflow.Spec.WorkflowID}
 			workflow.Spec.Steps = []v1alpha1.StepConfig{
 				{Name: "product-approval", Kind: v1alpha1.ExecutionKindHumanGate, Order: 1, MaxAttempts: 1,
 					Approval: &v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, RequiredGroups: []string{"maintainers"}, DenyBehavior: "Fail"}},
@@ -70,6 +75,9 @@ func TestWorkflowShowsApprovalWaitUntilActiveAttemptCompletes(t *testing.T) {
 			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(workflow)}
 			reconcile := func() {
 				t.Helper()
+				if _, err := approvalReconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(approval)}); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := attemptReconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(attempt)}); err != nil {
 					t.Fatal(err)
 				}
@@ -97,17 +105,17 @@ func TestWorkflowShowsApprovalWaitUntilActiveAttemptCompletes(t *testing.T) {
 				t.Fatal("merge operation started before approval attempt completed")
 			}
 
-			// Decision consumption is a separate change. Simulate its ApprovalRequest result,
-			// then let the real StepAttempt and Workflow reconcilers propagate it.
-			if err := kube.Get(ctx, client.ObjectKeyFromObject(approval), approval); err != nil {
-				t.Fatal(err)
-			}
-			approval.Status.Phase = outcome
+			// Submit through the API, then consume the decision through all three reconcilers.
+			action := "approve"
 			if outcome == v1alpha1.PhaseFailed {
-				approval.Status.FailureReason = "ApprovalDenied"
+				action = "deny"
 			}
-			if err := kube.Status().Update(ctx, approval); err != nil {
-				t.Fatal(err)
+			humanCtx := requestidentity.WithIdentity(ctx, requestidentity.Identity{Subject: "maintainer", Groups: []string{"maintainers"}})
+			response, err := v1.NewServer(kube, nil).SubmitApproval(humanCtx, &pb.ApprovalSubmission{
+				Action: action, WorkflowId: workflow.Spec.WorkflowID, RequestUid: string(approval.UID),
+			})
+			if err != nil || !response.GetSuccess() {
+				t.Fatalf("approval submission = %v, %v", response, err)
 			}
 			reconcile()
 			reconcile()
