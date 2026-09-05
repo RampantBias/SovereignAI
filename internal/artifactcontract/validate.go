@@ -33,7 +33,7 @@ func (v ChangeRequest) Validate() error {
 	if err := boundedText("description", v.Description, 16<<10); err != nil {
 		return err
 	}
-	if err := validateStringList("acceptanceCriteria", v.AcceptanceCriteria, 1, 32, 4<<10, false); err != nil {
+	if err := ValidateAcceptanceCriteria(v.AcceptanceCriteria, v.AcceptanceCriteriaSetDigest); err != nil {
 		return err
 	}
 	if err := validateRepositoryURL(v.RepositoryURL); err != nil {

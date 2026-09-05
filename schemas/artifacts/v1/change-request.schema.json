@@ -4,18 +4,64 @@
   "title": "change-request/v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "description", "acceptanceCriteria", "repositoryURL", "sourceCommit"],
+  "required": [
+    "summary",
+    "description",
+    "acceptanceCriteria",
+    "repositoryURL",
+    "sourceCommit",
+    "acceptanceCriteriaSetDigest"
+  ],
   "properties": {
-    "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
-    "description": {"type": "string", "minLength": 1, "maxLength": 16384},
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
     "acceptanceCriteria": {
       "type": "array",
       "minItems": 1,
       "maxItems": 32,
       "uniqueItems": true,
-      "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "digest"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
     },
-    "repositoryURL": {"$ref": "common.schema.json#/$defs/RepositoryURL"},
-    "sourceCommit": {"$ref": "common.schema.json#/$defs/GitOID"}
+    "repositoryURL": {
+      "$ref": "common.schema.json#/$defs/RepositoryURL"
+    },
+    "sourceCommit": {
+      "$ref": "common.schema.json#/$defs/GitOID"
+    },
+    "acceptanceCriteriaSetDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
   }
 }

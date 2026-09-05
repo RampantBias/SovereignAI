@@ -43,15 +43,22 @@ type ResourceRef struct {
 
 // Links a decision to the exact content and contract
 // to the primitive
+type CriterionEvidence struct {
+	ID     string `json:"id"`
+	Digest string `json:"digest"`
+}
+
 type ArtifactEvidence struct {
-	SchemaVersion  string       `json:"schemaVersion"`
-	Artifact       ResourceRef  `json:"artifact"`
-	Contract       string       `json:"contract"`
-	Digest         string       `json:"digest"`
-	Producer       ResourceRef  `json:"producer"`
-	ProducerGrant  *ResourceRef `json:"producerGrant,omitempty"`
-	SourceRevision string       `json:"sourceRevision,omitempty"`
-	Classification string       `json:"classification,omitempty"`
+	AcceptanceCriteria          []CriterionEvidence `json:"acceptanceCriteria,omitempty"`
+	AcceptanceCriteriaSetDigest string              `json:"acceptanceCriteriaSetDigest,omitempty"`
+	SchemaVersion               string              `json:"schemaVersion"`
+	Artifact                    ResourceRef         `json:"artifact"`
+	Contract                    string              `json:"contract"`
+	Digest                      string              `json:"digest"`
+	Producer                    ResourceRef         `json:"producer"`
+	ProducerGrant               *ResourceRef        `json:"producerGrant,omitempty"`
+	SourceRevision              string              `json:"sourceRevision,omitempty"`
+	Classification              string              `json:"classification,omitempty"`
 }
 
 // Why the decision passed or failed

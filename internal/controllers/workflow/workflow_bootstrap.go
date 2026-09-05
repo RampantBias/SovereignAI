@@ -203,6 +203,10 @@ func (r *WorkflowReconciler) deployBootstrapJob(ctx context.Context, workflow *v
 }
 
 func (r WorkflowReconciler) createChangeRequest(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, cr artifactcontract.ChangeRequest) (bool, ctrl.Result, error) {
+	claims, err := artifacts.ProjectChangeRequestClaims(cr)
+	if err != nil {
+		return false, ctrl.Result{}, err
+	}
 	artifact := v1alpha1.Artifact{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      workflow.Spec.Bootstrap.ArtifactName,
@@ -225,6 +229,7 @@ func (r WorkflowReconciler) createChangeRequest(ctx context.Context, workflow *v
 			Path:           controllers.BootstrapArtifactPath(workflow.Spec.Bootstrap.ExpectedDigest),
 			Classification: workflow.Spec.Classification,
 			SourceRevision: cr.SourceCommit,
+			Claims:         claims,
 		},
 	}
 	if err := controllerutil.SetControllerReference(workflow, &artifact, r.Scheme); err != nil {

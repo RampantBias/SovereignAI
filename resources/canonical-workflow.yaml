@@ -79,7 +79,7 @@ spec:
         - name: implementation-plan
         - name: repository-revision
       outputs:
-        - name: test-change-set
+        - name: change-set
           version: v1
       timeout: 15m
       maxAttempts: 2
@@ -115,9 +115,9 @@ spec:
         - name: change-request
         - name: implementation-plan
         - name: repository-revision
-        - name: test-change-set
-      outputs:
         - name: change-set
+      outputs:
+        - name: test-change-set
           version: v1
       timeout: 15m
       maxAttempts: 2

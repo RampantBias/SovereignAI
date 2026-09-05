@@ -5,9 +5,18 @@
       "summary": "Add divide support",
       "description": "Add calculator division without regressing existing operations.",
       "acceptanceCriteria": [
-        "84 / 2 returns 42",
-        "division by zero returns HTTP 422"
-      ],
+  {
+    "id": "RQ-001",
+    "text": "84 / 2 returns 42",
+    "digest": "sha256:6b0a2b1a3065d86f8de1c2b62492721cc4e4b54c5b28f0b353481051ab377f55"
+  },
+  {
+    "id": "RQ-002",
+    "text": "division by zero returns HTTP 422",
+    "digest": "sha256:da2ee195d75220f1632bc1f0056033e903e7da4d174d2e6e5e0875249abd3b4c"
+  }
+],
+      "acceptanceCriteriaSetDigest": "sha256:09c3eee9501a3fadc3b54b2670c5f5e87afdab4b41372d44f59e5ab2240aa3c4",
       "repositoryURL": "https://git.example.test/calculator.git",
       "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }

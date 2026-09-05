@@ -106,6 +106,10 @@ func (r *ArtifactReconciler) validateBootstrapArtifact(ctx context.Context, arti
 	if err != nil {
 		return "InvalidBootstrapSource", err.Error()
 	}
+	expectedClaims, err := artifacts.ProjectChangeRequestClaims(changeRequest)
+	if err != nil || !reflect.DeepEqual(artifact.Spec.Claims, expectedClaims) {
+		return "InvalidBootstrapClaims", "bootstrap Artifact claims do not match the exact admitted change request"
+	}
 	if artifact.Spec.SourceRevision != changeRequest.SourceCommit {
 		return "InvalidBootstrapProvenance", "bootstrap Artifact source revision does not match the change request"
 	}

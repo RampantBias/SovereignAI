@@ -60,6 +60,9 @@ func ResolveArtifactEvidence(
 		if artifact.UID == "" {
 			return nil, false, fmt.Sprintf("input artifact %q has no immutable Kubernetes UID", input.Name), nil
 		}
+		if err := artifacts.ValidateClaims(artifact.Spec.Contract, artifact.Spec.Claims); err != nil {
+			return nil, false, fmt.Sprintf("input artifact %q has invalid criterion claims: %v", input.Name, err), nil
+		}
 		evidence = append(evidence, artifactEvidence(artifact))
 	}
 	return evidence, true, "", nil

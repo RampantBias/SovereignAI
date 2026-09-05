@@ -30,11 +30,12 @@ type ObjectIdentity struct {
 }
 
 type ChangeRequest struct {
-	Summary            string   `json:"summary"`
-	Description        string   `json:"description"`
-	AcceptanceCriteria []string `json:"acceptanceCriteria"`
-	RepositoryURL      string   `json:"repositoryURL"`
-	SourceCommit       string   `json:"sourceCommit"`
+	Summary                     string                  `json:"summary"`
+	Description                 string                  `json:"description"`
+	AcceptanceCriteria          []AcceptanceCriterionV1 `json:"acceptanceCriteria"`
+	AcceptanceCriteriaSetDigest string                  `json:"acceptanceCriteriaSetDigest"`
+	RepositoryURL               string                  `json:"repositoryURL"`
+	SourceCommit                string                  `json:"sourceCommit"`
 }
 
 type RepositoryRevision struct {

@@ -339,9 +339,26 @@ type ArtifactSpec struct {
 
 // lightweight container for summary of artifact content, for validation provider
 type ArtifactClaims struct {
+	ChangeRequest        *ChangeRequestClaims        `json:"changeRequest,omitempty"`
 	CandidateRevision    *CandidateRevisionClaims    `json:"candidateRevision,omitempty"`
 	CandidateRemoteProof *CandidateRemoteProofClaims `json:"candidateRemoteProof,omitempty"`
 	ImageDigest          *ImageDigestClaims          `json:"imageDigest,omitempty"`
+}
+
+// Canonical criterion identities projected from validated change-request bytes.
+type CriterionIdentity struct {
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9._-]{0,63}$`
+	ID string `json:"id"`
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest"`
+}
+
+type ChangeRequestClaims struct {
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	AcceptanceCriteria []CriterionIdentity `json:"acceptanceCriteria"`
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	AcceptanceCriteriaSetDigest string `json:"acceptanceCriteriaSetDigest"`
 }
 
 // identity of revision

@@ -22,6 +22,15 @@ var (
 // Derives the validationrun projection from the exact bytes that were stored and validated by the collector
 func projectClaims(contract v1alpha1.ContractReference, content []byte) (*v1alpha1.ArtifactClaims, error) {
 	switch contract.Name + "/" + contract.Version {
+	case artifactcontract.ChangeRequestContract:
+		if err := artifactcontract.ValidateContract(artifactcontract.ChangeRequestContract, content); err != nil {
+			return nil, err
+		}
+		var value artifactcontract.ChangeRequest
+		if err := json.Unmarshal(content, &value); err != nil {
+			return nil, err
+		}
+		return ProjectChangeRequestClaims(value)
 	case artifactcontract.CandidateRevisionContract:
 		var value artifactcontract.CandidateRevision
 		if err := json.Unmarshal(content, &value); err != nil {
@@ -67,7 +76,7 @@ func ValidateClaims(contract v1alpha1.ContractReference, claims *v1alpha1.Artifa
 	key := contract.Name + "/" + contract.Version
 	if claims == nil {
 		switch key {
-		case artifactcontract.CandidateRevisionContract,
+		case artifactcontract.ChangeRequestContract, artifactcontract.CandidateRevisionContract,
 			artifactcontract.CandidateRemoteProofContract,
 			artifactcontract.ImageDigestContract:
 			return fmt.Errorf("contract %q requires controller-readable claims", key)
@@ -78,6 +87,9 @@ func ValidateClaims(contract v1alpha1.ContractReference, claims *v1alpha1.Artifa
 
 	// must be one type
 	claimCount := 0
+	if claims.ChangeRequest != nil {
+		claimCount++
+	}
 	if claims.CandidateRevision != nil {
 		claimCount++
 	}
