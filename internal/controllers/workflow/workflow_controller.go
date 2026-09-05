@@ -68,6 +68,12 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Failed/interrupted workflows must not restart bootstrap or overwrite the
+	// original terminal failure by trying to recover an already released writer.
+	if phase := v1alpha1.ResourcePhase(workflow.Status.Phase); state.IsTerminal(phase) && phase != v1alpha1.PhaseSucceeded {
+		return ctrl.Result{}, nil
+	}
+
 	// Ensure workflow has steps
 	if len(workflow.Spec.Steps) == 0 {
 		return ctrl.Result{}, r.failWorkflow(ctx, &workflow, "InvalidDefinition", "workflow must contain at least one step")

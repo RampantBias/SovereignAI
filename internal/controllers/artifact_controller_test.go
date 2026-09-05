@@ -10,6 +10,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -133,9 +134,10 @@ func validChangeRequestContent(t *testing.T) []byte {
 	t.Helper()
 	data, err := json.Marshal(artifactcontract.ChangeRequest{
 		Summary: "Add divide support", Description: "Implement calculator division.",
-		AcceptanceCriteria: []string{"84 / 2 returns 42"},
-		RepositoryURL:      "https://git.example.test/calculator.git",
-		SourceCommit:       strings.Repeat("a", 40),
+		AcceptanceCriteria:          []artifactcontract.AcceptanceCriterionV1{{ID: "RQ-001", Text: "84 / 2 returns 42", Digest: artifactcontract.CriterionDigest("RQ-001", "84 / 2 returns 42")}},
+		AcceptanceCriteriaSetDigest: artifactcontract.CriteriaSetDigest([]artifactcontract.CriterionIdentityV1{{ID: "RQ-001", Digest: artifactcontract.CriterionDigest("RQ-001", "84 / 2 returns 42")}}),
+		RepositoryURL:               "https://git.example.test/calculator.git",
+		SourceCommit:                strings.Repeat("a", 40),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -149,11 +151,23 @@ func artifactFixture(t *testing.T, content []byte, digest string, contract v1alp
 	if err := os.WriteFile(path, content, 0o440); err != nil {
 		t.Fatal(err)
 	}
+	var claims *v1alpha1.ArtifactClaims
+	if contract.Name == "change-request" {
+		var cr artifactcontract.ChangeRequest
+		if err := json.Unmarshal(content, &cr); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		claims, err = artifacts.ProjectChangeRequestClaims(cr)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	return &v1alpha1.Artifact{
 		ObjectMeta: metav1.ObjectMeta{Name: "artifact", Namespace: "workflow", Generation: 1},
 		Spec: v1alpha1.ArtifactSpec{
 			WorkflowRef: v1alpha1.UIDReference{Name: "wf"}, ProducerRef: v1alpha1.TypedLocalReference{Kind: "AgentRun", Name: "architect"},
-			Contract: contract, Digest: digest, Path: path,
+			Contract: contract, Digest: digest, Path: path, Claims: claims,
 		},
 	}
 }

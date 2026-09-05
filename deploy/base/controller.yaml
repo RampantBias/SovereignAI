@@ -51,7 +51,7 @@ spec:
             - name: SOVEREIGN_VLLM_MAX_MODEL_LEN
               value: "16384"
             - name: SOVEREIGN_VLLM_KV_CACHE_MEMORY_BYTES
-              value: "2147483648"
+              value: "3221225472"
             - name: SOVEREIGN_MODEL_VRAM_MIB
               value: "10240"
             - name: SOVEREIGN_KV_VRAM_MIB

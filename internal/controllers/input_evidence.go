@@ -141,6 +141,14 @@ func artifactEvidence(artifact *v1alpha1.Artifact) audit.ArtifactEvidence {
 		SourceRevision: artifact.Spec.SourceRevision,
 		Classification: artifact.Spec.Classification,
 	}
+	if artifact.Spec.Claims != nil && artifact.Spec.Claims.ChangeRequest != nil {
+		claims := artifact.Spec.Claims.ChangeRequest
+		evidence.AcceptanceCriteriaSetDigest = claims.AcceptanceCriteriaSetDigest
+		evidence.AcceptanceCriteria = make([]audit.CriterionEvidence, len(claims.AcceptanceCriteria))
+		for i, criterion := range claims.AcceptanceCriteria {
+			evidence.AcceptanceCriteria[i] = audit.CriterionEvidence{ID: criterion.ID, Digest: criterion.Digest}
+		}
+	}
 	if artifact.Spec.ProducerGrantRef.Name != "" {
 		evidence.ProducerGrant = &audit.ResourceRef{
 			SchemaVersion: audit.PayloadSchemaVersionV1,

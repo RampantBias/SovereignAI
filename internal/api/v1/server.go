@@ -219,9 +219,10 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse workflow manifest: %v", err)
 	}
 
-	// Validate the exact submitted bytes. Do not decode and re-marshal them:
-	// their digest and eventual stored representation are byte-preserving.
-	if err := artifactcontract.ValidateContract(artifactcontract.ChangeRequestContract, req.GetChangeRequestContent()); err != nil {
+	// Expand authoring input before admission. Every stored digest below refers
+	// to the structured artifact; fully structured requests remain byte-preserving.
+	changeRequestContent, err := artifactcontract.PrepareChangeRequest(req.GetChangeRequestContent())
+	if err != nil {
 		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
 			"submit", workflowCRD.Name, "rejected", "InvalidChangeRequest", projectName, nil,
 			map[string]string{"error": err.Error()}); auditErr != nil {
@@ -318,7 +319,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 			},
 		},
 		Immutable:  &immutable,
-		BinaryData: map[string][]byte{bootstrapKey: append([]byte(nil), req.ChangeRequestContent...)},
+		BinaryData: map[string][]byte{bootstrapKey: append([]byte(nil), changeRequestContent...)},
 	}
 	if err := s.Client.Create(ctx, changeRequestCm); err != nil {
 		auditErr := s.appendAPIEvent(ctx, "WorkflowCreateFailed", subject, "create", changeRequestCm.Name, "failed",
@@ -331,7 +332,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		}
 		return nil, status.Errorf(codes.Internal, "failed to create bootstrap input: %v", err)
 	}
-	changeRequestDigest := artifactcontract.DigestBytes(req.ChangeRequestContent)
+	changeRequestDigest := artifactcontract.DigestBytes(changeRequestContent)
 	if auditErr := s.appendAPIEvent(ctx, "WorkflowBootstrapInputStaged", subject, "create", changeRequestCm.Name, "created", "",
 		workflowID, map[string]string{"configMap": changeRequestCm.Name, "digest": changeRequestDigest}, nil); auditErr != nil {
 		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)

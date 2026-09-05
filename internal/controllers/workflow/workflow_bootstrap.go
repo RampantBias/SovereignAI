@@ -75,20 +75,19 @@ func (r *WorkflowReconciler) ensureBootstrap(ctx context.Context, workflow *v1al
 		return false, ctrl.Result{}, r.failWorkflow(ctx, workflow, "InvalidBootstrapInput", err.Error())
 	}
 
-	hasWriter, grant, result, err := r.getWorkspaceWriter(ctx, workflow)
-	if !hasWriter {
-		return hasWriter, result, err
-	}
-
-	// Deploy and watch for bootstrap job completion (success/failure)
-	// releases held writer grant in either scenario
-
-	if jobDeployed, result, err := r.deployBootstrapJob(ctx, workflow, grant); !jobDeployed {
+	// Observe completed Jobs before checking write authority: publishing their
+	// Artifact metadata must be recoverable even after the writer was released.
+	if jobDeployed, result, err := r.deployBootstrapJob(ctx, workflow); !jobDeployed {
 		return jobDeployed, result, err
 	}
 
 	if artifactCreated, result, err := r.createChangeRequest(ctx, workflow, changeRequest); !artifactCreated {
 		return artifactCreated, result, err
+	}
+	// Keep the grant until Artifact creation has succeeded. If release or its
+	// status update fails, the persisted Artifact/terminal Job makes retry safe.
+	if err := r.releaseBootstrapWriter(ctx, workflow); err != nil {
+		return false, ctrl.Result{}, err
 	}
 	return false, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
@@ -143,7 +142,7 @@ func (r *WorkflowReconciler) getWorkspaceWriter(ctx context.Context, workflow *v
 	return true, grant, ctrl.Result{}, nil
 }
 
-func (r *WorkflowReconciler) deployBootstrapJob(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, grant controllers.WorkspaceWriterGrant) (bool, ctrl.Result, error) {
+func (r *WorkflowReconciler) deployBootstrapJob(ctx context.Context, workflow *v1alpha1.SovereignWorkflow) (bool, ctrl.Result, error) {
 	jobName := controllers.BootstrapJobName(workflow.Name)
 	var job batchv1.Job
 	jobKey := types.NamespacedName{Namespace: workflow.Namespace, Name: jobName}
@@ -151,7 +150,40 @@ func (r *WorkflowReconciler) deployBootstrapJob(ctx context.Context, workflow *v
 	if err != nil && !apierrors.IsNotFound(err) {
 		return false, ctrl.Result{}, err
 	}
-	if apierrors.IsNotFound(err) {
+	missing := apierrors.IsNotFound(err)
+	if !missing {
+		if !metav1.IsControlledBy(&job, workflow) {
+			return false, ctrl.Result{}, r.failWorkflow(ctx, workflow, "InvalidBootstrapJob", fmt.Sprintf("job %s is not controlled by workflow", job.Name))
+		}
+		if workflow.Status.BootstrapJobRef != job.Name {
+			updated, err := r.updateWorkflowStatus(ctx, client.ObjectKeyFromObject(workflow), func(latest *v1alpha1.SovereignWorkflow) {
+				latest.Status.BootstrapJobRef = job.Name
+			})
+			if err != nil {
+				return false, ctrl.Result{}, err
+			}
+			workflow.Status = updated.Status
+		}
+		// A completed, quiescent Job no longer needs write authority. In
+		// particular, do not reacquire a released epoch when resuming completion.
+		if job.Status.Active == 0 {
+			if job.Status.Failed > 0 {
+				if err := r.releaseBootstrapWriter(ctx, workflow); err != nil {
+					return false, ctrl.Result{}, err
+				}
+				return false, ctrl.Result{}, r.failWorkflow(ctx, workflow, "BootstrapJobFailed", "bootstrap storage job failed")
+			}
+			if job.Status.Succeeded > 0 {
+				return true, ctrl.Result{}, nil
+			}
+		}
+	}
+	// Creating or continuing a writer still requires the original fenced grant.
+	hasWriter, grant, result, err := r.getWorkspaceWriter(ctx, workflow)
+	if !hasWriter {
+		return false, result, err
+	}
+	if missing {
 		image := r.BootstrapImage
 		if image == "" {
 			image = defaultBootstrapImage
@@ -173,33 +205,8 @@ func (r *WorkflowReconciler) deployBootstrapJob(ctx context.Context, workflow *v
 			map[string]string{"job": jobName, "digest": workflow.Spec.Bootstrap.ExpectedDigest}, nil); err != nil {
 			return false, ctrl.Result{}, err
 		}
-		return false, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
-	if !metav1.IsControlledBy(&job, workflow) {
-		return false, ctrl.Result{}, r.failWorkflow(ctx, workflow, "InvalidBootstrapJob", fmt.Sprintf("job %s is not controlled by workflow", job.Name))
-	}
-	if workflow.Status.BootstrapJobRef != job.Name {
-		updated, err := r.updateWorkflowStatus(ctx, client.ObjectKeyFromObject(workflow), func(latest *v1alpha1.SovereignWorkflow) {
-			latest.Status.BootstrapJobRef = job.Name
-		})
-		if err != nil {
-			return false, ctrl.Result{}, err
-		}
-		workflow.Status = updated.Status
-	}
-	if job.Status.Failed > 0 {
-		if err := r.releaseBootstrapWriter(ctx, workflow); err != nil {
-			return false, ctrl.Result{}, err
-		}
-		return false, ctrl.Result{}, r.failWorkflow(ctx, workflow, "BootstrapJobFailed", "bootstrap storage job failed")
-	}
-	if job.Status.Succeeded == 0 {
-		return false, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-	}
-	if err := r.releaseBootstrapWriter(ctx, workflow); err != nil {
-		return false, ctrl.Result{}, err
-	}
-	return true, ctrl.Result{}, nil
+	return false, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
 
 func (r WorkflowReconciler) createChangeRequest(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, cr artifactcontract.ChangeRequest) (bool, ctrl.Result, error) {
