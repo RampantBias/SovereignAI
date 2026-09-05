@@ -18,6 +18,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestDecideFailure(t *testing.T) {
@@ -189,6 +190,7 @@ func TestWorkflowRewindsFailedTestCandidateToTestAuthor(t *testing.T) {
 	failed := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-candidate-002",
+			UID:       "failed-test-uid",
 			Namespace: workflow.Namespace,
 			Labels: map[string]string{
 				controllermeta.LabelWorkflow: workflow.Spec.WorkflowID,
@@ -224,6 +226,7 @@ func TestWorkflowRewindsFailedTestCandidateToTestAuthor(t *testing.T) {
 
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithInterceptorFuncs(interceptor.Funcs{Create: recoveryTestCreate}).
 		WithStatusSubresource(
 			&v1alpha1.SovereignWorkflow{},
 			&v1alpha1.StepAttempt{},

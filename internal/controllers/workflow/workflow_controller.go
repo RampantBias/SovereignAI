@@ -110,6 +110,10 @@ func (r *WorkflowReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return bootstrapResult, nil
 	}
 
+	if err := r.recordWorkflowRecovery(ctx, &workflow); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Check if workflow is terminal
 	if state.IsTerminal(v1alpha1.ResourcePhase(workflow.Status.Phase)) {
 		if workflow.Status.Phase == string(v1alpha1.PhaseSucceeded) {
@@ -436,14 +440,19 @@ func (r *WorkflowReconciler) beginWorkflowRetry(
 	failed *v1alpha1.StepAttempt,
 	restartStep string,
 ) error {
+	evidence, err := r.captureWorkflowRecovery(ctx, workflow, failed, restartStep)
+	if err != nil {
+		return err
+	}
 	expectedWorkflowAttempt := failed.Spec.WorkflowAttempt
 
-	_, err := r.updateWorkflowStatus(
+	updated, err := r.updateWorkflowStatus(
 		ctx,
 		client.ObjectKeyFromObject(workflow),
 		func(latest *v1alpha1.SovereignWorkflow) {
 			// Makes repeated reconciles idempotent.
-			if latest.Status.ActiveAttemptRef != failed.Name ||
+			if latest.UID != workflow.UID || !latest.DeletionTimestamp.IsZero() ||
+				state.IsTerminal(v1alpha1.ResourcePhase(latest.Status.Phase)) || latest.Status.ActiveAttemptRef != failed.Name ||
 				latest.Status.WorkflowAttempt != expectedWorkflowAttempt {
 				return
 			}
@@ -454,6 +463,7 @@ func (r *WorkflowReconciler) beginWorkflowRetry(
 			latest.Status.Phase = string(v1alpha1.PhaseRunning)
 			latest.Status.ObservedGeneration = latest.Generation
 			latest.Status.Refinement = &v1alpha1.WorkflowRefinementStatus{
+				Recovery:          evidence,
 				Iteration:         latest.Status.WorkflowAttempt,
 				TriggerStepName:   failed.Spec.StepName,
 				TriggerAttemptRef: failed.Name,
@@ -461,10 +471,16 @@ func (r *WorkflowReconciler) beginWorkflowRetry(
 			}
 		},
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.recordWorkflowRecovery(ctx, updated)
 }
 
 func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, step v1alpha1.StepConfig, number int32, feedback *v1alpha1.FailedAgentAttempt) error {
+	if err := r.recordWorkflowRecovery(ctx, workflow); err != nil {
+		return err
+	}
 	if feedback == nil && number == 1 {
 		var err error
 		feedback, err = r.workflowRetryFeedback(ctx, workflow, step)
@@ -500,6 +516,9 @@ func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, work
 	}
 	executionRef, err := r.ensureDomainExecution(ctx, workflow, attempt, step, feedback)
 	if err != nil {
+		return err
+	}
+	if err := r.recordWorkflowRetry(ctx, workflow, attempt, executionRef); err != nil {
 		return err
 	}
 	if err := r.recordAttemptExecutionRef(ctx, attempt, executionRef); err != nil {
@@ -835,7 +854,9 @@ func (r *WorkflowReconciler) failedAttemptEvidenceEvents(ctx context.Context, wo
 	}
 	for index := len(events) - 1; index >= 0; index-- {
 		event := events[index]
-		if (event.Type == "StepAttemptFailed" || event.Type == "StepAttemptInterrupted") && event.Target == failedAttempt.Name {
+		if (event.Type == "StepAttemptFailed" || event.Type == "StepAttemptInterrupted") &&
+			event.Target == failedAttempt.Name && event.Subject.Namespace == failedAttempt.Namespace &&
+			event.Subject.Step == failedAttempt.Spec.StepName && event.Subject.Attempt == failedAttempt.Spec.RetryNumber {
 			return []string{event.ID}, nil
 		}
 	}

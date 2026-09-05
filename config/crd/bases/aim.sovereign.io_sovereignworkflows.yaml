@@ -456,6 +456,177 @@ spec:
                   iteration:
                     format: int32
                     type: integer
+                  recovery:
+                    description: |-
+                      WorkflowRecoveryEvidence freezes the decision's inputs before the workflow
+                      advances, allowing audit writes to be retried without inventing new evidence.
+                    properties:
+                      evidenceEvents:
+                        items:
+                          type: string
+                        type: array
+                      failureReason:
+                        type: string
+                      feedback:
+                        properties:
+                          code:
+                            pattern: ^[A-Za-z][A-Za-z0-9]{0,127}$
+                            type: string
+                          message:
+                            maxLength: 1024
+                            minLength: 1
+                            type: string
+                          previousAttemptRef:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - code
+                        - message
+                        - previousAttemptRef
+                        type: object
+                      fromWorkflowAttempt:
+                        format: int32
+                        type: integer
+                      inputLinks:
+                        items:
+                          description: |-
+                            RecoveryInputLink proves a consumed artifact's producing attempt. All refs
+                            name immutable objects; these are not timestamp-based ancestry guesses.
+                          properties:
+                            consumer:
+                              properties:
+                                name:
+                                  type: string
+                                uid:
+                                  description: |-
+                                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                    intent and helps make sure that UIDs and names do not get conflated.
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                            input:
+                              properties:
+                                artifactRef:
+                                  properties:
+                                    name:
+                                      type: string
+                                    uid:
+                                      description: |-
+                                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                        intent and helps make sure that UIDs and names do not get conflated.
+                                      type: string
+                                  required:
+                                  - name
+                                  - uid
+                                  type: object
+                                digest:
+                                  type: string
+                                name:
+                                  type: string
+                                producerAttemptRef:
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            producer:
+                              properties:
+                                name:
+                                  type: string
+                                uid:
+                                  description: |-
+                                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                    intent and helps make sure that UIDs and names do not get conflated.
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                          required:
+                          - consumer
+                          - input
+                          - producer
+                          type: object
+                        type: array
+                      maxWorkflowAttempt:
+                        format: int32
+                        type: integer
+                      missing:
+                        items:
+                          type: string
+                        type: array
+                      previousAttempt:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      previousOutcome:
+                        type: string
+                      reports:
+                        items:
+                          properties:
+                            artifactRef:
+                              properties:
+                                name:
+                                  type: string
+                                uid:
+                                  description: |-
+                                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                    intent and helps make sure that UIDs and names do not get conflated.
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                            digest:
+                              type: string
+                            name:
+                              type: string
+                            producerAttemptRef:
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      selectedAt:
+                        format: date-time
+                        type: string
+                      triggerAttempt:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                    required:
+                    - failureReason
+                    - fromWorkflowAttempt
+                    - maxWorkflowAttempt
+                    - selectedAt
+                    - triggerAttempt
+                    type: object
                   restartStep:
                     type: string
                   testReport:
