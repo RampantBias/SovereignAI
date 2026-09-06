@@ -70,8 +70,8 @@ type workspaceReadHistory struct {
 }
 
 // workspaceModelHistory keeps the inference transcript focused on the current
-// workspace state. rawInferenceHistory remains append-only for diagnostics and
-// lineage; only the model-facing messages referenced here are compacted.
+// workspace state. The initial request is saved separately before inference;
+// subsequent model-facing history may be compacted.
 type workspaceModelHistory struct {
 	latestReads          map[string]workspaceReadHistory
 	rejectedReplacements map[string][]workspaceHistoryLocation
@@ -180,13 +180,7 @@ func run(ctx context.Context, inputPath string, resultPath string) error {
 	if err != nil {
 		return fmt.Errorf("build task context: %v", err)
 	}
-	writeDebugContext(input, artifactContents, 0, inference.ChatRequest{
-		Model: input.InferenceModel,
-		Messages: []inference.Message{
-			{Role: "system", Content: systemContext},
-			{Role: "user", Content: taskContext},
-		},
-	}, nil)
+
 	if len(taskContext) > maxPromptBytes {
 		return fmt.Errorf("task context exceeds %d-byte limit", maxPromptBytes)
 	}
@@ -252,7 +246,6 @@ func generateWithMCP(
 		return generationOutcome{}, err
 	}
 	messages := []inference.Message{{Role: "system", Content: systemContext}, {Role: "user", Content: taskContext}}
-	rawMessages := append([]inference.Message(nil), messages...)
 	var completion *agentcontract.AgentCompletion
 	candidateReady := false
 	workspaceInspected := false
@@ -287,7 +280,11 @@ func generateWithMCP(
 			Temperature: temperature, RepetitionPenalty: repetitionPenalty, Tools: roundTools,
 			ToolChoice: toolChoice,
 		}
-		writeDebugContext(input, artifacts, round+1, request, rawMessages)
+		if round == 0 {
+			if err := saveInitialContext(ctx, input, artifacts, request); err != nil {
+				return generationOutcome{}, err
+			}
+		}
 		response, err := chatWithContextRetry(ctx, client, request)
 		if err != nil {
 			return generationOutcome{}, fmt.Errorf("inference tool round %d: %w", round+1, err)
@@ -308,9 +305,7 @@ func generateWithMCP(
 			response.ToolCalls[0].Function.Arguments = rootTreeArguments
 		}
 		modelToolCalls := append([]inference.ToolCall(nil), response.ToolCalls...)
-		rawToolCalls := append([]inference.ToolCall(nil), response.ToolCalls...)
 		messages = append(messages, inference.Message{Role: "assistant", Content: response.Content, ToolCalls: modelToolCalls})
-		rawMessages = append(rawMessages, inference.Message{Role: "assistant", Content: response.Content, ToolCalls: rawToolCalls})
 		modelAssistantIndex := len(messages) - 1
 		for index, call := range response.ToolCalls {
 			if call.ID == "" || call.Type != "function" {
@@ -351,7 +346,6 @@ func generateWithMCP(
 			}
 			messages[modelAssistantIndex].ToolCalls[index] = modelCall
 			messages = append(messages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: modelResultText})
-			rawMessages = append(rawMessages, inference.Message{Role: "tool", ToolCallID: call.ID, Content: resultText})
 			modelHistory.observe(
 				messages,
 				call,

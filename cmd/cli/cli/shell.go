@@ -53,6 +53,8 @@ func NewRootCmd(client pb.OrchestratorServiceClient) *cobra.Command {
 		NewCreateCmd(client),
 		NewCleanCmd(client),
 		NewPlaybackCmd(client),
+		NewLineageCmd(client),
+		NewContextSnapshotCmd(client),
 		NewApprovalCmd(client),
 	)
 	return rootCmd

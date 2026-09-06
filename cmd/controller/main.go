@@ -82,6 +82,11 @@ func main() {
 		log.Printf("Audit recorder initialized with %s backend", auditMode)
 	}
 
+	contextAPIAddress := ""
+	if auditMode == "postgres" {
+		contextAPIAddress = env("SOVEREIGN_CONTEXT_API_ADDRESS", "sovereign-api."+systemNamespace+".svc:8080")
+	}
+
 	// Initialize in-memory OPA
 	policyEvaluator, err := policy.NewMVP(ctx)
 	if err != nil {
@@ -140,11 +145,14 @@ func main() {
 			Scheme: mgr.GetScheme(),
 			Audit:  recorder},
 		&agentrun.AgentRunReconciler{
-			Client:         mgr.GetClient(),
-			Scheme:         mgr.GetScheme(),
-			Audit:          recorder,
-			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
-			MCPImage:       env("SOVEREIGN_MCP_IMAGE", "sovereign-mcp-server:dev")},
+			ContextAPIAddress:   contextAPIAddress,
+			ContextTLSNamespace: systemNamespace,
+			ContextTLSSecret:    env("SOVEREIGN_CONTEXT_TLS_SECRET", "sovereign-api-tls"),
+			Client:              mgr.GetClient(),
+			Scheme:              mgr.GetScheme(),
+			Audit:               recorder,
+			CollectorImage:      env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
+			MCPImage:            env("SOVEREIGN_MCP_IMAGE", "sovereign-mcp-server:dev")},
 		&utilityoperation.UtilityOperationReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),

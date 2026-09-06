@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/SovereignAI/internal/agentcontract"
+	"github.com/SovereignAI/internal/api/v1/pb"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/inference"
 	"github.com/SovereignAI/internal/utilitycontract"
 	"github.com/SovereignAI/internal/workspaceeditor"
@@ -62,9 +64,21 @@ func TestRunInspectsWorkspaceThenPublishesResult(t *testing.T) {
 	treeInputs := make(chan mockWorkspaceTreeInput, 1)
 	mcpServer := startMockMCPServer(t, stagingPath, artifactcontract.ImplementationPlanContract, treeInputs)
 
+	var savedCount atomic.Int32
+	var initial audit.InitialContext
+	capture := snapshotTestEndpoint(t, func(_ context.Context, req *pb.StoreContextSnapshotRequest) (*pb.ContextSnapshotReceipt, error) {
+		if err := json.Unmarshal(req.Snapshot, &initial); err != nil {
+			t.Error(err)
+		}
+		savedCount.Add(1)
+		return snapshotTestReceipt(req), nil
+	})
 	var requestCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		round := requestCount.Add(1)
+		if savedCount.Load() != 1 {
+			t.Error("inference started before one durable context receipt")
+		}
 		if request.Method != http.MethodPost {
 			t.Errorf("request method = %q, want POST", request.Method)
 		}
@@ -318,6 +332,7 @@ func TestRunInspectsWorkspaceThenPublishesResult(t *testing.T) {
 			WriterEpoch:    1,
 		},
 	}
+	input.ContextCapture = capture
 	inputBytes, err := json.Marshal(input)
 	if err != nil {
 		t.Fatalf("encode input: %v", err)
@@ -329,6 +344,12 @@ func TestRunInspectsWorkspaceThenPublishesResult(t *testing.T) {
 
 	if err := run(context.Background(), inputPath, input.ResultPath); err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	if savedCount.Load() != 1 || len(initial.Request.Messages) != 2 || len(initial.Request.Tools) != 3 || initial.Request.ToolChoice.FunctionName != agentcontract.CapabilityWorkspaceTree || len(initial.Artifacts) != 2 || initial.RetryFeedback == nil {
+		t.Fatalf("initial capture does not describe first request: %#v", initial)
+	}
+	if _, err := os.Stat(filepath.Join(input.StagingPath, "debug-context.json")); !os.IsNotExist(err) {
+		t.Fatal("temporary debug dump still exists")
 	}
 	select {
 	case treeInput := <-treeInputs:

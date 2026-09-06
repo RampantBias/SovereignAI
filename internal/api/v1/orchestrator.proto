@@ -10,6 +10,9 @@ service OrchestratorService {
   rpc CreateWorkflow(CreateWorkflowRequest) returns (CreateWorkflowResponse);
   rpc ListWorkflows (ListWorkflowsRequest) returns (ListWorkflowsResponse);
   rpc GetWorkflowTimeline (GetWorkflowTimelineRequest) returns (GetWorkflowTimelineResponse);
+  rpc StoreContextSnapshot (StoreContextSnapshotRequest) returns (ContextSnapshotReceipt);
+  rpc GetContextSnapshot (GetContextSnapshotRequest) returns (GetContextSnapshotResponse);
+  rpc GetWorkflowLineage (GetWorkflowLineageRequest) returns (GetWorkflowLineageResponse);
   rpc SubmitApproval (ApprovalSubmission) returns (ApprovalResponse);
 }
 
@@ -120,3 +123,25 @@ message ApprovalResponse {
   bool success = 1;
   string message = 2;
 }
+
+message StoreContextSnapshotRequest {
+  string namespace = 1;
+  string agent_run = 2;
+  string agent_run_uid = 3;
+  bytes snapshot = 4;
+}
+message ContextSnapshotReceipt {
+  string id = 1;
+  string digest = 2;
+  string event_id = 3;
+}
+message GetContextSnapshotRequest { string id = 1; }
+message GetContextSnapshotResponse {
+  ContextSnapshotReceipt receipt = 1;
+  bytes snapshot = 2;
+}
+message GetWorkflowLineageRequest {
+  string workflow_id = 1;
+  string event_id = 2;
+}
+message GetWorkflowLineageResponse { string projection_json = 1; }

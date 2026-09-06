@@ -59,7 +59,20 @@ type RetryFeedback struct {
 	Message            string `json:"message"`
 }
 
+func ContextCredentialName(run string) string { return run + "-context" }
+
+// ContextCapture configures a runtime-only upload, not a model capability.
+type ContextCapture struct {
+	Endpoint       string `json:"endpoint"`
+	Namespace      string `json:"namespace"`
+	AgentRun       string `json:"agentRun"`
+	AgentRunUID    string `json:"agentRunUID"`
+	CredentialPath string `json:"credentialPath"`
+	CAPath         string `json:"caPath"`
+}
+
 type Input struct {
+	ContextCapture    *ContextCapture         `json:"contextCapture,omitempty"`
 	SchemaVersion     string                  `json:"schemaVersion"`
 	WorkflowID        string                  `json:"workflowId"`
 	StepName          string                  `json:"stepName"`

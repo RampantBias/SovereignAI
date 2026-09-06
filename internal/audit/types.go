@@ -1,5 +1,7 @@
 package audit
 
+import "github.com/SovereignAI/internal/api/v1alpha1"
+
 const PayloadSchemaVersionV1 = "v1"
 
 // This is the culmination of the various events,
@@ -113,13 +115,14 @@ type InputsResolved struct {
 
 // Links authority and inputs to primitive producer
 type DecisionEvaluated struct {
-	SchemaVersion  string            `json:"schemaVersion"`
-	Primitive      ResourceRef       `json:"primitive"`
-	Decision       DecisionRef       `json:"decision"`
-	AuthorityEvent string            `json:"authorityEvent,omitempty"`
-	InputEvent     string            `json:"inputEvent,omitempty"`
-	EvidenceEvents []string          `json:"evidenceEvents,omitempty"`
-	Invariants     []InvariantResult `json:"invariants"`
+	ApprovalBinding *v1alpha1.ResolvedApproval `json:"approvalBinding,omitempty"`
+	SchemaVersion   string                     `json:"schemaVersion"`
+	Primitive       ResourceRef                `json:"primitive"`
+	Decision        DecisionRef                `json:"decision"`
+	AuthorityEvent  string                     `json:"authorityEvent,omitempty"`
+	InputEvent      string                     `json:"inputEvent,omitempty"`
+	EvidenceEvents  []string                   `json:"evidenceEvents,omitempty"`
+	Invariants      []InvariantResult          `json:"invariants"`
 }
 
 // Links allowed action to outcome

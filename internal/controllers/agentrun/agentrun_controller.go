@@ -31,11 +31,14 @@ import (
 // controller that creates agent pods or inference leases for an agent run.
 type AgentRunReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	Audit          audit.Recorder
-	Now            func() time.Time
-	CollectorImage string
-	MCPImage       string
+	Scheme              *runtime.Scheme
+	Audit               audit.Recorder
+	Now                 func() time.Time
+	CollectorImage      string
+	MCPImage            string
+	ContextAPIAddress   string
+	ContextTLSNamespace string
+	ContextTLSSecret    string
 }
 
 func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -402,6 +405,11 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 			Message:            run.Spec.PriorAttemptRef.Message,
 		}
 	}
+	capture, err := r.ensureContextCapture(ctx, run)
+	if err != nil {
+		return err
+	}
+	input.ContextCapture = capture
 	data, err := json.Marshal(input)
 	if err != nil {
 		return err
@@ -415,6 +423,11 @@ func (r *AgentRunReconciler) ensureWorkload(ctx context.Context, run *v1alpha1.A
 		return err
 	}
 	pod := BuildAgentRunPod(run, workflow.Status.PvcName, configName, r.MCPImage, grant)
+	if capture != nil {
+		mode := int32(0440)
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{Name: "context-upload", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: agentcontract.ContextCredentialName(run.Name), DefaultMode: &mode}}})
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "context-upload", MountPath: "/context-upload", ReadOnly: true})
+	}
 	if err := controllerutil.SetControllerReference(run, pod, r.Scheme); err != nil {
 		return err
 	}

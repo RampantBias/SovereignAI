@@ -88,9 +88,12 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	ownByAttempt(run, attempt)
 	client := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&v1alpha1.SovereignWorkflow{}, &v1alpha1.AgentRun{}).
-		WithObjects(workflow, workspaceLeaseFixture(), attempt, run, inputArtifact).Build()
+		WithObjects(workflow, workspaceLeaseFixture(), attempt, run, inputArtifact, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-tls", Namespace: "system"},
+			Data:       map[string][]byte{"ca.crt": []byte("public-ca")}},
+		).Build()
 	recorder := audit.NewMemoryRecorder()
-	reconciler := &AgentRunReconciler{Client: client, Scheme: scheme, Audit: recorder}
+	reconciler := &AgentRunReconciler{Client: client, Scheme: scheme, Audit: recorder, ContextAPIAddress: "api:8080", ContextTLSNamespace: "system", ContextTLSSecret: "api-tls"}
 	if _, err := reconciler.Reconcile(context.Background(), requestFor(run)); err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +143,29 @@ func TestAgentRunCreatesRestrictedPod(t *testing.T) {
 	var contract agentcontract.Input
 	if err := json.Unmarshal([]byte(input.Data["input.json"]), &contract); err != nil {
 		t.Fatal(err)
+	}
+	if contract.ContextCapture == nil || contract.ContextCapture.AgentRunUID != string(run.UID) {
+		t.Fatal("missing runtime snapshot config")
+	}
+	var upload corev1.Secret
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: agentcontract.ContextCredentialName(run.Name)}, &upload); err != nil {
+		t.Fatal(err)
+	}
+	if !metav1.IsControlledBy(&upload, run) || len(upload.Data["token"]) != 64 {
+		t.Fatal("upload credential is not scoped to run")
+	}
+	if len(pod.Spec.Containers[0].VolumeMounts) != 3 || pod.Spec.Containers[0].VolumeMounts[2].MountPath != "/context-upload" {
+		t.Fatal("missing private upload credential mount")
+	}
+	before := string(upload.Data["token"])
+	if _, err := reconciler.ensureContextCapture(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: upload.Name}, &upload); err != nil {
+		t.Fatal(err)
+	}
+	if before != string(upload.Data["token"]) {
+		t.Fatal("reconciliation rotated upload token")
 	}
 	if contract.Responsibility != "plan" || len(contract.Outputs) != 1 || len(contract.Inputs) != 1 {
 		t.Fatalf("unexpected agent contract: %#v", contract)

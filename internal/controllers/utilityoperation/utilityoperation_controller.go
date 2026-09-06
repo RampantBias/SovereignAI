@@ -394,7 +394,9 @@ func utilityAdmissionDecision(operation *v1alpha1.UtilityOperation, policyDecisi
 		evidenceEvents = []string{operation.Spec.Approval.AdmissionEventID}
 	}
 	return audit.DecisionEvaluated{
-		EvidenceEvents: evidenceEvents, SchemaVersion: audit.PayloadSchemaVersionV1,
+		ApprovalBinding: operation.Spec.Approval,
+		EvidenceEvents:  evidenceEvents,
+		SchemaVersion:   audit.PayloadSchemaVersionV1,
 		Primitive: audit.ResourceRef{
 			SchemaVersion: audit.PayloadSchemaVersionV1,
 			APIVersion:    v1alpha1.GroupVersion.String(),

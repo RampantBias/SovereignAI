@@ -80,7 +80,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to bind to TCP port %s: %v", listenAddr, err)
 	}
-	grpcServer := grpc.NewServer(grpc.Creds(transportCredentials), grpc.UnaryInterceptor(authInterceptor))
+	grpcServer := grpc.NewServer(grpc.Creds(transportCredentials), grpc.UnaryInterceptor(v1.ContextUploadInterceptor(authInterceptor)))
 	apiServer := v1.NewServer(k8sClient, recorder)
 	pb.RegisterOrchestratorServiceServer(grpcServer, apiServer)
 	reflection.Register(grpcServer)

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.34.1
-// source: internal/api/v1/orchestrator.proto
+// source: orchestrator.proto
 
 package pb
 
@@ -19,12 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OrchestratorService_CreateProject_FullMethodName       = "/api.v1.OrchestratorService/CreateProject"
-	OrchestratorService_CleanWorkflow_FullMethodName       = "/api.v1.OrchestratorService/CleanWorkflow"
-	OrchestratorService_CreateWorkflow_FullMethodName      = "/api.v1.OrchestratorService/CreateWorkflow"
-	OrchestratorService_ListWorkflows_FullMethodName       = "/api.v1.OrchestratorService/ListWorkflows"
-	OrchestratorService_GetWorkflowTimeline_FullMethodName = "/api.v1.OrchestratorService/GetWorkflowTimeline"
-	OrchestratorService_SubmitApproval_FullMethodName      = "/api.v1.OrchestratorService/SubmitApproval"
+	OrchestratorService_CreateProject_FullMethodName        = "/api.v1.OrchestratorService/CreateProject"
+	OrchestratorService_CleanWorkflow_FullMethodName        = "/api.v1.OrchestratorService/CleanWorkflow"
+	OrchestratorService_CreateWorkflow_FullMethodName       = "/api.v1.OrchestratorService/CreateWorkflow"
+	OrchestratorService_ListWorkflows_FullMethodName        = "/api.v1.OrchestratorService/ListWorkflows"
+	OrchestratorService_GetWorkflowTimeline_FullMethodName  = "/api.v1.OrchestratorService/GetWorkflowTimeline"
+	OrchestratorService_StoreContextSnapshot_FullMethodName = "/api.v1.OrchestratorService/StoreContextSnapshot"
+	OrchestratorService_GetContextSnapshot_FullMethodName   = "/api.v1.OrchestratorService/GetContextSnapshot"
+	OrchestratorService_GetWorkflowLineage_FullMethodName   = "/api.v1.OrchestratorService/GetWorkflowLineage"
+	OrchestratorService_SubmitApproval_FullMethodName       = "/api.v1.OrchestratorService/SubmitApproval"
 )
 
 // OrchestratorServiceClient is the client API for OrchestratorService service.
@@ -38,6 +41,9 @@ type OrchestratorServiceClient interface {
 	CreateWorkflow(ctx context.Context, in *CreateWorkflowRequest, opts ...grpc.CallOption) (*CreateWorkflowResponse, error)
 	ListWorkflows(ctx context.Context, in *ListWorkflowsRequest, opts ...grpc.CallOption) (*ListWorkflowsResponse, error)
 	GetWorkflowTimeline(ctx context.Context, in *GetWorkflowTimelineRequest, opts ...grpc.CallOption) (*GetWorkflowTimelineResponse, error)
+	StoreContextSnapshot(ctx context.Context, in *StoreContextSnapshotRequest, opts ...grpc.CallOption) (*ContextSnapshotReceipt, error)
+	GetContextSnapshot(ctx context.Context, in *GetContextSnapshotRequest, opts ...grpc.CallOption) (*GetContextSnapshotResponse, error)
+	GetWorkflowLineage(ctx context.Context, in *GetWorkflowLineageRequest, opts ...grpc.CallOption) (*GetWorkflowLineageResponse, error)
 	SubmitApproval(ctx context.Context, in *ApprovalSubmission, opts ...grpc.CallOption) (*ApprovalResponse, error)
 }
 
@@ -99,6 +105,36 @@ func (c *orchestratorServiceClient) GetWorkflowTimeline(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *orchestratorServiceClient) StoreContextSnapshot(ctx context.Context, in *StoreContextSnapshotRequest, opts ...grpc.CallOption) (*ContextSnapshotReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ContextSnapshotReceipt)
+	err := c.cc.Invoke(ctx, OrchestratorService_StoreContextSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) GetContextSnapshot(ctx context.Context, in *GetContextSnapshotRequest, opts ...grpc.CallOption) (*GetContextSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetContextSnapshotResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_GetContextSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) GetWorkflowLineage(ctx context.Context, in *GetWorkflowLineageRequest, opts ...grpc.CallOption) (*GetWorkflowLineageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetWorkflowLineageResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_GetWorkflowLineage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orchestratorServiceClient) SubmitApproval(ctx context.Context, in *ApprovalSubmission, opts ...grpc.CallOption) (*ApprovalResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ApprovalResponse)
@@ -120,6 +156,9 @@ type OrchestratorServiceServer interface {
 	CreateWorkflow(context.Context, *CreateWorkflowRequest) (*CreateWorkflowResponse, error)
 	ListWorkflows(context.Context, *ListWorkflowsRequest) (*ListWorkflowsResponse, error)
 	GetWorkflowTimeline(context.Context, *GetWorkflowTimelineRequest) (*GetWorkflowTimelineResponse, error)
+	StoreContextSnapshot(context.Context, *StoreContextSnapshotRequest) (*ContextSnapshotReceipt, error)
+	GetContextSnapshot(context.Context, *GetContextSnapshotRequest) (*GetContextSnapshotResponse, error)
+	GetWorkflowLineage(context.Context, *GetWorkflowLineageRequest) (*GetWorkflowLineageResponse, error)
 	SubmitApproval(context.Context, *ApprovalSubmission) (*ApprovalResponse, error)
 	mustEmbedUnimplementedOrchestratorServiceServer()
 }
@@ -145,6 +184,15 @@ func (UnimplementedOrchestratorServiceServer) ListWorkflows(context.Context, *Li
 }
 func (UnimplementedOrchestratorServiceServer) GetWorkflowTimeline(context.Context, *GetWorkflowTimelineRequest) (*GetWorkflowTimelineResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWorkflowTimeline not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) StoreContextSnapshot(context.Context, *StoreContextSnapshotRequest) (*ContextSnapshotReceipt, error) {
+	return nil, status.Error(codes.Unimplemented, "method StoreContextSnapshot not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) GetContextSnapshot(context.Context, *GetContextSnapshotRequest) (*GetContextSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetContextSnapshot not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) GetWorkflowLineage(context.Context, *GetWorkflowLineageRequest) (*GetWorkflowLineageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWorkflowLineage not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) SubmitApproval(context.Context, *ApprovalSubmission) (*ApprovalResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitApproval not implemented")
@@ -260,6 +308,60 @@ func _OrchestratorService_GetWorkflowTimeline_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorService_StoreContextSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StoreContextSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).StoreContextSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_StoreContextSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).StoreContextSnapshot(ctx, req.(*StoreContextSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_GetContextSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetContextSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).GetContextSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_GetContextSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).GetContextSnapshot(ctx, req.(*GetContextSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_GetWorkflowLineage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWorkflowLineageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).GetWorkflowLineage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_GetWorkflowLineage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).GetWorkflowLineage(ctx, req.(*GetWorkflowLineageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrchestratorService_SubmitApproval_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ApprovalSubmission)
 	if err := dec(in); err != nil {
@@ -306,10 +408,22 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OrchestratorService_GetWorkflowTimeline_Handler,
 		},
 		{
+			MethodName: "StoreContextSnapshot",
+			Handler:    _OrchestratorService_StoreContextSnapshot_Handler,
+		},
+		{
+			MethodName: "GetContextSnapshot",
+			Handler:    _OrchestratorService_GetContextSnapshot_Handler,
+		},
+		{
+			MethodName: "GetWorkflowLineage",
+			Handler:    _OrchestratorService_GetWorkflowLineage_Handler,
+		},
+		{
 			MethodName: "SubmitApproval",
 			Handler:    _OrchestratorService_SubmitApproval_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "internal/api/v1/orchestrator.proto",
+	Metadata: "orchestrator.proto",
 }
