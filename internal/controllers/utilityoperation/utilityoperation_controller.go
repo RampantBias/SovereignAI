@@ -473,7 +473,7 @@ type utilityExecutionProfile string
 
 const (
 	utilityExecutionProfileHardened         utilityExecutionProfile = "hardened-v1"
-	utilityExecutionProfileBuildKitRootless utilityExecutionProfile = "buildkit-rootless-v1"
+	utilityExecutionProfileBuildKitRootless utilityExecutionProfile = "buildkit-rootless-v2"
 	executionProfileAnnotation                                      = "sovereign-ai.io/execution-profile"
 )
 
@@ -956,6 +956,7 @@ func applyUtilityExecutionProfile(pod *corev1.PodSpec, container *corev1.Contain
 		container.SecurityContext.RunAsUser = &identity
 		container.SecurityContext.RunAsGroup = &identity
 		container.SecurityContext.AllowPrivilegeEscalation = &allowPrivilegeEscalation
+		container.SecurityContext.Capabilities.Add = []corev1.Capability{"SETUID", "SETGID"}
 		container.SecurityContext.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
 		container.SecurityContext.AppArmorProfile = &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
 		setContainerEnv(container,

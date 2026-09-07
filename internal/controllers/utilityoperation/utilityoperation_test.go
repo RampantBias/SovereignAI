@@ -3,6 +3,7 @@ package utilityoperation
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -389,6 +390,9 @@ func assertBuildKitRootlessProfile(t *testing.T, job *batchv1.Job) {
 	if security == nil || security.RunAsUser == nil || *security.RunAsUser != 1000 ||
 		security.RunAsGroup == nil || *security.RunAsGroup != 1000 ||
 		security.AllowPrivilegeEscalation == nil || !*security.AllowPrivilegeEscalation ||
+		security.Capabilities == nil ||
+		!slices.Equal(security.Capabilities.Drop, []corev1.Capability{"ALL"}) ||
+		!slices.Equal(security.Capabilities.Add, []corev1.Capability{"SETUID", "SETGID"}) ||
 		security.SeccompProfile == nil || security.SeccompProfile.Type != corev1.SeccompProfileTypeUnconfined ||
 		security.AppArmorProfile == nil || security.AppArmorProfile.Type != corev1.AppArmorProfileTypeUnconfined {
 		t.Fatalf("BuildKit container security context is incomplete: %#v", security)
