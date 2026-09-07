@@ -15,7 +15,7 @@ spec:
     provider: argocd-kustomize
     infrastructureRepository: https://github.com/RampantBias/calculator-demo.git
     overlayPath: deploy/overlays/validation
-    imageName: registry.internal/sovereign/calculator
+    imageName: 192.168.1.19:30500/sovereign/calculator
   testJob:
     image: sovereign-test-runner:dev
     command: ["go", "test", "./..."]
@@ -30,6 +30,6 @@ spec:
       - --local
       - dockerfile=/workspace
       - --output
-      - type=image,name=registry.internal/sovereign/calculator,push=true
+      - type=image,name=192.168.1.19:30500/sovereign/calculator,push=true,registry.insecure=true
       - --metadata-file
       - /workspace/image-metadata.json
