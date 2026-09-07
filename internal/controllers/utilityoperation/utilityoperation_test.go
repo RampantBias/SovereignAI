@@ -119,6 +119,7 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	if job.Spec.Template.Spec.Containers[0].Image != project.Spec.TestJob.Image {
 		t.Fatalf("utility job image = %q, want Project test image", job.Spec.Template.Spec.Containers[0].Image)
 	}
+	assertHardenedUtilityProfile(t, &job)
 	if len(job.Spec.Template.Spec.InitContainers) != 1 {
 		t.Fatal("Project image must receive the trusted utility runtime")
 	}
@@ -135,6 +136,9 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	}
 	if contract.Parameters["environmentImageDigest"] != artifactcontract.DigestBytes([]byte(project.Spec.TestJob.Image)) {
 		t.Fatalf("test environment identity was not derived from Project state: %#v", contract.Parameters)
+	}
+	if contract.Parameters["executionProfile"] != string(utilityExecutionProfileHardened) {
+		t.Fatalf("test utility did not record the hardened execution profile: %#v", contract.Parameters)
 	}
 	if contract.Authority.Kind != "UtilityOperation" || contract.Authority.Name != operation.Name || contract.PolicyDecisionID != "allow-test" {
 		t.Fatalf("utility contract lost its authority lineage: %#v", contract)
@@ -190,6 +194,15 @@ func TestUtilityOperationCreatesProjectConstrainedJobIdempotently(t *testing.T) 
 	}
 	if executionDecision.AuthorityEvent != authority.ID || executionDecision.InputEvent != resolved.ID || len(executionDecision.EvidenceEvents) != 1 || executionDecision.EvidenceEvents[0] != admitted.ID {
 		t.Fatalf("utility execution decision did not join its evidence: %#v", executionDecision)
+	}
+	profileRecorded := false
+	for _, invariant := range executionDecision.Invariants {
+		if invariant.ID == "utility-execution-profile-selected" {
+			profileRecorded = invariant.Observed == string(utilityExecutionProfileHardened)
+		}
+	}
+	if !profileRecorded {
+		t.Fatalf("utility execution decision did not record its profile: %#v", executionDecision.Invariants)
 	}
 	if contract.Lineage == nil || contract.Lineage.AdmissionDecisionEvent != admitted.ID || contract.Lineage.AuthorityEvent != authority.ID || contract.Lineage.InputsEvent != resolved.ID || contract.Lineage.ExecutionDecisionEvent != authorized.ID {
 		t.Fatalf("runtime contract did not carry control-plane lineage: %#v", contract.Lineage)
@@ -274,7 +287,8 @@ func TestUtilityOperationScopesRegistryCredentialToUtilityContainer(t *testing.T
 	}
 	if buildContract.Parameters["imageName"] != project.Spec.Validation.ImageName ||
 		buildContract.Parameters["builderImageDigest"] != artifactcontract.DigestBytes([]byte(project.Spec.BuildJob.Image)) ||
-		buildContract.Parameters["digestFile"] != "image-metadata.json" || buildContract.Parameters["dockerfile"] != "Dockerfile" {
+		buildContract.Parameters["digestFile"] != "image-metadata.json" || buildContract.Parameters["dockerfile"] != "Dockerfile" ||
+		buildContract.Parameters["executionProfile"] != string(utilityExecutionProfileBuildKitRootless) {
 		t.Fatalf("build evidence parameters were not derived from Project state: %#v", buildContract.Parameters)
 	}
 	main := job.Spec.Template.Spec.Containers[0]
@@ -318,6 +332,7 @@ func TestUtilityOperationBuildWithoutRegistryCredential(t *testing.T) {
 	if err := client.Get(context.Background(), types.NamespacedName{Namespace: operation.Namespace, Name: operation.Name}, &job); err != nil {
 		t.Fatal(err)
 	}
+	assertBuildKitRootlessProfile(t, &job)
 	for _, volume := range job.Spec.Template.Spec.Volumes {
 		if volume.Name == "operation-credential" {
 			t.Fatal("anonymous build unexpectedly received a credential volume")
@@ -334,6 +349,99 @@ func TestUtilityOperationBuildWithoutRegistryCredential(t *testing.T) {
 			t.Fatal("anonymous build unexpectedly received DOCKER_CONFIG")
 		}
 	}
+}
+
+func assertHardenedUtilityProfile(t *testing.T, job *batchv1.Job) {
+	t.Helper()
+	if job.Annotations[executionProfileAnnotation] != string(utilityExecutionProfileHardened) ||
+		job.Spec.Template.Annotations[executionProfileAnnotation] != string(utilityExecutionProfileHardened) {
+		t.Fatalf("hardened execution profile was not observable: job=%#v pod=%#v", job.Annotations, job.Spec.Template.Annotations)
+	}
+	container := &job.Spec.Template.Spec.Containers[0]
+	if container.SecurityContext.RunAsUser != nil || container.SecurityContext.RunAsGroup != nil ||
+		container.SecurityContext.SeccompProfile != nil || container.SecurityContext.AppArmorProfile != nil ||
+		container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatalf("ordinary utility received a non-hardened container security context: %#v", container.SecurityContext)
+	}
+	if value, found := containerEnv(container, "HOME"); !found || value != "/home/utility" {
+		t.Fatalf("ordinary utility HOME = %q, found=%v", value, found)
+	}
+	if value, found := containerEnv(container, "BUILDKITD_FLAGS"); found {
+		t.Fatalf("ordinary utility unexpectedly received BUILDKITD_FLAGS=%q", value)
+	}
+	if !containerHasMount(container, "utility-home", "/home/utility") || containerHasMount(container, "buildkit-state", "/home/user/.local/share/buildkit") {
+		t.Fatalf("ordinary utility received incorrect profile mounts: %#v", container.VolumeMounts)
+	}
+}
+
+func assertBuildKitRootlessProfile(t *testing.T, job *batchv1.Job) {
+	t.Helper()
+	if job.Annotations[executionProfileAnnotation] != string(utilityExecutionProfileBuildKitRootless) ||
+		job.Spec.Template.Annotations[executionProfileAnnotation] != string(utilityExecutionProfileBuildKitRootless) {
+		t.Fatalf("BuildKit execution profile was not observable: job=%#v pod=%#v", job.Annotations, job.Spec.Template.Annotations)
+	}
+	pod := &job.Spec.Template.Spec
+	if pod.SecurityContext == nil || pod.SecurityContext.RunAsUser == nil || *pod.SecurityContext.RunAsUser != 65532 {
+		t.Fatalf("BuildKit profile weakened shared Pod defaults: %#v", pod.SecurityContext)
+	}
+	container := &pod.Containers[0]
+	security := container.SecurityContext
+	if security == nil || security.RunAsUser == nil || *security.RunAsUser != 1000 ||
+		security.RunAsGroup == nil || *security.RunAsGroup != 1000 ||
+		security.AllowPrivilegeEscalation == nil || !*security.AllowPrivilegeEscalation ||
+		security.SeccompProfile == nil || security.SeccompProfile.Type != corev1.SeccompProfileTypeUnconfined ||
+		security.AppArmorProfile == nil || security.AppArmorProfile.Type != corev1.AppArmorProfileTypeUnconfined {
+		t.Fatalf("BuildKit container security context is incomplete: %#v", security)
+	}
+	for name, want := range map[string]string{
+		"HOME":            "/home/user",
+		"XDG_CACHE_HOME":  "/home/user/.cache",
+		"BUILDKITD_FLAGS": "--oci-worker-no-process-sandbox",
+	} {
+		if value, found := containerEnv(container, name); !found || value != want {
+			t.Fatalf("BuildKit %s = %q, found=%v, want %q", name, value, found, want)
+		}
+	}
+	if !containerHasMount(container, "buildkit-state", "/home/user/.local/share/buildkit") ||
+		containerHasMount(container, "utility-home", "/home/utility") ||
+		!podHasVolume(pod, "buildkit-state") {
+		t.Fatalf("BuildKit profile volumes are incomplete: mounts=%#v volumes=%#v", container.VolumeMounts, pod.Volumes)
+	}
+	if len(pod.InitContainers) != 1 {
+		t.Fatalf("BuildKit job init containers = %d, want 1", len(pod.InitContainers))
+	}
+	initSecurity := pod.InitContainers[0].SecurityContext
+	if initSecurity == nil || initSecurity.AllowPrivilegeEscalation == nil || *initSecurity.AllowPrivilegeEscalation ||
+		initSecurity.RunAsUser != nil || initSecurity.SeccompProfile != nil || initSecurity.AppArmorProfile != nil {
+		t.Fatalf("BuildKit profile leaked into trusted runtime init container: %#v", initSecurity)
+	}
+}
+
+func containerEnv(container *corev1.Container, name string) (string, bool) {
+	for _, variable := range container.Env {
+		if variable.Name == name {
+			return variable.Value, true
+		}
+	}
+	return "", false
+}
+
+func containerHasMount(container *corev1.Container, name, path string) bool {
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == name && mount.MountPath == path {
+			return true
+		}
+	}
+	return false
+}
+
+func podHasVolume(pod *corev1.PodSpec, name string) bool {
+	for _, volume := range pod.Volumes {
+		if volume.Name == name && volume.EmptyDir != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUtilityOperationScopesRepositoryCredentialToHTTPSGit(t *testing.T) {

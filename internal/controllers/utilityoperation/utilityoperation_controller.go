@@ -462,11 +462,20 @@ func (r *UtilityOperationReconciler) recordPolicyDecision(ctx context.Context, o
 type utilityWorkloadConfig struct {
 	input            utilitycontract.Input
 	executionImage   string
+	executionProfile utilityExecutionProfile
 	credentialRef    v1alpha1.NamespacedReference
 	credentialClass  string
 	credentialSecret string
 	bootstrapRuntime bool
 }
+
+type utilityExecutionProfile string
+
+const (
+	utilityExecutionProfileHardened         utilityExecutionProfile = "hardened-v1"
+	utilityExecutionProfileBuildKitRootless utilityExecutionProfile = "buildkit-rootless-v1"
+	executionProfileAnnotation                                      = "sovereign-ai.io/execution-profile"
+)
 
 func (r *UtilityOperationReconciler) ensureWorkload(ctx context.Context, operation *v1alpha1.UtilityOperation, grant controllers.WorkspaceWriterGrant) error {
 	workflow, project, err := r.resolveContext(ctx, operation)
@@ -769,7 +778,8 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 		parameters["repositoryURL"] = project.Spec.ApplicationRepository.URL
 	}
 	result := utilityWorkloadConfig{
-		executionImage: runtimeImage, credentialClass: utility.ExpectedCredentialClass(operation.Spec.Operation.Name),
+		executionImage: runtimeImage, executionProfile: utilityExecutionProfileHardened,
+		credentialClass: utility.ExpectedCredentialClass(operation.Spec.Operation.Name),
 		input: utilitycontract.Input{
 			SchemaVersion:    utilitycontract.Version,
 			WorkflowID:       workflow.Spec.WorkflowID,
@@ -811,6 +821,7 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 			return utilityWorkloadConfig{}, fmt.Errorf("project %s has no buildJob image and command", project.Name)
 		}
 		result.executionImage = project.Spec.BuildJob.Image
+		result.executionProfile = utilityExecutionProfileBuildKitRootless
 		result.bootstrapRuntime = result.executionImage != runtimeImage
 		result.input.Command = append(append([]string(nil), project.Spec.BuildJob.Command...), project.Spec.BuildJob.Args...)
 		result.input.Parameters["builderImageDigest"] = admittedImageIdentityDigest(project.Spec.BuildJob.Image)
@@ -821,6 +832,7 @@ func buildUtilityWorkloadConfig(operation *v1alpha1.UtilityOperation, workflow *
 			result.input.Parameters["imageName"] = project.Spec.Validation.ImageName
 		}
 	}
+	result.input.Parameters["executionProfile"] = string(result.executionProfile)
 	if result.input.Operation == utility.OperationRepositoryInitialize && (result.input.Parameters["repositoryURL"] == "" || result.input.Parameters["revision"] == "") {
 		return utilityWorkloadConfig{}, fmt.Errorf("project %s repository URL and default revision are required", project.Name)
 	}
@@ -847,6 +859,9 @@ func utilityIdempotencyKey(operation *v1alpha1.UtilityOperation, workflow *v1alp
 func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, runtimeImage string, workload utilityWorkloadConfig, grant controllers.WorkspaceWriterGrant) *batchv1.Job {
 	automount, allowPrivilegeEscalation := false, false
 	backoff, ttl := int32(0), int32(3600)
+	if workload.executionProfile == "" {
+		workload.executionProfile = utilityExecutionProfileHardened
+	}
 	if pvcName == "" {
 		pvcName = operation.Spec.WorkflowRef.Name + "-workspace"
 	}
@@ -860,13 +875,13 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 				controllermeta.LabelStep:            operation.Spec.StepName,
 				"sovereign-ai.io/utility-operation": operation.Name,
 			},
-			Annotations: controllers.WorkspaceWriterAnnotations(grant),
+			Annotations: mergeStringMaps(controllers.WorkspaceWriterAnnotations(grant), map[string]string{executionProfileAnnotation: string(workload.executionProfile)}),
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoff,
 			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Annotations: controllers.WorkspaceWriterAnnotations(grant)},
+				ObjectMeta: metav1.ObjectMeta{Annotations: mergeStringMaps(controllers.WorkspaceWriterAnnotations(grant), map[string]string{executionProfileAnnotation: string(workload.executionProfile)})},
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
 					AutomountServiceAccountToken: &automount,
@@ -891,26 +906,7 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 	}
 	container := &job.Spec.Template.Spec.Containers[0]
 	container.Env = append(container.Env, controllers.WorkspaceWriterEnv(grant)...)
-	container.Env = append(container.Env,
-		corev1.EnvVar{Name: "HOME", Value: "/home/utility"},
-		corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: "/home/utility/.cache"},
-	)
-
-	container.VolumeMounts = append(container.VolumeMounts,
-		corev1.VolumeMount{
-			Name:      "utility-home",
-			MountPath: "/home/utility",
-		},
-	)
-
-	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes,
-		corev1.Volume{
-			Name: "utility-home",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		},
-	)
+	applyUtilityExecutionProfile(&job.Spec.Template.Spec, container, workload.executionProfile)
 
 	if workload.bootstrapRuntime {
 		runnerPath = "/sovereign-bin/utility-runner"
@@ -951,6 +947,69 @@ func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, 
 		job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{Name: "operation-credential", VolumeSource: corev1.VolumeSource{Secret: secretSource}})
 	}
 	return job
+}
+
+func applyUtilityExecutionProfile(pod *corev1.PodSpec, container *corev1.Container, profile utilityExecutionProfile) {
+	switch profile {
+	case utilityExecutionProfileBuildKitRootless:
+		identity, allowPrivilegeEscalation := int64(1000), true
+		container.SecurityContext.RunAsUser = &identity
+		container.SecurityContext.RunAsGroup = &identity
+		container.SecurityContext.AllowPrivilegeEscalation = &allowPrivilegeEscalation
+		container.SecurityContext.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
+		container.SecurityContext.AppArmorProfile = &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
+		setContainerEnv(container,
+			corev1.EnvVar{Name: "HOME", Value: "/home/user"},
+			corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: "/home/user/.cache"},
+			corev1.EnvVar{Name: "BUILDKITD_FLAGS", Value: "--oci-worker-no-process-sandbox"},
+		)
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "buildkit-state", MountPath: "/home/user/.local/share/buildkit"})
+		pod.Volumes = append(pod.Volumes, corev1.Volume{
+			Name: "buildkit-state",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+	default:
+		setContainerEnv(container,
+			corev1.EnvVar{Name: "HOME", Value: "/home/utility"},
+			corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: "/home/utility/.cache"},
+		)
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "utility-home", MountPath: "/home/utility"})
+		pod.Volumes = append(pod.Volumes, corev1.Volume{
+			Name: "utility-home",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+	}
+}
+
+func setContainerEnv(container *corev1.Container, values ...corev1.EnvVar) {
+	for _, value := range values {
+		replaced := false
+		for index := range container.Env {
+			if container.Env[index].Name == value.Name {
+				container.Env[index] = value
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			container.Env = append(container.Env, value)
+		}
+	}
+}
+
+func mergeStringMaps(base, additions map[string]string) map[string]string {
+	result := make(map[string]string, len(base)+len(additions))
+	for key, value := range base {
+		result[key] = value
+	}
+	for key, value := range additions {
+		result[key] = value
+	}
+	return result
 }
 
 func (r *UtilityOperationReconciler) collectorImage() string {
@@ -1136,6 +1195,7 @@ func (r *UtilityOperationReconciler) appendUtilityExecutionAuthorized(ctx contex
 			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "execution-authority-linked", Outcome: "passed", Expected: authorityEventID, Observed: authorityEventID, Reason: "workflow, attempt ownership, and writer authority were established"},
 			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "execution-inputs-linked", Outcome: "passed", Expected: inputEventID, Observed: inputEventID, Reason: "resolved input evidence was recorded before utility execution"},
 			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "credential-scope-resolved", Outcome: "passed", Expected: workload.credentialClass, Observed: workload.credentialClass, Reason: "any credential is operation-scoped and derived from project policy"},
+			{SchemaVersion: audit.PayloadSchemaVersionV1, ID: "utility-execution-profile-selected", Outcome: "passed", Expected: string(workload.executionProfile), Observed: string(workload.executionProfile), Reason: "the platform selected a closed execution profile for this allow-listed utility operation"},
 		},
 	}
 	event, err := r.appendEventWithDataResult(ctx, operation, "UtilityExecutionAuthorized", "authorize-execution", operation.Name, "authorized", "", payload)
