@@ -9,6 +9,7 @@ import (
 
 // Used for building events
 type EventOptions struct {
+	InstanceID    string
 	Source        string
 	Type          string
 	OccurredAt    time.Time
@@ -48,20 +49,24 @@ func NewEvent(options EventOptions) (Event, error) {
 	if correlationID == "" {
 		correlationID = options.Subject.Project
 	}
+	idParts := []string{
+		source,
+		options.Type,
+		options.Subject.Project,
+		options.Subject.Namespace,
+		options.Subject.Workflow,
+		options.Subject.Step,
+		fmt.Sprint(options.Subject.Attempt),
+		options.Action,
+		options.Target,
+		options.Outcome,
+		options.Reason,
+	}
+	if options.InstanceID != "" {
+		idParts = append(idParts, options.InstanceID)
+	}
 	return Event{
-		ID: DeterministicID(
-			source,
-			options.Type,
-			options.Subject.Project,
-			options.Subject.Namespace,
-			options.Subject.Workflow,
-			options.Subject.Step,
-			fmt.Sprint(options.Subject.Attempt),
-			options.Action,
-			options.Target,
-			options.Outcome,
-			options.Reason,
-		),
+		ID:            DeterministicID(idParts...),
 		Type:          options.Type,
 		SchemaVersion: "v1",
 		OccurredAt:    occurredAt.UTC(),

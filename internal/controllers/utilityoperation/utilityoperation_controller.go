@@ -170,7 +170,17 @@ func (r *UtilityOperationReconciler) ensureValidOperation(ctx context.Context, o
 			return true, ctrl.Result{}, err
 		}
 	}
-	if operation.Status.PolicyDecisionID == "" {
+	missingAdmission := false
+	if operation.Status.PolicyDecisionID != "" && operation.Status.JobRef == "" && r.Audit != nil {
+		id, err := r.lookupOperationEventID(ctx, operation, "UtilityOperationAdmitted")
+		if err != nil {
+			return true, ctrl.Result{}, err
+		}
+		missingAdmission = id == ""
+	}
+	// A persisted policy ID alone is insufficient: old event-ID collisions or
+	// interrupted reconciliation may have left no admission for this execution.
+	if operation.Status.PolicyDecisionID == "" || missingAdmission {
 		allowed, decisionID, reason, err := r.admit(ctx, operation)
 		if err != nil {
 			return true, ctrl.Result{}, err
@@ -853,7 +863,13 @@ func utilityIdempotencyKey(operation *v1alpha1.UtilityOperation, workflow *v1alp
 	if identity == "" {
 		identity = workflow.Name
 	}
-	return operation.Namespace + "/" + identity + "/" + operation.Spec.StepName
+	key := operation.Namespace + "/" + identity + "/" + operation.Spec.StepName
+	// Step retries replay the same side effect. A workflow rewind starts a new
+	// logical operation and may consume different accepted artifacts.
+	if workflow.Status.WorkflowAttempt > 0 {
+		key += fmt.Sprintf("/w%d", workflow.Status.WorkflowAttempt)
+	}
+	return key
 }
 
 func buildUtilityJob(operation *v1alpha1.UtilityOperation, pvcName, configName, runtimeImage string, workload utilityWorkloadConfig, grant controllers.WorkspaceWriterGrant) *batchv1.Job {
@@ -1218,6 +1234,14 @@ func utilityResourceRef(kind string, object client.Object) audit.ResourceRef {
 }
 
 func (r *UtilityOperationReconciler) findOperationEventID(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType string) (string, error) {
+	id, err := r.lookupOperationEventID(ctx, operation, eventType)
+	if err == nil && id == "" && r.Audit != nil {
+		err = fmt.Errorf("required %s event for UtilityOperation %s was not recorded", eventType, operation.Name)
+	}
+	return id, err
+}
+
+func (r *UtilityOperationReconciler) lookupOperationEventID(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType string) (string, error) {
 	if r.Audit == nil {
 		return "", nil
 	}
@@ -1228,10 +1252,21 @@ func (r *UtilityOperationReconciler) findOperationEventID(ctx context.Context, o
 	for index := len(events) - 1; index >= 0; index-- {
 		event := events[index]
 		if event.Type == eventType && event.Subject.Step == operation.Spec.StepName && event.Subject.Attempt == operation.Spec.Attempt && event.References["utilityOperation"] == operation.Name {
+			uid := event.References["utilityOperationUID"]
+			if uid == "" && eventType == "UtilityOperationAdmitted" {
+				// Older admission events carry the immutable identity in their payload.
+				var payload audit.DecisionEvaluated
+				if err := json.Unmarshal(event.Data, &payload); err == nil {
+					uid = payload.Primitive.UID
+				}
+			}
+			if operation.UID != "" && uid != string(operation.UID) {
+				continue
+			}
 			return event.ID, nil
 		}
 	}
-	return "", fmt.Errorf("required %s event for UtilityOperation %s was not recorded", eventType, operation.Name)
+	return "", nil
 }
 
 func (r *UtilityOperationReconciler) appendEvent(ctx context.Context, operation *v1alpha1.UtilityOperation, eventType, action, target, outcome, reason string, data any) error {
@@ -1245,9 +1280,10 @@ func (r *UtilityOperationReconciler) appendEventWithDataResult(ctx context.Conte
 		decisionID = payload.Decision.ID
 	}
 	return audit.BuildAndAppendControllerEvent(ctx, r.Audit, "utilityoperation-controller", r.Now, audit.EventOptions{
-		Type: eventType, Subject: audit.Subject{Namespace: operation.Namespace, Workflow: operation.Spec.WorkflowRef.Name, Step: operation.Spec.StepName, Attempt: operation.Spec.Attempt},
+		InstanceID: string(operation.UID),
+		Type:       eventType, Subject: audit.Subject{Namespace: operation.Namespace, Workflow: operation.Spec.WorkflowRef.Name, Step: operation.Spec.StepName, Attempt: operation.Spec.Attempt},
 		Action: action, Target: target, Outcome: outcome, Reason: reason, DecisionID: decisionID,
-		References: map[string]string{"utilityOperation": operation.Name, "stepAttempt": operation.Spec.AttemptRef, "job": operation.Status.JobRef, "collector": operation.Status.CollectorJobRef, "workspaceWriterLease": operation.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(operation.Status.WorkspaceWriterEpoch)},
+		References: map[string]string{"utilityOperation": operation.Name, "utilityOperationUID": string(operation.UID), "stepAttempt": operation.Spec.AttemptRef, "job": operation.Status.JobRef, "collector": operation.Status.CollectorJobRef, "workspaceWriterLease": operation.Status.WorkspaceWriterLeaseRef, "writerEpoch": fmt.Sprint(operation.Status.WorkspaceWriterEpoch)},
 		Data:       data,
 	})
 }
