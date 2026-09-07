@@ -222,17 +222,23 @@ func TestInferenceWorkloadUsesKubernetesGPUPlacement(t *testing.T) {
 			t.Fatal("inference runtime still configures obsolete structured chat outputs")
 		}
 	}
-	if !autoToolChoice || toolCallParser != "hermes" {
-		t.Fatalf("tool calling args = %v, want automatic Hermes parsing", pod.Spec.Containers[0].Args)
+	if !autoToolChoice || toolCallParser != "qwen3_coder" {
+		t.Fatalf("tool calling args = %v, want automatic Qwen3.5 parsing", pod.Spec.Containers[0].Args)
 	}
 	if arguments["--model"] != reconciler.Profile.ModelID ||
 		arguments["--revision"] != reconciler.Profile.ModelRevision ||
 		arguments["--served-model-name"] != reconciler.Profile.ServedModelName ||
-		arguments["--dtype"] != "auto" || arguments["--quantization"] != "awq_marlin" ||
-		arguments["--attention-backend"] != "TRITON_ATTN" ||
-		arguments["--max-model-len"] != "12288" ||
+		arguments["--dtype"] != "bfloat16" || arguments["--quantization"] != "compressed-tensors" ||
+		arguments["--attention-backend"] != "" ||
+		arguments["--max-model-len"] != "16384" ||
 		arguments["--kv-cache-memory-bytes"] != "3221225472" {
-		t.Fatalf("14B runtime args = %v", pod.Spec.Containers[0].Args)
+		t.Fatalf("9B runtime args = %v", pod.Spec.Containers[0].Args)
+	}
+	if arguments["--reasoning-parser"] != "qwen3" ||
+		arguments["--default-chat-template-kwargs"] != `{"enable_thinking":false}` ||
+		arguments["--max-num-batched-tokens"] != "2048" ||
+		arguments["--max-num-seqs"] != "1" {
+		t.Fatalf("reasoning/memory arguments = %v", pod.Spec.Containers[0].Args)
 	}
 	if got := pod.Spec.Containers[0].Resources.Limits["nvidia.com/gpu"]; got.String() != "1" {
 		t.Fatalf("GPU request = %s, want 1", got.String())
@@ -273,13 +279,15 @@ func inferenceScheme(t *testing.T) *runtime.Scheme {
 func testInferenceProfile() inference.Profile {
 	return inference.Profile{
 		RuntimeImage:       "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b",
-		ModelID:            "Qwen/Qwen2.5-Coder-14B-Instruct-AWQ",
-		ModelRevision:      "eb3172f06a6d6b3a15f08947b0668d782e4d2d2c",
-		ServedModelName:    "code-qwen25-14b-awq",
-		DType:              "auto",
-		Quantization:       "awq_marlin",
-		AttentionBackend:   "TRITON_ATTN",
-		MaxModelLen:        12288,
+		ModelID:            "cyankiwi/Qwen3.5-9B-AWQ-4bit",
+		ModelRevision:      "156edc4bbeb8d1910ee7be9196bafaf1bc052156",
+		ServedModelName:    "code-qwen35-9b-awq",
+		DType:              "bfloat16",
+		Quantization:       "compressed-tensors",
+		ToolCallParser:     "qwen3_coder",
+		ReasoningParser:    "qwen3",
+		LanguageModelOnly:  true,
+		MaxModelLen:        16384,
 		KVCacheMemoryBytes: 3221225472,
 		CachePVCName:       "sovereign-model-cache",
 		CachePath:          "/model-cache",
@@ -289,5 +297,29 @@ func testInferenceProfile() inference.Profile {
 		RequestTimeout:     time.Minute * 3,
 		MaxOutputTokens:    2048,
 		MaxResponseBytes:   4194304, // 4 MB
+	}
+}
+
+func TestInferenceWorkloadOptionalModelFeatures(t *testing.T) {
+	profile := testInferenceProfile()
+	profile.EnableThinking = true
+	r := InferenceEndpointReconciler{Profile: profile}
+	ep := &v1alpha1.InferenceEndpoint{}
+	pod, _ := r.buildInferenceWorkloads(ep)
+	if !containsString(pod.Spec.Containers[0].Args, `{"enable_thinking":true}`) {
+		t.Fatal("explicit thinking opt-in was not forwarded")
+	}
+	r.Profile.ToolCallParser = ""
+	r.Profile.ReasoningParser = ""
+	r.Profile.LanguageModelOnly = false
+	pod, _ = r.buildInferenceWorkloads(ep)
+	args := pod.Spec.Containers[0].Args
+	if !containsString(args, "hermes") {
+		t.Fatal("legacy profiles must retain Hermes parsing")
+	}
+	for _, absent := range []string{"--reasoning-parser", "--default-chat-template-kwargs", "--language-model-only"} {
+		if containsString(args, absent) {
+			t.Fatalf("disabled model feature still present: %s", absent)
+		}
 	}
 }

@@ -141,10 +141,21 @@ func (r *InferenceEndpointReconciler) buildInferenceWorkloads(endpoint *v1alpha1
 		"--gpu-memory-utilization", "0.90",
 		"--max-model-len", strconv.Itoa(r.Profile.MaxModelLen),
 		"--max-num-seqs", "1",
+		// Bound prefill activation memory on the 16 GB GPU.
+		"--max-num-batched-tokens", "2048",
 		"--generation-config", "vllm",
 		"--enforce-eager",
 		"--enable-auto-tool-choice",
 		"--tool-call-parser", "hermes",
+	}
+
+	// 9B is now a reasoning model, so I can have it parse this
+	if r.Profile.ReasoningParser != "" {
+		vllmArgs = append(vllmArgs, "--reasoning-parser", r.Profile.ReasoningParser,
+			"--default-chat-template-kwargs", fmt.Sprintf(`{"enable_thinking":%t}`, r.Profile.EnableThinking))
+	}
+	if r.Profile.LanguageModelOnly {
+		vllmArgs = append(vllmArgs, "--language-model-only")
 	}
 	if r.Profile.Quantization != "" {
 		vllmArgs = append(vllmArgs, "--quantization", r.Profile.Quantization)

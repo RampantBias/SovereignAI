@@ -308,6 +308,7 @@ func (e runnerEvents) append(ctx context.Context, eventType, action, target, out
 		decisionID = payload.Decision.ID
 	}
 	event, err := audit.BuildAndAppendEvent(ctx, e.recorder, audit.EventOptions{
+		InstanceID: e.input.Authority.UID,
 		Source:     "utility-runner",
 		Type:       eventType,
 		Actor:      audit.Actor{Kind: "RuntimeBoundary", ID: "utility-runner"},

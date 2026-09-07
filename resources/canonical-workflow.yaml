@@ -39,8 +39,8 @@ spec:
         executable: ["/reference-agent"]
         capabilities: ["workspace_read", "workspace_tree", "workspace_search", "candidate_write", "agent_complete"]
         inference:
-          model: code-qwen25-14b-awq
-          modelRevision: "eb3172f06a6d6b3a15f08947b0668d782e4d2d2c"
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
           estimatedKVRAMMiB: 1536
           sharingScope: SharedWithinWorkflow
       inputs:
@@ -70,8 +70,8 @@ spec:
         executable: ["/reference-agent"]
         capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
         inference:
-          model: code-qwen25-14b-awq
-          modelRevision: "eb3172f06a6d6b3a15f08947b0668d782e4d2d2c"
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
           estimatedKVRAMMiB: 1536
           sharingScope: SharedWithinWorkflow
       inputs:
@@ -107,8 +107,8 @@ spec:
         executable: ["/reference-agent"]
         capabilities: ["workspace_read", "workspace_write", "workspace_create", "workspace_tree", "workspace_search", "agent_complete"]
         inference:
-          model: code-qwen25-14b-awq
-          modelRevision: "eb3172f06a6d6b3a15f08947b0668d782e4d2d2c"
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
           estimatedKVRAMMiB: 1536
           sharingScope: SharedWithinWorkflow
       inputs:

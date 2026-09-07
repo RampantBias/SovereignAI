@@ -16,6 +16,10 @@ type Profile struct {
 	DType              string
 	Quantization       string
 	AttentionBackend   string
+	ToolCallParser     string
+	ReasoningParser    string
+	LanguageModelOnly  bool
+	EnableThinking     bool
 	MaxModelLen        int
 	KVCacheMemoryBytes int64
 	CachePVCName       string

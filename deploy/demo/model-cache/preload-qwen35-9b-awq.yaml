@@ -1,0 +1,91 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-cache-preload-qwen35-9b-awq-156edc4
+  namespace: sovereign-inference
+  labels:
+    app.kubernetes.io/name: model-cache-preload
+    app.kubernetes.io/part-of: sovereign-ai
+    sovereign-ai.io/model-profile: code-qwen35-9b-awq
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: model-cache-preload
+        sovereign-ai.io/model-profile: code-qwen35-9b-awq
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        sovereign-ai.io/gpu-node: "true"
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: preload
+          image: docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-c"]
+          args:
+            - |
+              import json
+              from pathlib import Path
+
+              from huggingface_hub import snapshot_download
+
+              model_id = "cyankiwi/Qwen3.5-9B-AWQ-4bit"
+              revision = "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
+              cache_dir = Path("/model-cache")
+
+              snapshot = Path(snapshot_download(
+                  repo_id=model_id,
+                  revision=revision,
+                  cache_dir=str(cache_dir),
+                  max_workers=2,
+              ))
+              if snapshot.name != revision:
+                  raise RuntimeError(f"resolved snapshot {snapshot.name!r}, expected {revision!r}")
+
+              config = json.loads((snapshot / "config.json").read_text(encoding="utf-8"))
+              quantization = config.get("quantization_config", {})
+              if quantization.get("quant_method") != "compressed-tensors" or any(group.get("weights", {}).get("num_bits") != 4 for group in quantization.get("config_groups", {}).values()) or not quantization.get("config_groups"):
+                  raise RuntimeError(f"unexpected quantization config: {quantization!r}")
+
+              index = json.loads((snapshot / "model.safetensors.index.json").read_text(encoding="utf-8"))
+              shards = sorted(set(index.get("weight_map", {}).values()))
+              missing = [name for name in shards if not (snapshot / name).is_file()]
+              if not shards or missing:
+                  raise RuntimeError(f"checkpoint verification failed; shards={len(shards)} missing={missing}")
+              checkpoint_bytes = sum((snapshot / name).stat().st_size for name in shards)
+              if not 8_000_000_000 <= checkpoint_bytes <= 9_100_000_000:
+                  raise RuntimeError(f"checkpoint outside pinned 4-bit size budget: {checkpoint_bytes} bytes")
+
+              marker_dir = cache_dir / "sovereign-verification"
+              marker_dir.mkdir(exist_ok=True)
+              marker = {
+                  "modelId": model_id,
+                  "modelRevision": revision,
+                  "snapshotPath": str(snapshot),
+                  "quantization": "compressed-tensors-w4a16",
+                  "checkpointBytes": checkpoint_bytes,
+                  "checkpointShards": shards,
+              }
+              marker_path = marker_dir / f"{revision}.json"
+              marker_path.write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+              print(json.dumps(marker, sort_keys=True))
+          env:
+            - name: HF_HUB_DOWNLOAD_TIMEOUT
+              value: "300"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cache
+              mountPath: /model-cache
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: sovereign-model-cache
