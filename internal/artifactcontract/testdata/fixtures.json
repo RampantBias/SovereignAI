@@ -8,15 +8,15 @@
   {
     "id": "RQ-001",
     "text": "84 / 2 returns 42",
-    "digest": "sha256:6b0a2b1a3065d86f8de1c2b62492721cc4e4b54c5b28f0b353481051ab377f55"
+    "digest": "sha256:6ed7267c4acbd814ac73e6ff6fe256964162eee90ef24f2050da07a3d15687b9"
   },
   {
     "id": "RQ-002",
     "text": "division by zero returns HTTP 422",
-    "digest": "sha256:da2ee195d75220f1632bc1f0056033e903e7da4d174d2e6e5e0875249abd3b4c"
+    "digest": "sha256:0e5b3e50389f2d1b27f3799b4572dba7e265431d39da48c37b40cce3ccd3e4f7"
   }
 ],
-      "acceptanceCriteriaSetDigest": "sha256:09c3eee9501a3fadc3b54b2670c5f5e87afdab4b41372d44f59e5ab2240aa3c4",
+      "acceptanceCriteriaSetDigest": "sha256:2195b987e6398348b51a1eb30b43922db985f5fb1e4949e3ae996624a2fef8d1",
       "repositoryURL": "https://git.example.test/calculator.git",
       "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
