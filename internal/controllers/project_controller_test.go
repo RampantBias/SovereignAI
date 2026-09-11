@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/validation"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,7 +71,16 @@ func projectReconciler(t *testing.T, project *v1alpha1.SovereignProject, provisi
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.SovereignProject{}).WithObjects(project).Build()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	ref := project.Spec.ApplicationRepository.CredentialRef
+	credential := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{controllermeta.RepositoryCredentialKey: []byte("https://demo-user:demo-token@github.com\n")},
+	}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.SovereignProject{}).WithObjects(project, credential).Build()
 	return &SovereignProjectReconciler{Client: kube, Provisioner: provisioner}
 }
 
@@ -103,7 +114,8 @@ func TestProjectProvisioningLifecycle(t *testing.T) {
 	if !v1alpha1.ProjectReady(updated) || updated.Status.ValidationProviderRef != "sov-sovereign-ai" {
 		t.Fatalf("project not ready: %#v", updated.Status)
 	}
-	if stub.last.UID != project.UID || stub.last.InfrastructureRepo != project.Spec.Validation.InfrastructureRepo {
+	if stub.last.UID != project.UID || stub.last.InfrastructureRepo != project.Spec.Validation.InfrastructureRepo ||
+		stub.last.RepositoryCredential.Username != "demo-user" || stub.last.RepositoryCredential.Password != "demo-token" {
 		t.Fatalf("provisioning lost owner/policy: %#v", stub.last)
 	}
 	if result.RequeueAfter != 5*time.Minute {
@@ -118,7 +130,7 @@ func TestProjectProvisioningLifecycle(t *testing.T) {
 	}
 
 	updated.Generation++
-	updated.Spec.Validation.InfrastructureRepo = "https://git.example.test/updated.git"
+	updated.Spec.Validation.InfrastructureRepo = "https://github.com/RampantBias/updated-calculator.git"
 	if err := r.Update(ctx, updated); err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +217,28 @@ func TestProjectProvisioningFailureClearsReadiness(t *testing.T) {
 				t.Fatalf("unexpected status: %#v", updated.Status)
 			}
 		})
+	}
+}
+
+func TestProjectRepositoryCredentialFailurePreventsArgoReadiness(t *testing.T) {
+	project := validProjectFixture(t)
+	project.Finalizers = []string{ProjectFinalizer}
+	stub := &projectProvisionerStub{}
+	r := projectReconciler(t, project, stub)
+	ref := project.Spec.ApplicationRepository.CredentialRef
+	credential := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}
+	if err := r.Delete(context.Background(), credential); err != nil {
+		t.Fatal(err)
+	}
+	key := client.ObjectKeyFromObject(project)
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); !apierrors.IsNotFound(err) {
+		t.Fatalf("expected missing source credential error, got %v", err)
+	}
+	updated := readProject(t, r.Client, key)
+	condition := apiMeta.FindStatusCondition(updated.Status.Conditions, ProjectConditionValidationProviderReady)
+	if stub.ensureCalls != 0 || condition == nil || condition.Status != metav1.ConditionFalse ||
+		condition.Reason != "RepositoryCredentialUnavailable" || v1alpha1.ProjectReady(updated) {
+		t.Fatalf("missing repository credential incorrectly authorized Argo: %#v", updated.Status)
 	}
 }
 

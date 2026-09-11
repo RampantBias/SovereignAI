@@ -9,9 +9,17 @@ import (
 // ProjectRequest identifies the durable owner and its allowed source repository.
 // The namespace pattern and resource allowlist are platform policy, not caller input.
 type ProjectRequest struct {
-	Name               string
-	UID                types.UID
-	InfrastructureRepo string
+	Name                 string
+	UID                  types.UID
+	InfrastructureRepo   string
+	RepositoryCredential RepositoryCredential
+}
+
+// RepositoryCredential contains the HTTPS Git credential needed by Argo CD.
+// It is held only in memory and projected into an Argo repository Secret.
+type RepositoryCredential struct {
+	Username string
+	Password string
 }
 
 type ProjectProvisioner interface {
@@ -28,7 +36,7 @@ type Request struct {
 	InfrastructureRepo     string
 	InfrastructureRevision string
 	OverlayPath            string
-	ImageName              string
+	ImageSelector          string
 	ImageDigest            string
 	Commit                 string
 }

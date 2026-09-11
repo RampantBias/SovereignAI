@@ -9,6 +9,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/controllermeta"
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/validation"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // Exercises both controllers and the real Argo adapter against in-memory API
@@ -44,7 +46,13 @@ func TestProjectToValidationApplicationLifecycle(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: attempt.Name, Namespace: workflow.Namespace, UID: "validation-run-uid", Generation: 1, Finalizers: []string{ValidationFinalizer}, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(attempt, v1alpha1.GroupVersion.WithKind("StepAttempt"))}},
 		Spec:       v1alpha1.ValidationRunSpec{WorkflowRef: workflowRef, AttemptRef: attempt.Name, StepName: "validation", Attempt: 1},
 	}
-	objects := []client.Object{&project, workflow, attempt, run, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: workflow.Namespace}}}
+	credentialRef := project.Spec.ApplicationRepository.CredentialRef
+	repositoryCredential := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: credentialRef.Name, Namespace: credentialRef.Namespace},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{controllermeta.RepositoryCredentialKey: []byte("https://demo-user:demo-token@github.com\n")},
+	}
+	objects := []client.Object{&project, workflow, attempt, run, repositoryCredential, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: workflow.Namespace}}}
 	artifacts := validationArtifactFixtures(workflow, &project, strings.Repeat("c", 40), strings.Repeat("d", 40), "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("e", 64))
 	for i := range artifacts {
 		artifact := &artifacts[i]
@@ -61,7 +69,8 @@ func TestProjectToValidationApplicationLifecycle(t *testing.T) {
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.SovereignProject{}, &v1alpha1.ValidationRun{}).WithObjects(objects...).Build()
 	appGVR := schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"}
 	projectGVR := schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "appprojects"}
-	argo := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{appGVR: "ApplicationList", projectGVR: "AppProjectList"})
+	secretGVR := schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+	argo := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{appGVR: "ApplicationList", projectGVR: "AppProjectList", secretGVR: "SecretList"})
 	provider := validation.NewArgoKustomize(argo, "argocd")
 	projectController := &controllers.SovereignProjectReconciler{Client: kube, Provisioner: provider}
 	recorder := audit.NewMemoryRecorder()
@@ -153,7 +162,30 @@ func TestProjectToValidationApplicationLifecycle(t *testing.T) {
 	if err != nil || result.RequeueAfter == 0 {
 		t.Fatalf("project deletion must wait for Application: %#v %v", result, err)
 	}
-	if err := argo.Resource(appGVR).Namespace("argocd").Delete(ctx, applicationName, metav1.DeleteOptions{}); err != nil {
+	app.SetFinalizers(nil)
+	if _, err := argo.Resource(appGVR).Namespace("argocd").Update(ctx, app, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := argo.Tracker().Delete(appGVR, "argocd", applicationName); err != nil {
+		t.Fatal(err)
+	}
+	// One pass removes the managed repository credential and the next requests
+	// AppProject deletion. Model Argo completing its own resource finalizer.
+	for range 2 {
+		if _, err := projectController.Reconcile(ctx, projectRequest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	argoProject, err := argo.Resource(projectGVR).Namespace("argocd").Get(ctx, "sov-sovereign-ai", metav1.GetOptions{})
+	if err == nil {
+		argoProject.SetFinalizers(nil)
+		if _, err := argo.Resource(projectGVR).Namespace("argocd").Update(ctx, argoProject, metav1.UpdateOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			t.Fatal(err)
+		}
+		if err := argo.Tracker().Delete(projectGVR, "argocd", "sov-sovereign-ai"); err != nil && !apierrors.IsNotFound(err) {
+			t.Fatal(err)
+		}
+	} else if !apierrors.IsNotFound(err) {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -161,7 +193,11 @@ func TestProjectToValidationApplicationLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := kube.Get(ctx, projectRequest.NamespacedName, &latest); !apierrors.IsNotFound(err) {
+	if err := kube.Get(ctx, projectRequest.NamespacedName, &latest); err == nil {
+		if controllerutil.ContainsFinalizer(&latest, controllers.ProjectFinalizer) {
+			t.Fatalf("project cleanup retained the Sovereign finalizer: %#v", latest.Finalizers)
+		}
+	} else if !apierrors.IsNotFound(err) {
 		t.Fatalf("project cleanup did not complete: %v", err)
 	}
 	var ns corev1.Namespace

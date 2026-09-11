@@ -2,6 +2,7 @@ package validation
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"reflect"
 	"testing"
@@ -17,12 +18,15 @@ import (
 
 func projectClient(objects ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		applicationGVR: "ApplicationList", appProjectGVR: "AppProjectList",
+		applicationGVR: "ApplicationList", appProjectGVR: "AppProjectList", repositorySecretGVR: "SecretList",
 	}, objects...)
 }
 
 func projectRequestFixture() ProjectRequest {
-	return ProjectRequest{Name: "calculator", UID: "project-uid", InfrastructureRepo: "https://git.example.test/calculator.git"}
+	return ProjectRequest{
+		Name: "calculator", UID: "project-uid", InfrastructureRepo: "https://git.example.test/calculator.git",
+		RepositoryCredential: RepositoryCredential{Username: "demo-user", Password: "demo-token"},
+	}
 }
 
 func TestEnsureProjectPolicyAndDrift(t *testing.T) {
@@ -53,6 +57,30 @@ func TestEnsureProjectPolicyAndDrift(t *testing.T) {
 	}
 	if !reflect.DeepEqual(project.GetFinalizers(), []string{argoResourcesFinalizer}) {
 		t.Fatal("missing Argo resource finalizer")
+	}
+	credential, err := kube.Resource(repositorySecretGVR).Namespace("argocd").Get(ctx, repositoryCredentialName(name), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRepositoryCredentialOwner(credential, request); err != nil {
+		t.Fatal(err)
+	}
+	credentialData, found, err := unstructured.NestedStringMap(credential.Object, "data")
+	if err != nil || !found {
+		t.Fatalf("missing repository credential data: %#v %v", credential.Object, err)
+	}
+	decode := func(key string) string {
+		value, err := base64.StdEncoding.DecodeString(credentialData[key])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(value)
+	}
+	if decode("type") != "git" || decode("url") != request.InfrastructureRepo ||
+		decode("username") != request.RepositoryCredential.Username ||
+		decode("password") != request.RepositoryCredential.Password ||
+		decode("project") != name {
+		t.Fatalf("unexpected repository credential projection")
 	}
 	kube.ClearActions()
 	if _, err := provider.EnsureProject(ctx, request); err != nil {
@@ -90,12 +118,37 @@ func TestEnsureProjectPolicyAndDrift(t *testing.T) {
 	if !reflect.DeepEqual(updated.Object["spec"], wantSpec) || updated.GetAnnotations()["example.test/note"] != "preserve" || len(updated.GetFinalizers()) != 1 {
 		t.Fatalf("drift was not repaired safely: %#v", updated.Object)
 	}
+	credential, err = kube.Resource(repositorySecretGVR).Namespace("argocd").Get(ctx, repositoryCredentialName(name), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialData, _, _ = unstructured.NestedStringMap(credential.Object, "data")
+	encodedURL, _ := base64.StdEncoding.DecodeString(credentialData["url"])
+	if string(encodedURL) != request.InfrastructureRepo {
+		t.Fatalf("repository credential URL drift was not repaired")
+	}
 	// External deletion is repaired on the next reconciliation.
 	if err := kube.Tracker().Delete(appProjectGVR, "argocd", name); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := provider.EnsureProject(ctx, request); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRepositoryCredentialOwnershipConflictNeverMutates(t *testing.T) {
+	request := projectRequestFixture()
+	project := desiredAppProject(request, "sov-calculator", "argocd")
+	credential := desiredRepositoryCredential(request, "sov-calculator", "argocd")
+	credential.SetOwnerReferences(nil)
+	kube := projectClient(project, credential)
+	if _, err := NewArgoKustomize(kube, "argocd").EnsureProject(context.Background(), request); !apierrors.IsConflict(err) {
+		t.Fatalf("expected repository credential ownership conflict: %v", err)
+	}
+	for _, action := range kube.Actions() {
+		if action.GetResource().Resource == "secrets" && action.GetVerb() != "get" {
+			t.Fatalf("credential conflict caused %s", action.GetVerb())
+		}
 	}
 }
 
@@ -154,6 +207,17 @@ func TestProjectProvisioningOperationalErrors(t *testing.T) {
 				t.Fatalf("expected operational error: %v", err)
 			}
 		})
+	}
+}
+
+func TestRepositoryCredentialProvisioningErrorIsReturned(t *testing.T) {
+	request := projectRequestFixture()
+	kube := projectClient(desiredAppProject(request, "sov-calculator", "argocd"))
+	kube.PrependReactor("create", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(repositorySecretGVR.GroupResource(), repositoryCredentialName("sov-calculator"), fmt.Errorf("denied"))
+	})
+	if _, err := NewArgoKustomize(kube, "argocd").EnsureProject(context.Background(), request); !apierrors.IsForbidden(err) {
+		t.Fatalf("expected repository credential provisioning error: %v", err)
 	}
 }
 

@@ -1,12 +1,12 @@
 apiVersion: aim.sovereign.io/v1alpha1
 kind: SovereignWorkflow
 metadata:
-  name: calculator-plan4
+  name: calculator
 spec:
   projectRef:
     name: calculator
     uid: replace-with-project-uid
-  definitionRevision: plan4-v1
+  definitionRevision: v1
   classification: internal
   requestedVolumeSize: 1Gi
   maxWorkflowAttempt: 3
@@ -68,7 +68,7 @@ spec:
           change-set from the workspace.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_create", "workspace_tree", "workspace_search", "agent_complete"]
         inference:
           model: code-qwen35-9b-awq
           modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
@@ -88,7 +88,7 @@ spec:
       order: 4
       agent:
         responsibility: >
-          You are a Golang unit test author. You will analyze the change 
+          You are a unit test author. You will analyze the change 
           request, implementation plan, repository revision, and developer change request. You are responsible 
           for reading the test files relevant to the change request and implementation 
           plan, and you will modify the test files to provide test coverage for the developer's changes. 
@@ -105,7 +105,7 @@ spec:
           the smallest targeted workspace changes.
         image: sovereign-reference-agent:dev
         executable: ["/reference-agent"]
-        capabilities: ["workspace_read", "workspace_write", "workspace_create", "workspace_tree", "workspace_search", "agent_complete"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_replace", "workspace_tree", "workspace_search", "agent_complete"]
         inference:
           model: code-qwen35-9b-awq
           modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"

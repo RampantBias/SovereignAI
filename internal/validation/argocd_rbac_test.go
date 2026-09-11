@@ -28,13 +28,18 @@ func TestArgoPermissionsRemainNamespaceScoped(t *testing.T) {
 	if role.Namespace != "argocd" || role.Kind != "Role" || role.Name != "sovereign-validation-provider" {
 		t.Fatalf("unexpected Argo role: %#v", role)
 	}
-	if len(role.Rules) != 1 || !slices.Equal(role.Rules[0].APIGroups, []string{"argoproj.io"}) || !slices.Equal(role.Rules[0].Resources, []string{"applications", "appprojects"}) {
+	if len(role.Rules) != 2 || !slices.Equal(role.Rules[0].APIGroups, []string{"argoproj.io"}) || !slices.Equal(role.Rules[0].Resources, []string{"applications", "appprojects"}) {
 		t.Fatalf("unexpected privileges: %#v", role.Rules)
 	}
 	for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete"} {
 		if !slices.Contains(role.Rules[0].Verbs, verb) {
 			t.Fatalf("missing lifecycle verb: %s", verb)
 		}
+	}
+	secretRule := role.Rules[1]
+	if !slices.Equal(secretRule.APIGroups, []string{""}) || !slices.Equal(secretRule.Resources, []string{"secrets"}) ||
+		!slices.Equal(secretRule.Verbs, []string{"create", "delete", "get", "update"}) {
+		t.Fatalf("unexpected Argo repository Secret privileges: %#v", secretRule)
 	}
 	var binding rbacv1.RoleBinding
 	read("deploy/demo/argocd/sovereign-controller.rbac.yaml", &binding)

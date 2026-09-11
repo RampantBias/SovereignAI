@@ -12,6 +12,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/repositorycredential"
 	"github.com/SovereignAI/internal/validation"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -94,11 +95,18 @@ func (r *SovereignProjectReconciler) Reconcile(ctx context.Context, request ctrl
 		controllerutil.AddFinalizer(&project, ProjectFinalizer)
 		return ctrl.Result{}, r.Update(ctx, &project)
 	}
-	reference, err := r.Provisioner.EnsureProject(ctx, validationProjectRequest(&project))
+	credential, err := r.validationRepositoryCredential(ctx, &project)
 	if err != nil {
-		reason := "AppProjectProvisioningFailed"
+		if statusErr := r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "RepositoryCredentialUnavailable", err.Error()); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+		return ctrl.Result{}, err
+	}
+	reference, err := r.Provisioner.EnsureProject(ctx, validationProjectRequest(&project, credential))
+	if err != nil {
+		reason := "ArgoProvisioningFailed"
 		if apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) {
-			reason = "AppProjectConflict"
+			reason = "ArgoResourceConflict"
 		}
 		if statusErr := r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, reason, err.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -108,11 +116,35 @@ func (r *SovereignProjectReconciler) Reconcile(ctx context.Context, request ctrl
 	if reference == "" {
 		return ctrl.Result{}, fmt.Errorf("validation provisioner returned an empty AppProject reference")
 	}
-	return ctrl.Result{RequeueAfter: projectDriftInterval}, r.updateValidationProviderStatus(ctx, &project, reference, metav1.ConditionTrue, "AppProjectReady", "Argo AppProject policy is provisioned")
+	return ctrl.Result{RequeueAfter: projectDriftInterval}, r.updateValidationProviderStatus(ctx, &project, reference, metav1.ConditionTrue, "ArgoProjectReady", "Argo AppProject policy and project-scoped repository credential are provisioned")
 }
 
-func validationProjectRequest(project *v1alpha1.SovereignProject) validation.ProjectRequest {
-	return validation.ProjectRequest{Name: project.Name, UID: project.UID, InfrastructureRepo: project.Spec.Validation.InfrastructureRepo}
+func validationProjectRequest(project *v1alpha1.SovereignProject, credential validation.RepositoryCredential) validation.ProjectRequest {
+	return validation.ProjectRequest{Name: project.Name, UID: project.UID, InfrastructureRepo: project.Spec.Validation.InfrastructureRepo, RepositoryCredential: credential}
+}
+
+func (r *SovereignProjectReconciler) validationRepositoryCredential(ctx context.Context, project *v1alpha1.SovereignProject) (validation.RepositoryCredential, error) {
+	ref := project.Spec.ApplicationRepository.CredentialRef
+	var source corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &source); err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("resolve repository credential %s/%s for Argo: %w", ref.Namespace, ref.Name, err)
+	}
+	credential, err := repositorycredential.Parse(&source)
+	if err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("validate repository credential %s/%s for Argo: %w", ref.Namespace, ref.Name, err)
+	}
+	repositoryURL, err := url.Parse(project.Spec.Validation.InfrastructureRepo)
+	if err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("parse infrastructure repository for Argo credential scope: %w", err)
+	}
+	scopeURL, err := url.Parse(credential.ScopeURL)
+	if err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("parse repository credential scope for Argo")
+	}
+	if !strings.EqualFold(repositoryURL.Scheme, scopeURL.Scheme) || !strings.EqualFold(repositoryURL.Host, scopeURL.Host) {
+		return validation.RepositoryCredential{}, fmt.Errorf("repository credential %s/%s does not match the infrastructure repository origin", ref.Namespace, ref.Name)
+	}
+	return validation.RepositoryCredential{Username: credential.Username, Password: credential.Password}, nil
 }
 
 func (r *SovereignProjectReconciler) cleanupValidationProject(ctx context.Context, project *v1alpha1.SovereignProject) (ctrl.Result, error) {
@@ -125,7 +157,7 @@ func (r *SovereignProjectReconciler) cleanupValidationProject(ctx context.Contex
 	if r.Provisioner == nil {
 		return ctrl.Result{}, fmt.Errorf("validation project provisioner is unavailable for cleanup")
 	}
-	done, err := r.Provisioner.DestroyProject(ctx, validationProjectRequest(project))
+	done, err := r.Provisioner.DestroyProject(ctx, validationProjectRequest(project, validation.RepositoryCredential{}))
 	if err != nil {
 		return ctrl.Result{}, err
 	}
