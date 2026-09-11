@@ -87,3 +87,69 @@ func TestArgoKustomizeStatusSurfacesComparisonError(t *testing.T) {
 		t.Fatalf("comparison error was not surfaced: %#v", status)
 	}
 }
+
+func TestArgoStatusExposesObservedValidationIdentity(t *testing.T) {
+	app := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
+		"metadata": map[string]any{"name": "preview", "namespace": "argocd", "uid": "app-uid"},
+		"spec":     map[string]any{"destination": map[string]any{"namespace": "workflow"}},
+		"status":   map[string]any{"sync": map[string]any{"status": "Synced", "revision": "observed-commit"}, "health": map[string]any{"status": "Healthy"}, "summary": map[string]any{"images": []any{"registry/app@sha256:observed"}}},
+	}}
+	kube := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), app)
+	provider := NewArgoKustomize(kube, "argocd")
+	status, err := provider.Status(context.Background(), "preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Ready || status.ApplicationUID != "app-uid" || status.ApplicationName != "preview" || status.ApplicationNamespace != "argocd" || status.DestinationNamespace != "workflow" || status.ObservedRevision != "observed-commit" || len(status.ObservedImages) != 1 || status.ObservedImages[0] != "registry/app@sha256:observed" {
+		t.Fatalf("lost observed identity: %#v", status)
+	}
+}
+
+func TestArgoStatusUsesCurrentSuccessfulSyncImagesWhenSummaryIsEmpty(t *testing.T) {
+	for _, scenario := range []string{"empty summary", "missing summary", "stale sync", "running sync", "failed sync", "wrong namespace", "unsynced resource", "wrong kind", "summary takes precedence"} {
+		t.Run(scenario, func(t *testing.T) {
+			resource := map[string]any{"group": "apps", "kind": "Deployment", "name": "calculator", "namespace": "workflow", "status": "Synced", "images": []any{"registry/app@sha256:current"}}
+			operation := map[string]any{"phase": "Succeeded", "syncResult": map[string]any{"revision": "current-commit", "resources": []any{resource}}}
+			status := map[string]any{"sync": map[string]any{"status": "Synced", "revision": "current-commit"}, "health": map[string]any{"status": "Healthy"}, "summary": map[string]any{}, "operationState": operation}
+			switch scenario {
+			case "missing summary":
+				delete(status, "summary")
+			case "stale sync":
+				operation["syncResult"].(map[string]any)["revision"] = "old-commit"
+			case "running sync":
+				operation["phase"] = "Running"
+			case "failed sync":
+				operation["phase"] = "Failed"
+			case "wrong namespace":
+				resource["namespace"] = "other"
+			case "unsynced resource":
+				resource["status"] = "SyncFailed"
+			case "wrong kind":
+				resource["kind"] = "Job"
+			case "summary takes precedence":
+				status["summary"] = map[string]any{"images": []any{"registry/app@sha256:summary"}}
+			}
+			app := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "argoproj.io/v1alpha1", "kind": "Application", "metadata": map[string]any{"name": "preview", "namespace": "argocd", "uid": "app-uid"}, "spec": map[string]any{"destination": map[string]any{"namespace": "workflow"}}, "status": status}}
+			provider := NewArgoKustomize(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), app), "argocd")
+			got, err := provider.Status(context.Background(), "preview")
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "empty summary", "missing summary":
+				if len(got.ObservedImages) != 1 || got.ObservedImages[0] != "registry/app@sha256:current" {
+					t.Fatalf("lost current sync evidence: %#v", got)
+				}
+			case "summary takes precedence":
+				if len(got.ObservedImages) != 1 || got.ObservedImages[0] != "registry/app@sha256:summary" {
+					t.Fatalf("overrode summary evidence: %#v", got)
+				}
+			default:
+				if len(got.ObservedImages) != 0 {
+					t.Fatalf("used ineligible sync evidence: %#v", got)
+				}
+			}
+		})
+	}
+}

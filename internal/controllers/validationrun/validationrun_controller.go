@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -26,9 +27,11 @@ const ValidationFinalizer = "sovereign-ai.io/validation-cleanup"
 
 type ValidationRunReconciler struct {
 	client.Client
-	Provider validation.Provider
-	Audit    audit.Recorder
-	Now      func() time.Time
+	Provider       validation.Provider
+	Audit          audit.Recorder
+	Now            func() time.Time
+	CollectorImage string
+	HTTPClient     *http.Client
 }
 
 func (r *ValidationRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -44,6 +47,13 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	// Check for deletion
 	if !run.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(&run, ValidationFinalizer) {
+			quiet, err := r.cleanupResultPublication(ctx, &run)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if !quiet {
+				return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			}
 			reference := run.Status.ProviderRef
 			if reference == "" {
 				reference = validation.ApplicationName(run.Namespace, run.Name, string(run.UID))
@@ -73,7 +83,14 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if terminating {
 		return ctrl.Result{}, nil
 	}
-	if run.Status.Phase == v1alpha1.PhaseSucceeded || run.Status.Phase == v1alpha1.PhaseFailed {
+	if run.Status.Phase == v1alpha1.PhaseFailed {
+		quiet, err := r.cleanupResultPublication(ctx, &run)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !quiet {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -171,6 +188,23 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 	run.Status.AccessURL = status.AccessURL
 	if status.Ready {
+		ready, outcome, err := r.publishValidationResult(ctx, &run, &status)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !ready {
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+		if outcome != "passed" {
+			reason, message := outcome, "validation result publication failed; inspect the collector Job and Artifact"
+			if outcome == "failed" {
+				reason, message = "ValidationEndpointChecksFailed", "validation endpoint checks failed; see validation-result"
+			}
+			return ctrl.Result{}, r.failResultPublication(ctx, &run, reason, message)
+		}
+		if run.Status.Phase == v1alpha1.PhaseSucceeded {
+			return ctrl.Result{}, nil
+		}
 		run.Status.Phase = v1alpha1.PhaseSucceeded
 		run.Status.FailureReason = ""
 		run.Status.Retryable = false
@@ -565,4 +599,16 @@ func (r *ValidationRunReconciler) failInvalidInputs(ctx context.Context, run *v1
 		return err
 	}
 	return r.appendValidationEvent(ctx, run, "ValidationRunFailed", "resolve-inputs", "failed", "InvalidValidationInputs")
+}
+
+func (r *ValidationRunReconciler) failResultPublication(ctx context.Context, run *v1alpha1.ValidationRun, reason, message string) error {
+	run.Status.Phase = v1alpha1.PhaseFailed
+	run.Status.FailureReason = reason
+	run.Status.Retryable = false
+	run.Status.ObservedGeneration = run.Generation
+	apiMeta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{Type: "ValidationReady", Status: metav1.ConditionFalse, Reason: reason, Message: message, ObservedGeneration: run.Generation})
+	if err := r.Status().Update(ctx, run); err != nil {
+		return err
+	}
+	return r.appendValidationEvent(ctx, run, "ValidationRunFailed", "publish-result", "failed", reason)
 }

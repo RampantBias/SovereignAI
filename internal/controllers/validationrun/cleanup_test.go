@@ -7,6 +7,7 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/validation"
+	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,6 +42,9 @@ func TestValidationDeletionWaitsForApplicationAbsence(t *testing.T) {
 		t.Run("reference="+reference, func(t *testing.T) {
 			ctx := context.Background()
 			scheme := runtime.NewScheme()
+			if err := batchv1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
 			if err := v1alpha1.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}

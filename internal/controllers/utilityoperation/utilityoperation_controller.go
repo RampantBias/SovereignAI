@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
@@ -17,6 +15,7 @@ import (
 	"github.com/SovereignAI/internal/controllers"
 	"github.com/SovereignAI/internal/domain/state"
 	policyengine "github.com/SovereignAI/internal/policy"
+	"github.com/SovereignAI/internal/repositorycredential"
 	"github.com/SovereignAI/internal/utility"
 	"github.com/SovereignAI/internal/utilitycontract"
 	batchv1 "k8s.io/api/batch/v1"
@@ -359,6 +358,14 @@ func (r *UtilityOperationReconciler) admit(ctx context.Context, operation *v1alp
 	}
 	credentialRef := utilityCredentialReference(project, operation.Spec.Operation.Name)
 	parameters := copyStringMap(operation.Spec.Operation.Parameters)
+	if operation.Spec.Operation.Name == utility.OperationGitPush && len(operation.Spec.OutputContracts) > 0 &&
+		operation.Spec.OutputContracts[0].Name+"/"+operation.Spec.OutputContracts[0].Version == artifactcontract.CandidateRemoteProofContract {
+		branch, err := r.candidatePushBranch(ctx, operation, project)
+		if err != nil {
+			return false, "", "", err
+		}
+		parameters["branch"] = branch
+	}
 	if operation.Spec.Operation.Name == utility.OperationBuildImage && project.Spec.Validation.ImageName != "" {
 		parameters["imageName"] = project.Spec.Validation.ImageName
 	}
@@ -683,45 +690,10 @@ func operationCredentialData(source *corev1.Secret, credentialClass string) (map
 
 // Extracts and validates repository credential URL, returns formatted credentials for container env injection
 func repositoryCredentialData(source *corev1.Secret) (map[string][]byte, error) {
-	if source.Type != corev1.SecretTypeOpaque {
-		return nil, fmt.Errorf("repository credential Secret must have type %q", corev1.SecretTypeOpaque)
+	if _, err := repositorycredential.Parse(source); err != nil {
+		return nil, err
 	}
-	if len(source.Data) != 1 {
-		return nil, fmt.Errorf("repository credential Secret must contain exactly the %q key", controllermeta.RepositoryCredentialKey)
-	}
-
-	contents, ok := source.Data[controllermeta.RepositoryCredentialKey]
-	if !ok || len(contents) == 0 {
-		return nil, fmt.Errorf("repository credential Secret must contain a non-empty %q key", controllermeta.RepositoryCredentialKey)
-	}
-	if !utf8.Valid(contents) {
-		return nil, fmt.Errorf("repository credential entry must be valid UTF-8")
-	}
-
-	entry := strings.ReplaceAll(string(contents), "\r\n", "\n")
-	entry = strings.TrimSuffix(entry, "\n")
-	if entry == "" || strings.ContainsAny(entry, "\r\n") || strings.TrimSpace(entry) != entry {
-		return nil, fmt.Errorf("repository credential Secret must contain exactly one credential-store entry")
-	}
-
-	credentialURL, err := url.Parse(entry)
-	if err != nil {
-		return nil, fmt.Errorf("repository credential entry must be a valid HTTPS credential-store URL")
-	}
-	if credentialURL.User == nil {
-		return nil, fmt.Errorf("repository credential entry must be one HTTPS URL with an encoded username and secret")
-	}
-	password, hasPassword := credentialURL.User.Password()
-	// Validate credential entry for valid URL
-	if !strings.EqualFold(credentialURL.Scheme, "https") ||
-		credentialURL.Host == "" ||
-		credentialURL.User.Username() == "" ||
-		!hasPassword ||
-		password == "" ||
-		credentialURL.RawQuery != "" ||
-		credentialURL.Fragment != "" {
-		return nil, fmt.Errorf("repository credential entry must be one HTTPS URL with an encoded username and secret")
-	}
+	contents := source.Data[controllermeta.RepositoryCredentialKey]
 
 	return map[string][]byte{controllermeta.RepositoryCredentialKey: append([]byte(nil), contents...)}, nil
 }

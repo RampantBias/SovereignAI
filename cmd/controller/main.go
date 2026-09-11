@@ -170,9 +170,10 @@ func main() {
 			Audit:           recorder,
 			CodeServerImage: env("SOVEREIGN_CODE_SERVER_IMAGE", "ghcr.io/coder/code-server:4.99.4")},
 		&validationrun.ValidationRunReconciler{
-			Client:   mgr.GetClient(),
-			Provider: validationProvider,
-			Audit:    recorder},
+			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
+			Client:         mgr.GetClient(),
+			Provider:       validationProvider,
+			Audit:          recorder},
 		&controllers.InferenceEndpointReconciler{
 			Client:  mgr.GetClient(),
 			Scheme:  mgr.GetScheme(),

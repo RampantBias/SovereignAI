@@ -76,7 +76,36 @@ func (a *ArgoKustomize) Status(ctx context.Context, reference string) (Status, e
 	}
 	syncStatus, _, _ := unstructured.NestedString(application.Object, "status", "sync", "status")
 	healthStatus, _, _ := unstructured.NestedString(application.Object, "status", "health", "status")
+	observedRevision, _, _ := unstructured.NestedString(application.Object, "status", "sync", "revision")
+	observedImages, _, _ := unstructured.NestedStringSlice(application.Object, "status", "summary", "images")
+	destination, _, _ := unstructured.NestedString(application.Object, "spec", "destination", "namespace")
+	// Some Argo installations omit summary.images. A completed sync result is
+	// usable only for the currently observed revision and target namespace.
+	if len(observedImages) == 0 && observedRevision != "" {
+		phase, _, _ := unstructured.NestedString(application.Object, "status", "operationState", "phase")
+		revision, _, _ := unstructured.NestedString(application.Object, "status", "operationState", "syncResult", "revision")
+		if phase == "Succeeded" && revision == observedRevision {
+			resources, _, _ := unstructured.NestedSlice(application.Object, "status", "operationState", "syncResult", "resources")
+			for _, raw := range resources {
+				resource, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if resource["namespace"] != destination || resource["status"] != "Synced" || resource["group"] != "apps" || resource["kind"] != "Deployment" {
+					continue
+				}
+				images, _, _ := unstructured.NestedStringSlice(resource, "images")
+				for _, image := range images {
+					if !slices.Contains(observedImages, image) {
+						observedImages = append(observedImages, image)
+					}
+				}
+			}
+		}
+	}
 	result := Status{
+		ApplicationNamespace: a.namespace, ApplicationName: application.GetName(), ApplicationUID: string(application.GetUID()),
+		ObservedRevision: observedRevision, ObservedImages: observedImages, DestinationNamespace: destination,
 		Phase:        healthStatus,
 		SyncStatus:   syncStatus,
 		HealthStatus: healthStatus,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/SovereignAI/internal/agentcontract"
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,4 +36,26 @@ func (r *WorkflowReconciler) workflowRetryFeedback(ctx context.Context, workflow
 		return nil, fmt.Errorf("workflow retry trigger %s does not match the previous failed workflow attempt", failed.Name)
 	}
 	return retryFeedbackForAttempt(&failed), nil
+}
+
+// Keep the originating candidate failure on every agent retry. The latest
+// rejection is supplemental evidence, never a replacement for the repair task.
+func mergeRetryFeedback(origin, latest *v1alpha1.FailedAgentAttempt) *v1alpha1.FailedAgentAttempt {
+	if origin == nil {
+		return copyFailedAgentAttempt(latest)
+	}
+	result := copyFailedAgentAttempt(origin)
+	if latest == nil || latest.PreviousAttemptRef == origin.PreviousAttemptRef {
+		return result
+	}
+	// Each diagnostic gets a bounded share; sanitization also preserves UTF-8.
+	truncate := func(message string, limit int) string {
+		if len(message) > limit {
+			message = message[:limit]
+		}
+		return agentcontract.SanitizeRetryFeedbackMessage(message)
+	}
+	result.Message = truncate(origin.Message, 600) + " | Latest agent attempt " + latest.PreviousAttemptRef + " (" + latest.Code + "): " + truncate(latest.Message, 200)
+	result.Message = agentcontract.SanitizeRetryFeedbackMessage(result.Message)
+	return result
 }

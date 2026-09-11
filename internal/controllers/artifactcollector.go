@@ -104,6 +104,8 @@ func producerKind(owner client.Object) string {
 	switch owner.(type) {
 	case *v1alpha1.AgentRun:
 		return "AgentRun"
+	case *v1alpha1.ValidationRun:
+		return "ValidationRun"
 	case *v1alpha1.UtilityOperation:
 		return "UtilityOperation"
 	default:

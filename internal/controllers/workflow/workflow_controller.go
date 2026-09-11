@@ -29,6 +29,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 )
 
 type WorkflowReconciler struct {
@@ -51,7 +52,7 @@ func (r *WorkflowReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&v1alpha1.StepAttempt{}).
 		Owns(&coordinationv1.Lease{}).
 		Owns(&batchv1.Job{}).
-		Owns(&v1alpha1.Artifact{}).
+		Watches(&v1alpha1.Artifact{}, handler.EnqueueRequestsFromMapFunc(workflowForArtifact)).
 		Complete(r)
 }
 
@@ -1043,4 +1044,14 @@ func workspaceWriterLeaseName(workflowName string) string {
 		prefix = strings.TrimRight(prefix[:maximumPrefix], "-")
 	}
 	return prefix + suffix
+}
+
+// Collectors publish Artifact objects without Workflow owner references. Wake
+// input resolution when their acceptance changes, including terminal-run repair.
+func workflowForArtifact(_ context.Context, object client.Object) []ctrl.Request {
+	artifact, ok := object.(*v1alpha1.Artifact)
+	if !ok || artifact.Spec.WorkflowRef.Name == "" {
+		return nil
+	}
+	return []ctrl.Request{{NamespacedName: types.NamespacedName{Namespace: artifact.Namespace, Name: artifact.Spec.WorkflowRef.Name}}}
 }
