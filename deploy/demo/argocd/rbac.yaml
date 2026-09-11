@@ -7,3 +7,6 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications", "appprojects"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete", "get", "update"]

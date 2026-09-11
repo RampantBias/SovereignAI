@@ -97,7 +97,10 @@ func (CandidatePrepare) Run(ctx context.Context, input utilitycontract.Input) (u
 		return preparedCandidateResult(input, candidate, "candidate already prepared")
 	}
 
-	if err := requireCleanBaseWorkspace(ctx, input.WorkspacePath, repository.ResolvedCommit); err != nil {
+	if err := ensureSourceSnapshot(ctx, input.WorkspacePath, repository.ResolvedCommit); err != nil {
+		return utilitycontract.Result{}, err
+	}
+	if err := restoreCandidateBase(ctx, input.WorkspacePath, repository.ResolvedCommit); err != nil {
 		return utilitycontract.Result{}, err
 	}
 	if _, err := runGit(ctx, input.WorkspacePath, "checkout", "-B", branch, repository.ResolvedCommit); err != nil {

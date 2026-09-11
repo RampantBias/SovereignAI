@@ -37,27 +37,35 @@ spec:
             - name: SOVEREIGN_UTILITY_IMAGE
               value: sovereign-utility-runner:dev
             - name: SOVEREIGN_MODEL_ID
-              value: Qwen/Qwen2.5-Coder-14B-Instruct-AWQ
+              value: cyankiwi/Qwen3.5-9B-AWQ-4bit
             - name: SOVEREIGN_MODEL_REVISION
-              value: eb3172f06a6d6b3a15f08947b0668d782e4d2d2c
+              value: 156edc4bbeb8d1910ee7be9196bafaf1bc052156
             - name: SOVEREIGN_SERVED_MODEL_NAME
-              value: code-qwen25-14b-awq
+              value: code-qwen35-9b-awq
             - name: SOVEREIGN_VLLM_DTYPE
-              value: auto
+              value: bfloat16
             - name: SOVEREIGN_VLLM_QUANTIZATION
-              value: awq_marlin
+              value: compressed-tensors
             - name: SOVEREIGN_VLLM_ATTENTION_BACKEND
-              value: TRITON_ATTN
+              value: ""
+            - name: SOVEREIGN_VLLM_TOOL_CALL_PARSER
+              value: qwen3_coder
+            - name: SOVEREIGN_VLLM_REASONING_PARSER
+              value: qwen3
+            - name: SOVEREIGN_VLLM_LANGUAGE_MODEL_ONLY
+              value: "true"
+            - name: SOVEREIGN_VLLM_ENABLE_THINKING
+              value: "false"
             - name: SOVEREIGN_VLLM_MAX_MODEL_LEN
               value: "16384"
             - name: SOVEREIGN_VLLM_KV_CACHE_MEMORY_BYTES
               value: "3221225472"
             - name: SOVEREIGN_MODEL_VRAM_MIB
-              value: "10240"
+              value: "9216"
             - name: SOVEREIGN_KV_VRAM_MIB
-              value: "2048"
+              value: "4096"
             - name: SOVEREIGN_VRAM_HEADROOM_MIB
-              value: "256"
+              value: "2048"
             - name: SOVEREIGN_DEV_LOGGING
               value: "true"
           ports:

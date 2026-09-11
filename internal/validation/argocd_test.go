@@ -18,7 +18,7 @@ func TestArgoKustomizeCreatesDigestPinnedApplication(t *testing.T) {
 		InfrastructureRepo:     "https://github.com/RampantBias/calculator-demo.git",
 		InfrastructureRevision: "478daad19967dd08f13de44b6c7c8becb17d8c1e",
 		OverlayPath:            "deploy/overlays/validation",
-		ImageName:              "calculator", ImageDigest: "registry.example.test/calculator@sha256:abc",
+		ImageSelector:          "calculator", ImageDigest: "registry.example.test/calculator@sha256:abc",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,5 +54,36 @@ func TestArgoKustomizeCreatesDigestPinnedApplication(t *testing.T) {
 	status, err := provider.Status(context.Background(), reference)
 	if err != nil || !status.Ready {
 		t.Fatalf("unexpected status: %#v err=%v", status, err)
+	}
+}
+
+func TestArgoKustomizeStatusSurfacesComparisonError(t *testing.T) {
+	ctx := context.Background()
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	provider := NewArgoKustomize(client, "argocd")
+	reference, err := provider.Start(ctx, Request{Name: "validation", WorkflowNamespace: "workflow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, err := client.Resource(applicationGVR).Namespace("argocd").Get(ctx, reference, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application.Object["status"] = map[string]any{
+		"sync":   map[string]any{"status": "Unknown"},
+		"health": map[string]any{"status": "Healthy"},
+		"conditions": []any{
+			map[string]any{"type": "ComparisonError", "message": "repository authentication failed"},
+		},
+	}
+	if _, err := client.Resource(applicationGVR).Namespace("argocd").Update(ctx, application, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := provider.Status(ctx, reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Failed || status.Ready || status.Phase != "ComparisonError" || status.Message != "repository authentication failed" {
+		t.Fatalf("comparison error was not surfaced: %#v", status)
 	}
 }

@@ -101,7 +101,7 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		ready := v1alpha1.ProjectReady(project)
 		condition := metav1.Condition{Type: v1alpha1.ProjectConditionValidationProviderReady, Status: metav1.ConditionFalse, Reason: "ProviderNotReady", Message: "Waiting for the project's current configuration and Argo AppProject policy", ObservedGeneration: run.Generation}
 		if ready {
-			condition.Status, condition.Reason, condition.Message = metav1.ConditionTrue, "AppProjectReady", "Project validation policy is ready"
+			condition.Status, condition.Reason, condition.Message = metav1.ConditionTrue, "ArgoProjectReady", "Project Argo policy and repository credential are ready"
 		}
 		if apiMeta.SetStatusCondition(&run.Status.Conditions, condition) {
 			if err := r.Status().Update(ctx, &run); err != nil {
@@ -172,8 +172,29 @@ func (r *ValidationRunReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	run.Status.AccessURL = status.AccessURL
 	if status.Ready {
 		run.Status.Phase = v1alpha1.PhaseSucceeded
+		run.Status.FailureReason = ""
+		run.Status.Retryable = false
+		apiMeta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+			Type:               "ValidationReady",
+			Status:             metav1.ConditionTrue,
+			Reason:             "ApplicationReady",
+			Message:            "Argo application is synced and healthy",
+			ObservedGeneration: run.Generation,
+		})
 	} else if status.Failed {
 		run.Status.Phase = v1alpha1.PhaseFailed
+		run.Status.FailureReason = status.Phase
+		if run.Status.FailureReason == "" {
+			run.Status.FailureReason = "ValidationProviderFailed"
+		}
+		run.Status.Retryable = false
+		apiMeta.SetStatusCondition(&run.Status.Conditions, metav1.Condition{
+			Type:               "ValidationReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             run.Status.FailureReason,
+			Message:            status.Message,
+			ObservedGeneration: run.Generation,
+		})
 	} else {
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
@@ -387,9 +408,16 @@ func (r *ValidationRunReconciler) providerRequest(ctx context.Context, run *v1al
 	return validation.Request{
 		Name: validation.ApplicationName(run.Namespace, run.Name, string(run.UID)), WorkflowNamespace: run.Namespace, Project: project.Status.ValidationProviderRef,
 		InfrastructureRepo: project.Spec.Validation.InfrastructureRepo, InfrastructureRevision: subject.commit,
-		OverlayPath: project.Spec.Validation.OverlayPath, ImageName: project.Spec.Validation.ImageName,
+		OverlayPath: project.Spec.Validation.OverlayPath, ImageSelector: validationImageSelector(project.Spec.Validation),
 		ImageDigest: subject.imageReference, Commit: subject.commit,
 	}, "ready", "", nil
+}
+
+func validationImageSelector(spec v1alpha1.ProjectValidationSpec) string {
+	if spec.ImageSelector != "" {
+		return spec.ImageSelector
+	}
+	return spec.ImageName
 }
 
 func (r *ValidationRunReconciler) validationProject(ctx context.Context, run *v1alpha1.ValidationRun) (*v1alpha1.SovereignProject, error) {

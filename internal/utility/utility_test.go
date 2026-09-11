@@ -157,9 +157,7 @@ func TestProjectTemplateOperations(t *testing.T) {
 	runUtility(t, testInput)
 
 	digest := "sha256:" + strings.Repeat("a", 64)
-	if err := os.WriteFile(filepath.Join(workspace, "image.digest"), []byte(digest), 0o640); err != nil {
-		t.Fatal(err)
-	}
+	writeBuildKitMetadata(t, workspace, "image.digest", digest)
 	buildInput := utilityInput(t, workspace, "build", OperationBuildImage, map[string]string{
 		"imageName": "registry.internal/sovereign/controller", "digestFile": "image.digest",
 	}, "build-result")
@@ -171,6 +169,17 @@ func TestProjectTemplateOperations(t *testing.T) {
 	}
 	if repeated.Metadata["digest"] != result.Metadata["digest"] || repeated.Metadata["commit"] != result.Metadata["commit"] {
 		t.Fatalf("build retry did not reuse the admitted result: %#v %#v", result.Metadata, repeated.Metadata)
+	}
+}
+
+func writeBuildKitMetadata(t *testing.T, workspace, name, digest string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]string{buildKitImageDigestKey: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, name), data, 0o640); err != nil {
+		t.Fatal(err)
 	}
 }
 

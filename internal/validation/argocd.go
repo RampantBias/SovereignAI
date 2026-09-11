@@ -33,8 +33,8 @@ func (a *ArgoKustomize) Start(ctx context.Context, request Request) (string, err
 	source := map[string]any{
 		"repoURL": request.InfrastructureRepo, "targetRevision": request.InfrastructureRevision, "path": request.OverlayPath,
 	}
-	if request.ImageName != "" && request.ImageDigest != "" {
-		source["kustomize"] = map[string]any{"images": []any{request.ImageName + "=" + request.ImageDigest}}
+	if request.ImageSelector != "" && request.ImageDigest != "" {
+		source["kustomize"] = map[string]any{"images": []any{request.ImageSelector + "=" + request.ImageDigest}}
 	}
 	application := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
@@ -83,6 +83,29 @@ func (a *ArgoKustomize) Status(ctx context.Context, reference string) (Status, e
 		Ready:        application.GetDeletionTimestamp().IsZero() && syncStatus == "Synced" && healthStatus == "Healthy",
 		Failed:       healthStatus == "Degraded",
 		AccessURL:    "/applications/" + reference}
+	conditions, _, _ := unstructured.NestedSlice(application.Object, "status", "conditions")
+	for _, raw := range conditions {
+		condition, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		conditionType, _, _ := unstructured.NestedString(condition, "type")
+		switch conditionType {
+		case "ComparisonError", "InvalidSpecError", "SyncError", "DeletionError":
+			message, _, _ := unstructured.NestedString(condition, "message")
+			result.Phase = conditionType
+			result.Ready = false
+			result.Failed = true
+			result.Message = message
+			if result.Message == "" {
+				result.Message = "Argo CD reported " + conditionType
+			}
+			return result, nil
+		}
+	}
+	if result.Failed && result.Message == "" {
+		result.Message = "Argo CD application health is Degraded"
+	}
 	return result, nil
 }
 

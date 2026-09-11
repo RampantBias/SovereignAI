@@ -46,6 +46,9 @@ func (BuildImage) Validate(input utilitycontract.Input) error {
 }
 
 var imageDigestPattern = regexp.MustCompile(`sha256:[a-fA-F0-9]{64}`)
+var exactImageDigestPattern = regexp.MustCompile(`^sha256:[a-fA-F0-9]{64}$`)
+
+const buildKitImageDigestKey = "containerimage.digest"
 
 func (BuildImage) Run(ctx context.Context, input utilitycontract.Input) (utilitycontract.Result, error) {
 	if err := verifyAdmittedRepository(ctx, input); err != nil {
@@ -94,29 +97,49 @@ func (BuildImage) Run(ctx context.Context, input utilitycontract.Input) (utility
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
-	digest := imageDigestPattern.FindString(output.Stdout + "\n" + output.Stderr)
-	if digest == "" {
-		if digestFile := strings.TrimSpace(input.Parameters["digestFile"]); digestFile != "" {
-			candidate := filepath.Join(input.WorkspacePath, filepath.Clean(digestFile))
-			relative, relErr := filepath.Rel(input.WorkspacePath, candidate)
-			if relErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-				return utilitycontract.Result{}, fmt.Errorf("digestFile escapes workspace")
-			}
-			data, readErr := os.ReadFile(candidate)
-			if readErr != nil {
-				return utilitycontract.Result{}, fmt.Errorf("read build digest: %w", readErr)
-			}
-			digest = imageDigestPattern.FindString(string(data))
-		}
-	}
-	if digest == "" {
-		return utilitycontract.Result{}, fmt.Errorf("build command did not report an immutable sha256 image digest")
+	digest, err := buildImageDigest(input, output)
+	if err != nil {
+		return utilitycontract.Result{}, err
 	}
 	marker := buildMarker{Image: imageName, Digest: strings.ToLower(digest), Commit: commit, Tree: tree, CommandIdentity: commandIdentity}
 	if err := writeBuildMarker(markerPath, marker); err != nil {
 		return utilitycontract.Result{}, err
 	}
 	return buildImageResult(input, marker, output)
+}
+
+func buildImageDigest(input utilitycontract.Input, output commandOutput) (string, error) {
+	digestFile := strings.TrimSpace(input.Parameters["digestFile"])
+	if digestFile == "" {
+		digest := imageDigestPattern.FindString(output.Stdout + "\n" + output.Stderr)
+		if digest == "" {
+			return "", fmt.Errorf("build command did not report an immutable sha256 image digest")
+		}
+		return digest, nil
+	}
+
+	candidate := filepath.Join(input.WorkspacePath, filepath.Clean(digestFile))
+	relative, err := filepath.Rel(input.WorkspacePath, candidate)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("digestFile escapes workspace")
+	}
+	data, err := os.ReadFile(candidate)
+	if err != nil {
+		return "", fmt.Errorf("read build metadata: %w", err)
+	}
+	var metadata struct {
+		Digest string `json:"containerimage.digest"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("decode build metadata: %w", err)
+	}
+	if metadata.Digest == "" {
+		return "", fmt.Errorf("build metadata does not contain %q", buildKitImageDigestKey)
+	}
+	if !exactImageDigestPattern.MatchString(metadata.Digest) {
+		return "", fmt.Errorf("build metadata %q is not an immutable sha256 image digest", buildKitImageDigestKey)
+	}
+	return metadata.Digest, nil
 }
 
 type buildMarker struct {

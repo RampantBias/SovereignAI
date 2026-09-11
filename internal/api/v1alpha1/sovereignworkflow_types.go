@@ -7,6 +7,9 @@ type ProjectValidationSpec struct {
 	InfrastructureRepo string `json:"infrastructureRepository"`
 	OverlayPath        string `json:"overlayPath"`
 	ImageName          string `json:"imageName,omitempty"`
+	// ImageSelector is the image name present in the source manifests. It may
+	// differ from ImageName, which is the repository used for the built image.
+	ImageSelector string `json:"imageSelector,omitempty"`
 }
 
 // StepConfig declares one workflow stage and exactly one domain execution primitive.

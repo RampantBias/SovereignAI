@@ -16,6 +16,7 @@ spec:
     infrastructureRepository: https://github.com/RampantBias/calculator-demo.git
     overlayPath: deploy/overlays/validation
     imageName: 192.168.1.19:30500/sovereign/calculator
+    imageSelector: calculator
   testJob:
     image: sovereign-test-runner:dev
     command: ["go", "test", "./..."]

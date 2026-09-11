@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/validation"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -23,6 +24,75 @@ import (
 
 type kustomizationFixture struct {
 	Resources []string `json:"resources"`
+}
+
+type failedValidationProvider struct{}
+
+func TestValidationImageSelectorDefaultsToImageName(t *testing.T) {
+	spec := v1alpha1.ProjectValidationSpec{ImageName: "registry.example.test/sovereign/calculator"}
+	if got := validationImageSelector(spec); got != spec.ImageName {
+		t.Fatalf("default image selector = %q, want %q", got, spec.ImageName)
+	}
+	spec.ImageSelector = "calculator"
+	if got := validationImageSelector(spec); got != spec.ImageSelector {
+		t.Fatalf("configured image selector = %q, want %q", got, spec.ImageSelector)
+	}
+}
+
+func (failedValidationProvider) Start(context.Context, validation.Request) (string, error) {
+	return "application", nil
+}
+
+func (failedValidationProvider) Status(context.Context, string) (validation.Status, error) {
+	return validation.Status{
+		Phase: "ComparisonError", SyncStatus: "Unknown", HealthStatus: "Healthy",
+		Failed: true, Message: "repository authentication failed", AccessURL: "/applications/application",
+	}, nil
+}
+
+func (failedValidationProvider) Destroy(context.Context, string) error { return nil }
+
+func TestValidationRunRecordsProviderFailure(t *testing.T) {
+	ctx := context.Background()
+	workflow := &v1alpha1.SovereignWorkflow{ObjectMeta: metav1.ObjectMeta{Name: "workflow", Namespace: "workflow", UID: "workflow-uid"}}
+	workflowRef := v1alpha1.UIDReference{Name: workflow.Name, UID: workflow.UID}
+	attempt := &v1alpha1.StepAttempt{
+		ObjectMeta: metav1.ObjectMeta{Name: "validation-attempt", Namespace: workflow.Namespace, UID: "attempt-uid"},
+		Spec:       v1alpha1.StepAttemptSpec{WorkflowRef: workflowRef, StepName: "validation", RetryNumber: 1, Kind: v1alpha1.ExecutionKindValidation},
+		Status:     v1alpha1.StepAttemptStatus{ExecutionRef: &v1alpha1.TypedLocalReference{APIVersion: v1alpha1.GroupVersion.String(), Kind: "ValidationRun", Name: "validation"}},
+	}
+	run := &v1alpha1.ValidationRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "validation", Namespace: workflow.Namespace, UID: "run-uid", Generation: 1,
+			Finalizers:      []string{ValidationFinalizer},
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(attempt, v1alpha1.GroupVersion.WithKind("StepAttempt"))},
+		},
+		Spec:   v1alpha1.ValidationRunSpec{AttemptRef: attempt.Name, WorkflowRef: workflowRef, StepName: "validation", Attempt: 1},
+		Status: v1alpha1.ValidationRunStatus{Phase: v1alpha1.PhaseValidating, ProviderRef: "application"},
+	}
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&v1alpha1.ValidationRun{}).WithObjects(
+		workflow, attempt, run, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: workflow.Namespace}},
+	).Build()
+	reconciler := &ValidationRunReconciler{Client: kube, Provider: failedValidationProvider{}}
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatal(err)
+	}
+	var updated v1alpha1.ValidationRun
+	if err := kube.Get(ctx, client.ObjectKeyFromObject(run), &updated); err != nil {
+		t.Fatal(err)
+	}
+	condition := apiMeta.FindStatusCondition(updated.Status.Conditions, "ValidationReady")
+	if updated.Status.Phase != v1alpha1.PhaseFailed || updated.Status.FailureReason != "ComparisonError" ||
+		condition == nil || condition.Status != metav1.ConditionFalse || condition.Message != "repository authentication failed" {
+		t.Fatalf("provider failure was not recorded: %#v", updated.Status)
+	}
 }
 
 func TestValidationRunProviderRequestUsesCalculatorOverlay(t *testing.T) {
@@ -89,8 +159,8 @@ func TestValidationRunProviderRequestUsesCalculatorOverlay(t *testing.T) {
 	if request.OverlayPath != project.Spec.Validation.OverlayPath {
 		t.Fatalf("overlay path = %q, want %q", request.OverlayPath, project.Spec.Validation.OverlayPath)
 	}
-	if request.ImageName != project.Spec.Validation.ImageName {
-		t.Fatalf("image name = %q, want %q", request.ImageName, project.Spec.Validation.ImageName)
+	if request.ImageSelector != project.Spec.Validation.ImageSelector {
+		t.Fatalf("image selector = %q, want %q", request.ImageSelector, project.Spec.Validation.ImageSelector)
 	}
 	if request.InfrastructureRevision != commit || request.Commit != commit {
 		t.Fatalf("provider commit = %q, infrastructure revision = %q; want %q", request.Commit, request.InfrastructureRevision, commit)
@@ -118,9 +188,12 @@ func TestValidationRunProviderRequestUsesCalculatorOverlay(t *testing.T) {
 	if len(deployment.Spec.Template.Spec.Containers) != 1 {
 		t.Fatalf("calculator container count = %d, want 1", len(deployment.Spec.Template.Spec.Containers))
 	}
-	seedImageName, _, _ := strings.Cut(deployment.Spec.Template.Spec.Containers[0].Image, ":")
-	if seedImageName != request.ImageName {
-		t.Fatalf("calculator deployment image name = %q, provider override name = %q", seedImageName, request.ImageName)
+	seedImageName := deployment.Spec.Template.Spec.Containers[0].Image
+	if colon, slash := strings.LastIndex(seedImageName, ":"), strings.LastIndex(seedImageName, "/"); colon > slash {
+		seedImageName = seedImageName[:colon]
+	}
+	if seedImageName != request.ImageSelector {
+		t.Fatalf("calculator deployment image name = %q, provider override selector = %q", seedImageName, request.ImageSelector)
 	}
 }
 

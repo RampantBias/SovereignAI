@@ -86,9 +86,7 @@ func TestTypedCandidateThroughImageLineage(t *testing.T) {
 	}
 
 	digest := "sha256:" + strings.Repeat("c", 64)
-	if err := os.WriteFile(filepath.Join(workspace, "image.digest"), []byte(digest), 0o640); err != nil {
-		t.Fatal(err)
-	}
+	writeBuildKitMetadata(t, workspace, "image.digest", digest)
 	buildInput := utilityInput(t, workspace, "build", OperationBuildImage, map[string]string{
 		"imageName": "registry.internal/sovereign/calculator", "digestFile": "image.digest",
 		"builderImageDigest": "sha256:" + strings.Repeat("e", 64),
