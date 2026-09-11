@@ -443,6 +443,9 @@ func validateProjectValidation(validation v1alpha1.ProjectValidationSpec, path *
 	}
 
 	errors = append(errors, validateValidationImageName(validation.ImageName, path.Child("imageName"))...)
+	if validation.ImageSelector != "" {
+		errors = append(errors, validateValidationImageName(validation.ImageSelector, path.Child("imageSelector"))...)
+	}
 
 	return errors
 }

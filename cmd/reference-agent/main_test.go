@@ -692,7 +692,7 @@ func TestWorkspaceModelHistoryCompactsSupersededIdenticalRead(t *testing.T) {
 	if receipt["path"] != "src/main_test.go" ||
 		receipt["digest"] != "sha256:same" ||
 		receipt["historyCompacted"] != true ||
-		receipt["supersededByIdenticalRead"] != true ||
+		receipt["supersededByWorkspaceRead"] != true ||
 		receipt["contentBytes"] != float64(len([]byte(content))) {
 		t.Fatalf("unexpected compacted read receipt: %#v", receipt)
 	}

@@ -278,6 +278,14 @@ func newMcpServer(repository contextrepo.Repository, editor *workspaceeditor.Edi
 			if err != nil {
 				panic(fmt.Sprintf("load workspace mutation policy sources: %v", err))
 			}
+			if contract == artifactcontract.TestChangeSetContract {
+				if err := prepareRefinementWorkspace(editor, repository.Root, sources); err != nil {
+					panic(fmt.Sprintf("prepare test repair workspace: %v", err))
+				}
+				if editor != nil {
+					repository.Root = editor.BaseRoot
+				}
+			}
 			mutationPolicy, err = artifactcontract.NewWorkspaceMutationPolicy(contract, sources)
 			if err != nil {
 				panic(fmt.Sprintf("build workspace mutation policy: %v", err))
@@ -389,6 +397,9 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 				if err != nil {
 					return nil, WriteOutput{Path: input.Path}, err
 				}
+				if file.Digest == expected {
+					return nil, WriteOutput{}, unchangedWorkspaceError(file)
+				}
 				state.recordRead(file.Path)
 
 				return nil, WriteOutput{
@@ -447,6 +458,9 @@ func registerWorkspaceTools(server *mcp.Server, repository contextrepo.Repositor
 				if err != nil {
 					return nil, WriteOutput{}, actionableWorkspaceReplaceError(editor, currentPath, err)
 				}
+				if file.Digest == expected {
+					return nil, WriteOutput{}, unchangedWorkspaceError(file)
+				}
 				state.recordRead(file.Path)
 				return nil, WriteOutput{
 					Path:      file.Path,
@@ -489,7 +503,7 @@ func actionableWorkspaceReplaceError(editor *workspaceeditor.Editor, path string
 	if readErr != nil {
 		return fmt.Errorf("%w; do not repeat this unchanged workspace_replace call; call workspace_read and copy an exact snippet before retrying", err)
 	}
-	return fmt.Errorf("%w; current file digest is %s; do not repeat this unchanged workspace_replace call; call workspace_read and copy an exact snippet before retrying, or use workspace_write for a complete-file rewrite", err, current.Digest)
+	return fmt.Errorf("%w; current file digest is %s; do not repeat this unchanged workspace_replace call; call workspace_read and copy an exact snippet before retrying, or use workspace_write for a complete-file rewrite%s", err, current.Digest, currentGoSyntaxDiagnostic(current))
 }
 
 func resolveWorkspaceWritePath(requested string, state *workspaceToolState, policy *artifactcontract.WorkspaceMutationPolicy) (string, error) {
@@ -643,7 +657,7 @@ func validateRefinementTestPreservation(editor *workspaceeditor.Editor, files []
 		}
 		resultTests, err := declaredGoTests(resultContent)
 		if err != nil {
-			return fmt.Errorf("parse refined test %q: %w", file.Path, err)
+			return fmt.Errorf("parse refined test %q: %w%s", file.Path, err, goSyntaxExcerpt(resultContent, err))
 		}
 		var missing []string
 		for name := range baseTests {

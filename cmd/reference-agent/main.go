@@ -595,12 +595,12 @@ func compactWorkspaceReadResult(
 	delete(result, "content")
 	delete(result, "source")
 	result["historyCompacted"] = true
-	result["supersededByIdenticalRead"] = true
+	result["supersededByWorkspaceRead"] = true
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return "", "", "", false
 	}
-	return path + "\x00" + digest, path, string(encoded), true
+	return path, path, string(encoded), true
 }
 
 func compactRejectedWorkspaceReplaceResult(resultText string) string {
@@ -692,6 +692,13 @@ func compactWorkspaceMutationHistory(
 	isError bool,
 ) (inference.ToolCall, string) {
 	if isError {
+		// A no-op contains no proposed change worth retaining. Keep the full
+		// actionable diagnostic, but not another copy of the file in its args.
+		if strings.HasPrefix(resultText, "edit leaves ") && strings.Contains(resultText, " unchanged; no repair was made.") {
+			if compacted, ok := compactWorkspaceMutationArguments(call); ok {
+				return compacted, resultText
+			}
+		}
 		return call, resultText
 	}
 	compactedCall, ok := compactWorkspaceMutationArguments(call)
@@ -1057,7 +1064,11 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact) (st
 		if err != nil {
 			return "", err
 		}
-		rendered, err := contractrender.Render(definition, artifact.Content)
+		modelContent, err := modelArtifactContent(input, artifact)
+		if err != nil {
+			return "", err
+		}
+		rendered, err := contractrender.Render(definition, modelContent)
 		if err != nil {
 			return "", err
 		}
@@ -1093,7 +1104,7 @@ func buildTaskContext(input agentcontract.Input, artifacts []loadedArtifact) (st
 		}
 		if contract == artifactcontract.TestChangeSetContract && input.RetryFeedback != nil &&
 			input.RetryFeedback.Code == utilitycontract.TestRunCodeError {
-			actions = append(actions, "Preserve every existing active test declaration during refinement. A downstream diagnostic is not authority to remove, comment out, skip, or weaken acceptance evidence; make only the smallest change that addresses the reported failure.")
+			actions = append(actions, "Preserve every existing active test declaration during refinement and preserve unrelated assertions. Update obsolete assertions or table entries to the requested target behavior. The reported failure may hide further failures: complete the full requested test changes before agent_complete.")
 		}
 	default:
 		return "", fmt.Errorf("unsupported materialization kind %q", materializer.Kind)

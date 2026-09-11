@@ -481,13 +481,11 @@ func (r *WorkflowReconciler) createAttemptWithFeedback(ctx context.Context, work
 	if err := r.recordWorkflowRecovery(ctx, workflow); err != nil {
 		return err
 	}
-	if feedback == nil && number == 1 {
-		var err error
-		feedback, err = r.workflowRetryFeedback(ctx, workflow, step)
-		if err != nil {
-			return err
-		}
+	origin, err := r.workflowRetryFeedback(ctx, workflow, step)
+	if err != nil {
+		return err
 	}
+	feedback = mergeRetryFeedback(origin, feedback)
 	name := attemptName(step.Name, workflow.Status.WorkflowAttempt, number)
 	attempt := &v1alpha1.StepAttempt{
 		ObjectMeta: metav1.ObjectMeta{
@@ -553,6 +551,13 @@ func (r *WorkflowReconciler) ensureDomainExecution(ctx context.Context, workflow
 	var reference v1alpha1.TypedLocalReference
 	switch step.Kind {
 	case v1alpha1.ExecutionKindAgent:
+		priorTests, err := r.workflowRetryTestInput(ctx, workflow, step)
+		if err != nil {
+			return nil, err
+		}
+		if priorTests != nil {
+			inputs = append(inputs, *priorTests)
+		}
 		if step.Agent == nil {
 			return nil, fmt.Errorf("agent step %s has no agent specification", step.Name)
 		}

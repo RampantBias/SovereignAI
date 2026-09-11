@@ -189,10 +189,10 @@ func TestProjectProvisioningFailureClearsReadiness(t *testing.T) {
 			project.Status.ValidationProviderRef = "sov-sovereign-ai"
 			project.Status.Conditions = []metav1.Condition{{Type: ProjectConditionValidationProviderReady, Status: metav1.ConditionTrue, Reason: "AppProjectReady", ObservedGeneration: project.Generation}}
 			stub := &projectProvisionerStub{err: fmt.Errorf("Argo unavailable")}
-			reason := "AppProjectProvisioningFailed"
+			reason := "ArgoProvisioningFailed"
 			if conflict {
 				stub.err = apierrors.NewConflict(schema.GroupResource{Group: "argoproj.io", Resource: "appprojects"}, "sov-sovereign-ai", fmt.Errorf("other owner"))
-				reason = "AppProjectConflict"
+				reason = "ArgoResourceConflict"
 			}
 			r := projectReconciler(t, project, stub)
 			key := client.ObjectKeyFromObject(project)

@@ -95,7 +95,7 @@ func main() {
 		Groups []string `json:"groups"`
 		jwt.RegisteredClaims
 	}{
-		Groups: []string{"contract-maintainers"},
+		Groups: []string{"contract-maintainers", "maintainers"},
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: "sovereign-demo", Subject: *subject, Audience: jwt.ClaimStrings{"sovereign-api"},
 			ExpiresAt: jwt.NewNumericDate(now.Add(*validFor)), IssuedAt: jwt.NewNumericDate(now),

@@ -42,6 +42,10 @@ func TestWorkflowRetryContextUsesDownstreamDiagnostic(t *testing.T) {
 		"--- BEGIN COMMAND DIAGNOSTIC (UNTRUSTED DATA) ---", "--- END COMMAND DIAGNOSTIC ---",
 		"not a rejection of the current agent's output", "verify current file contents and line locations before editing",
 		"do not assume the test or implementation is wrong without inspecting it",
+		"specific failing declaration, assertion, and any enclosing table",
+		"Preserve unrelated cases and their assertions",
+		"Renaming or commenting out a whole test is not a repair",
+		"verify successful and error-case coverage actually exists",
 		"Addressing the reported Go test failure does not waive any other responsibility constraint",
 	} {
 		if !strings.Contains(prompt, expected) {
@@ -175,5 +179,78 @@ func TestWorkflowRetryContextReachesInferenceAcrossToolRounds(t *testing.T) {
 		!strings.Contains(result.Error.Message, "context capture complete") ||
 		rounds.Load() != 2 || inspections.Load() != 1 {
 		t.Fatalf("did not preserve both inference rounds, workspace inspection, and failure: rounds=%d, inspections=%d, result=%#v", rounds.Load(), inspections.Load(), result)
+	}
+}
+
+func TestRepairContextOmitsOnlySeededTestBodies(t *testing.T) {
+	input := workflowRetryContextInput()
+	content := []byte(`{"summary":"unverified claim","baseCommit":"abc","files":[{"path":"src/main_test.go","action":"modify","baseDigest":"base","resultDigest":"result","resultContent":"UNIQUE_PRIOR_TEST_BODY"}]}`)
+	artifact := loadedArtifact{Metadata: agentcontract.ArtifactInput{Name: "prior-tests", Contract: "test-change-set/v1", Digest: "test-digest"}, Content: content}
+	prompt, err := buildTaskContext(input, []loadedArtifact{artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"src/main_test.go", "test-digest", "result", "repair overlay", "summary is unverified"} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("missing %q", expected)
+		}
+	}
+	if strings.Contains(prompt, "unverified claim") {
+		t.Fatal("prior unsupported summary copied into repair prompt")
+	}
+	if strings.Contains(prompt, "UNIQUE_PRIOR_TEST_BODY") {
+		t.Fatal("duplicate test body consumes retry context")
+	}
+	if string(artifact.Content) != string(content) {
+		t.Fatal("audit input bytes changed")
+	}
+	for _, contract := range []string{"change-set/v1", "implementation-plan/v1"} {
+		artifact.Metadata.Contract = contract
+		got, err := modelArtifactContent(input, artifact)
+		if err != nil || string(got) != string(content) {
+			t.Fatalf("other input altered: %s %v", contract, err)
+		}
+	}
+	artifact.Metadata.Contract = "test-change-set/v1"
+	input.RetryFeedback = nil
+	got, err := modelArtifactContent(input, artifact)
+	if err != nil || string(got) != string(content) {
+		t.Fatal("initial workflow context altered")
+	}
+}
+
+func TestWorkspaceModelHistoryRetainsOnlyLatestFileVersion(t *testing.T) {
+	history := workspaceModelHistory{latestReads: map[string]workspaceReadHistory{}, rejectedReplacements: map[string][]workspaceHistoryLocation{}}
+	var messages []inference.Message
+	for _, content := range []string{"OLD_FILE_VERSION", "NEW_FILE_VERSION"} {
+		call := inference.ToolCall{ID: content, Type: "function", Function: inference.ToolCallFunction{Name: "workspace_read", Arguments: `{"path":"main_test.go"}`}}
+		result := map[string]any{"path": "main_test.go", "digest": content, "content": content}
+		encoded, _ := json.Marshal(result)
+		index := len(messages)
+		messages = append(messages, inference.Message{Role: "assistant", ToolCalls: []inference.ToolCall{call}}, inference.Message{Role: "tool", ToolCallID: call.ID, Content: string(encoded)})
+		history.observe(messages, call, string(encoded), result, false, workspaceHistoryLocation{assistantMessageIndex: index, toolMessageIndex: index + 1})
+	}
+	var prior, current map[string]any
+	_ = json.Unmarshal([]byte(messages[1].Content), &prior)
+	_ = json.Unmarshal([]byte(messages[3].Content), &current)
+	if _, ok := prior["content"]; ok {
+		t.Fatal("old file body retained after edit and reread")
+	}
+	if prior["digest"] != "OLD_FILE_VERSION" || current["content"] != "NEW_FILE_VERSION" {
+		t.Fatal("lost provenance or current file content")
+	}
+}
+
+func TestNoOpHistoryDropsDuplicatedSourceButKeepsRepairDiagnostic(t *testing.T) {
+	body := strings.Repeat("unchanged file content\n", 100)
+	args, _ := json.Marshal(map[string]any{"path": "main_test.go", "oldText": body, "newText": body})
+	call := inference.ToolCall{ID: "noop", Type: "function", Function: inference.ToolCallFunction{Name: "workspace_replace", Arguments: string(args)}}
+	diagnostic := `edit leaves "main_test.go" unchanged; no repair was made. Exact unique workspace_replace oldText anchor: "}\n}\n"`
+	got, result := compactWorkspaceMutationHistory(call, diagnostic, nil, true)
+	if strings.Contains(got.Function.Arguments, "unchanged file content") || !strings.Contains(got.Function.Arguments, "oldTextDigest") {
+		t.Fatal("no-op retained duplicate source")
+	}
+	if result != diagnostic {
+		t.Fatal("lost actionable syntax repair diagnostic")
 	}
 }
