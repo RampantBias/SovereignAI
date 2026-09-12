@@ -219,28 +219,6 @@ func TestRepairContextOmitsOnlySeededTestBodies(t *testing.T) {
 	}
 }
 
-func TestWorkspaceModelHistoryRetainsOnlyLatestFileVersion(t *testing.T) {
-	history := workspaceModelHistory{latestReads: map[string]workspaceReadHistory{}, rejectedReplacements: map[string][]workspaceHistoryLocation{}}
-	var messages []inference.Message
-	for _, content := range []string{"OLD_FILE_VERSION", "NEW_FILE_VERSION"} {
-		call := inference.ToolCall{ID: content, Type: "function", Function: inference.ToolCallFunction{Name: "workspace_read", Arguments: `{"path":"main_test.go"}`}}
-		result := map[string]any{"path": "main_test.go", "digest": content, "content": content}
-		encoded, _ := json.Marshal(result)
-		index := len(messages)
-		messages = append(messages, inference.Message{Role: "assistant", ToolCalls: []inference.ToolCall{call}}, inference.Message{Role: "tool", ToolCallID: call.ID, Content: string(encoded)})
-		history.observe(messages, call, string(encoded), result, false, workspaceHistoryLocation{assistantMessageIndex: index, toolMessageIndex: index + 1})
-	}
-	var prior, current map[string]any
-	_ = json.Unmarshal([]byte(messages[1].Content), &prior)
-	_ = json.Unmarshal([]byte(messages[3].Content), &current)
-	if _, ok := prior["content"]; ok {
-		t.Fatal("old file body retained after edit and reread")
-	}
-	if prior["digest"] != "OLD_FILE_VERSION" || current["content"] != "NEW_FILE_VERSION" {
-		t.Fatal("lost provenance or current file content")
-	}
-}
-
 func TestNoOpHistoryDropsDuplicatedSourceButKeepsRepairDiagnostic(t *testing.T) {
 	body := strings.Repeat("unchanged file content\n", 100)
 	args, _ := json.Marshal(map[string]any{"path": "main_test.go", "oldText": body, "newText": body})
