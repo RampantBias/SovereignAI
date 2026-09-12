@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/SovereignAI/internal/api/requestidentity"
 	"github.com/SovereignAI/internal/api/v1/pb"
@@ -134,7 +135,7 @@ func approvalSubmissionResult(existing, requested *v1alpha1.ApprovalDecision, wo
 }
 
 func buildApprovalDecision(identity requestidentity.Identity, choice v1alpha1.ApprovalChoice, approval *v1alpha1.ApprovalRequest) *v1alpha1.ApprovalDecision {
-	now := metav1.Now()
+	now := v1alpha1.NewAuditTime(time.Now())
 	return &v1alpha1.ApprovalDecision{
 		ObjectMeta: metav1.ObjectMeta{
 			// One immutable decision per request. Kubernetes create arbitrates concurrent submissions.

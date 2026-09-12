@@ -1,11 +1,9 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 // WorkflowRecoveryEvidence freezes the decision's inputs before the workflow
 // advances, allowing audit writes to be retried without inventing new evidence.
 type WorkflowRecoveryEvidence struct {
-	SelectedAt          metav1.Time         `json:"selectedAt"`
+	SelectedAt          AuditTime           `json:"selectedAt"`
 	TriggerAttempt      UIDReference        `json:"triggerAttempt"`
 	PreviousAttempt     *UIDReference       `json:"previousAttempt,omitempty"`
 	PreviousOutcome     ResourcePhase       `json:"previousOutcome,omitempty"`
@@ -25,4 +23,13 @@ type RecoveryInputLink struct {
 	Consumer UIDReference      `json:"consumer"`
 	Input    ArtifactReference `json:"input"`
 	Producer UIDReference      `json:"producer"`
+}
+
+// WorkflowRetryObservation freezes when the controller verified the persisted
+// replacement, separately from the earlier immutable recovery decision.
+type WorkflowRetryObservation struct {
+	DecisionEvent string       `json:"decisionEvent"`
+	Attempt       UIDReference `json:"attempt"`
+	Execution     UIDReference `json:"execution"`
+	ObservedAt    AuditTime    `json:"observedAt"`
 }

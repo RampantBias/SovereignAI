@@ -114,6 +114,7 @@ type SelectedArtifact struct {
 // WorkflowRefinementStatus records an application-level test failure that
 // rewound the workflow. It is distinct from infrastructure retry state.
 type WorkflowRefinementStatus struct {
+	RetryObservation  *WorkflowRetryObservation   `json:"retryObservation,omitempty"`
 	Recovery          *WorkflowRecoveryEvidence   `json:"recovery,omitempty"`
 	Iteration         int32                       `json:"iteration"`
 	TriggerStepName   string                      `json:"triggerStep"`

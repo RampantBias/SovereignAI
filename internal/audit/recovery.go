@@ -1,6 +1,10 @@
 package audit
 
-import "github.com/SovereignAI/internal/api/v1alpha1"
+import (
+	"time"
+
+	"github.com/SovereignAI/internal/api/v1alpha1"
+)
 
 // WorkflowRecoveryDecision extends the ordinary decision shape with the frozen
 // cross-step rewind evidence. NextAttemptName is planned, not proof of creation.
@@ -16,6 +20,8 @@ type WorkflowRecoveryDecision struct {
 // WorkflowRetryRecorded is emitted only after the replacement attempt and its
 // AgentRun exist. Feedback and inputs come from that stored execution spec.
 type WorkflowRetryRecorded struct {
+	// ObservedAt is persisted before audit append; absent on older events.
+	ObservedAt      *time.Time                   `json:"observedAt,omitempty"`
 	SchemaVersion   string                       `json:"schemaVersion"`
 	Workflow        ResourceRef                  `json:"workflow"`
 	DecisionEvent   string                       `json:"decisionEvent"`

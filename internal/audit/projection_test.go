@@ -2,13 +2,13 @@ package audit
 
 import (
 	"encoding/json"
-	"github.com/SovereignAI/internal/api/v1alpha1"
-	"github.com/SovereignAI/internal/artifactcontract"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/SovereignAI/internal/api/v1alpha1"
+	"github.com/SovereignAI/internal/artifactcontract"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func projectionRef(kind, name string) ResourceRef {
@@ -39,7 +39,26 @@ func recoveryProjectionFixture(t *testing.T) []Event {
 	next := projectionRef("StepAttempt", "next-author")
 	execution := projectionRef("AgentRun", "next-run")
 	workflow := projectionRef("SovereignWorkflow", "wf")
-	evidence := v1alpha1.WorkflowRecoveryEvidence{TriggerAttempt: trigger, PreviousAttempt: &prior, PreviousOutcome: v1alpha1.PhaseSucceeded, FromWorkflowAttempt: 0, MaxWorkflowAttempt: 1, EvidenceEvents: []string{"failure"}, InputLinks: []v1alpha1.RecoveryInputLink{{Consumer: trigger, Input: projectionPin("prepared"), Producer: projectionUID("prepare")}, {Consumer: projectionUID("prepare"), Input: projectionPin("tests"), Producer: prior}}, SelectedAt: metav1.Now()}
+	evidence := v1alpha1.WorkflowRecoveryEvidence{
+		TriggerAttempt:      trigger,
+		PreviousAttempt:     &prior,
+		PreviousOutcome:     v1alpha1.PhaseSucceeded,
+		FromWorkflowAttempt: 0,
+		MaxWorkflowAttempt:  1,
+		EvidenceEvents:      []string{"failure"},
+		InputLinks: []v1alpha1.RecoveryInputLink{
+			{
+				Consumer: trigger,
+				Input:    projectionPin("prepared"),
+				Producer: projectionUID("prepare"),
+			},
+			{
+				Consumer: projectionUID("prepare"),
+				Input:    projectionPin("tests"),
+				Producer: prior,
+			}},
+		SelectedAt: v1alpha1.NewAuditTime(time.Now()),
+	}
 	decision := WorkflowRecoveryDecision{DecisionEvaluated: DecisionEvaluated{SchemaVersion: "v1", Primitive: workflow, Decision: DecisionRef{SchemaVersion: "v1", Outcome: "selected"}}, Action: "RetryWorkflow", RestartStep: "test-author", ToWorkflowAttempt: 1, NextAttemptName: next.Name, Recovery: evidence}
 	retry := WorkflowRetryRecorded{SchemaVersion: "v1", Workflow: workflow, DecisionEvent: "selection", RetryOf: &prior, TriggeredBy: trigger, Attempt: next, Execution: execution, WorkflowAttempt: 1, Inputs: []v1alpha1.ArtifactReference{projectionPin("developer-output")}}
 	failed := projectionEvent(t, "failure", "StepAttemptFailed", nil)

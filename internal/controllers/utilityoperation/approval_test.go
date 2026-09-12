@@ -35,7 +35,7 @@ func TestUtilityPolicyConsumesExactHumanApproval(t *testing.T) {
 			consumer.OwnerReferences = gate.OwnerReferences
 			workflow.Status.ActiveAttemptRef = consumer.Name
 			workflow.Status.ActiveStepName = "request"
-			now := metav1.Now()
+			now := v1alpha1.NewAuditTime(metav1.Now().Time)
 			request := &v1alpha1.ApprovalRequest{ObjectMeta: metav1.ObjectMeta{Name: gate.Name, Namespace: "wf", UID: "approval-uid", OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(gate, v1alpha1.GroupVersion.WithKind("StepAttempt"))}},
 				Spec:   v1alpha1.ApprovalRequestSpec{WorkflowRef: workflowRef(workflow), AttemptRef: v1alpha1.UIDReference{Name: gate.Name, UID: gate.UID}, StepName: "gate", Attempt: 1, Inputs: []v1alpha1.ArtifactReference{pin}, Approval: v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, DenyBehavior: "Fail", RequiredGroups: []string{"maintainers"}}},
 				Status: v1alpha1.ApprovalRequestStatus{Phase: v1alpha1.PhaseSucceeded, CompletedAt: &now, DecisionRef: controllermeta.ApprovalDecisionName("approval-uid"), DecisionUID: "decision-uid"}}

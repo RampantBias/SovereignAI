@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -31,7 +32,7 @@ func (r *WorkflowReconciler) captureWorkflowRecovery(ctx context.Context, workfl
 		now = r.Now().UTC()
 	}
 	evidence := &v1alpha1.WorkflowRecoveryEvidence{
-		SelectedAt: metav1.NewTime(now.Truncate(time.Second)), TriggerAttempt: recoveryUID(failed),
+		SelectedAt: v1alpha1.NewAuditTime(now), TriggerAttempt: recoveryUID(failed),
 		FromWorkflowAttempt: failed.Spec.WorkflowAttempt, MaxWorkflowAttempt: workflow.Spec.MaxWorkflowAttempt,
 		FailureReason: failed.Status.FailureReason, Feedback: retryFeedbackForAttempt(failed),
 	}
@@ -262,14 +263,52 @@ func (r *WorkflowReconciler) recordWorkflowRetry(ctx context.Context, workflow *
 		Attempt: workflowResourceRef("StepAttempt", attempt), Execution: workflowResourceRef("AgentRun", run), WorkflowAttempt: attempt.Spec.WorkflowAttempt,
 		Feedback: run.Spec.PriorAttemptRef, Inputs: run.Spec.Inputs,
 	}
-	occurred := run.CreationTimestamp.Time
-	if occurred.IsZero() {
-		occurred = refinement.Recovery.SelectedAt.Time
+	occurred, err := r.persistRetryObservation(ctx, workflow, attempt, run)
+	if err != nil {
+		return err
 	}
+	payload.ObservedAt = &occurred
 	return r.appendWorkflowRecoveryEvent(ctx, workflow, audit.DeterministicID("workflow-retry-created/v1", decisionID, string(attempt.UID), string(run.UID)), audit.EventOptions{
 		Type: "StepAttemptRetried", OccurredAt: occurred, Action: "retry", Target: attempt.Name, Outcome: "created",
 		Reason: refinement.Recovery.FailureReason, CausationID: decisionID, DecisionID: decisionID, Data: payload,
 	})
+}
+
+// persistRetryObservation records a stable audit time before execution authority
+// is published. A failed audit append can then replay the same observation.
+func (r *WorkflowReconciler) persistRetryObservation(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, attempt *v1alpha1.StepAttempt, run *v1alpha1.AgentRun) (time.Time, error) {
+	decisionID := workflowRecoveryEventID(workflow)
+	var observed time.Time
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.SovereignWorkflow
+		if err := r.stepAttemptReader().Get(ctx, client.ObjectKeyFromObject(workflow), &latest); err != nil {
+			return err
+		}
+		refinement := latest.Status.Refinement
+		if latest.UID != workflow.UID || !latest.DeletionTimestamp.IsZero() || refinement == nil || refinement.Recovery == nil || workflowRecoveryEventID(&latest) != decisionID {
+			return fmt.Errorf("workflow recovery changed before replacement observation")
+		}
+		if saved := refinement.RetryObservation; saved != nil {
+			if saved.DecisionEvent != decisionID || saved.Attempt != recoveryUID(attempt) || saved.Execution != recoveryUID(run) || saved.ObservedAt.IsZero() {
+				return fmt.Errorf("workflow retry observation does not match the persisted replacement")
+			}
+			observed = saved.ObservedAt.Time
+			return nil
+		}
+		now := time.Now().UTC()
+		if r.Now != nil {
+			now = r.Now().UTC()
+		}
+		refinement.RetryObservation = &v1alpha1.WorkflowRetryObservation{
+			DecisionEvent: decisionID, Attempt: recoveryUID(attempt), Execution: recoveryUID(run), ObservedAt: v1alpha1.NewAuditTime(now),
+		}
+		if err := r.Status().Update(ctx, &latest); err != nil {
+			return err
+		}
+		observed = refinement.RetryObservation.ObservedAt.Time
+		return nil
+	})
+	return observed, err
 }
 
 func (r *WorkflowReconciler) appendWorkflowRecoveryEvent(ctx context.Context, workflow *v1alpha1.SovereignWorkflow, id string, options audit.EventOptions) error {

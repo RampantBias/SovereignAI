@@ -270,7 +270,7 @@ type ApprovalRequestStatus struct {
 	FailureReason      string             `json:"failureReason,omitempty"`
 	Retryable          bool               `json:"retryable,omitempty"`
 	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt        *metav1.Time       `json:"completedAt,omitempty"`
+	CompletedAt        *AuditTime         `json:"completedAt,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 
@@ -298,7 +298,7 @@ type ApprovalDecisionSpec struct {
 	ApprovalRequestRef UIDReference   `json:"approvalRequestRef"`
 	Decision           ApprovalChoice `json:"decision"`
 	Reason             string         `json:"reason"`
-	AuthoredAt         *metav1.Time   `json:"authoredAt"`
+	AuthoredAt         *AuditTime     `json:"authoredAt"`
 	Subject            Subject        `json:"subject"`
 }
 

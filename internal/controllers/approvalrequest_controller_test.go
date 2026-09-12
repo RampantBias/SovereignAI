@@ -45,12 +45,13 @@ func newApprovalFixture() approvalFixture {
 			Approval: v1alpha1.ApprovalSpec{Mode: v1alpha1.AnyOf, RequiredGroups: []string{"maintainers"}, DenyBehavior: "Fail"}},
 		Status: v1alpha1.ApprovalRequestStatus{Phase: v1alpha1.PhaseAwaitingApproval, StartedAt: &started},
 	}
+	authored := v1alpha1.NewAuditTime(started.Time)
 	decision := &v1alpha1.ApprovalDecision{
 		ObjectMeta: metav1.ObjectMeta{Name: controllermeta.ApprovalDecisionName(request.UID), Namespace: "wf", UID: "decision-uid",
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(request, v1alpha1.GroupVersion.WithKind("ApprovalRequest"))}},
 		Spec: v1alpha1.ApprovalDecisionSpec{WorkflowRef: request.Spec.WorkflowRef, StepAttemptRef: request.Spec.AttemptRef,
 			ApprovalRequestRef: v1alpha1.UIDReference{Name: request.Name, UID: request.UID}, Decision: v1alpha1.Approved,
-			AuthoredAt: &started, Subject: v1alpha1.Subject{SubjectId: "alice", Groups: []string{"maintainers"}}},
+			AuthoredAt: &authored, Subject: v1alpha1.Subject{SubjectId: "alice", Groups: []string{"maintainers"}}},
 	}
 	return approvalFixture{workflow, attempt, request, decision}
 }
@@ -291,7 +292,8 @@ func TestApprovalConflictRechecksCurrentState(t *testing.T) {
 					f.request.Status.Phase = v1alpha1.PhaseFailed
 					f.request.Status.DecisionRef = "existing-decision"
 					f.request.Status.FailureReason = "ApprovalDenied"
-					f.request.Status.CompletedAt = f.request.Status.StartedAt.DeepCopy()
+					completed := v1alpha1.NewAuditTime(f.request.Status.StartedAt.Time)
+					f.request.Status.CompletedAt = &completed
 					return base.Status().Update(ctx, f.request)
 				case "request replaced":
 					if err := base.Delete(ctx, f.request); err != nil {
@@ -315,7 +317,7 @@ func TestApprovalConflictRechecksCurrentState(t *testing.T) {
 					t.Fatalf("stale gate completed: %#v", latest.Status)
 				}
 			case "already completed":
-				if latest.Status.Phase != v1alpha1.PhaseFailed || latest.Status.DecisionRef != "existing-decision" || !latest.Status.CompletedAt.Equal(f.request.Status.StartedAt) {
+				if latest.Status.Phase != v1alpha1.PhaseFailed || latest.Status.DecisionRef != "existing-decision" || !latest.Status.CompletedAt.Equal(f.request.Status.StartedAt.Time) {
 					t.Fatalf("terminal result overwritten: %#v", latest.Status)
 				}
 			case "request replaced":

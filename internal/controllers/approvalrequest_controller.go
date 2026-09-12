@@ -288,7 +288,7 @@ func (r *ApprovalRequestReconciler) finishApproval(approval *v1alpha1.ApprovalRe
 	}
 	approval.Status.Retryable = false
 	if approval.Status.CompletedAt == nil {
-		now := r.approvalTime()
+		now := v1alpha1.NewAuditTime(r.approvalTime().Time)
 		approval.Status.CompletedAt = &now
 	}
 	approval.Status.ObservedGeneration = approval.Generation
