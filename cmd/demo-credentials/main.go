@@ -31,12 +31,12 @@ const namespace = "sovereign-orchestrator-system"
 func main() {
 	outputDir := flag.String("output-dir", "", "secure directory outside the repository for the client CA and token")
 	subject := flag.String("subject", "demo-developer", "authenticated demo subject")
-	validFor := flag.Duration("valid-for", 15*time.Minute, "short-lived token validity")
+	validFor := flag.Duration("valid-for", 24*time.Hour, "short-lived token validity")
 	flag.Parse()
 	if *outputDir == "" {
 		log.Fatal("--output-dir is required")
 	}
-	if *validFor <= 0 || *validFor > 15*time.Minute {
+	if *validFor <= 0 || *validFor > 24*time.Hour {
 		log.Fatal("--valid-for must be greater than zero and no longer than 15m")
 	}
 	if err := os.MkdirAll(*outputDir, 0o700); err != nil {

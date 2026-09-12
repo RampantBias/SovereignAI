@@ -58,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("unable to load human authentication public key: %v", err)
 	}
-	maxLifetime, err := time.ParseDuration(envOr("SOVEREIGN_API_AUTH_MAX_TOKEN_LIFETIME", "15m"))
+	maxLifetime, err := time.ParseDuration(envOr("SOVEREIGN_API_AUTH_MAX_TOKEN_LIFETIME", "24h"))
 	if err != nil {
 		log.Fatalf("invalid SOVEREIGN_API_AUTH_MAX_TOKEN_LIFETIME: %v", err)
 	}

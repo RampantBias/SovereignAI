@@ -30,7 +30,7 @@ The September MVP is only aimed to experiment with the last hypothesis, while re
 
 ## What Works
 - Ability to create projects
-- Ability to create workflows with change requests from YAML definitions
+- Ability to create workflows with change requests from YAML definitions for *the Calculator project only*
 - Workflow can transition between states for the defined contracts
 - Failure recovery at the step or workflow level (workflow level has limitations, see retry.md)
 - GPU Scheduling of inference workloads
@@ -96,9 +96,17 @@ See [MVP scope](docs/mvp.md) for commitments and non-goals.
 
 ## Current limitations
 
-The current code and the target architecture are not yet aligned. Known gaps include an unfinished agent wrapper, minimal tests, incomplete installation assets, inconsistent example manifests, and hard-coded configuration. The MVP workflow is not yet complete, and there are still significant design and non-working implementation issues.
+Over the course of building this, I've relaxed abstractions and leaked domain specific code across the control plane implementation. At this time, the workflow operation
+would only work on the Calculator application and applications that are architecturally similar.
+
+The custom harness is rudimentary and experimental, showing weeks of continual 'bandaids' on the design. It can fail often.
 
 The architecture documents describe the intended direction. Existing code should not be assumed to implement every documented guarantee.
+
+## Future Effort
+
+Although there was no intention for this project to reach beyond an experiment, much of the future work will be to refactor domain elements out of the codebase to bring better domain separation
+and clarity in the operations, while allowing for more 'plug and play' for my future research experiments.
 
 ## Development Approach and AI Assistance
 
@@ -106,4 +114,4 @@ I conceived, architected, and built the initial implementation of this software 
 
 As this project is only worked in my free time and I needed to both represent the thesis I synthesized and reach an MVP stage by the first week of September I needed to re-accelerate. I begain using AI much more heavily to handle refactoring, implementation, testing, deployment, and documentation while working towards a September MVP.
 
-I have still remained responsible for the goals, architectural decisions, and accepted behaviors. Going forward, I'm aiming to simplify as much as I can for the MVP to ensure that what's built from here on is my own while using AI only for review, refinement, and trivial implementation work.
+I have still remained responsible for the goals, architectural decisions, and accepted behaviors.

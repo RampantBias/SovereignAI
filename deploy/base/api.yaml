@@ -37,7 +37,7 @@ spec:
             - name: SOVEREIGN_API_AUTH_AUDIENCE
               value: sovereign-api
             - name: SOVEREIGN_API_AUTH_MAX_TOKEN_LIFETIME
-              value: 15m
+              value: 24h
           ports:
             - name: grpc
               containerPort: 8080
