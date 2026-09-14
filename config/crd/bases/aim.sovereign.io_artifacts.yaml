@@ -39,6 +39,95 @@ spec:
             type: object
           spec:
             properties:
+              claims:
+                description: lightweight container for summary of artifact content,
+                  for validation provider
+                properties:
+                  candidateRemoteProof:
+                    description: revision content and metadata
+                    properties:
+                      candidateRevisionDigest:
+                        type: string
+                      observedCommit:
+                        type: string
+                      ref:
+                        type: string
+                      repositoryURL:
+                        type: string
+                      verifiedAt:
+                        type: string
+                    required:
+                    - candidateRevisionDigest
+                    - observedCommit
+                    - ref
+                    - repositoryURL
+                    - verifiedAt
+                    type: object
+                  candidateRevision:
+                    description: identity of revision
+                    properties:
+                      branch:
+                        type: string
+                      commit:
+                        type: string
+                      repositoryURL:
+                        type: string
+                      tree:
+                        type: string
+                    required:
+                    - branch
+                    - commit
+                    - repositoryURL
+                    - tree
+                    type: object
+                  changeRequest:
+                    properties:
+                      acceptanceCriteria:
+                        items:
+                          description: Canonical criterion identities projected from
+                            validated change-request bytes.
+                          properties:
+                            digest:
+                              pattern: ^sha256:[0-9a-f]{64}$
+                              type: string
+                            id:
+                              pattern: ^[A-Za-z][A-Za-z0-9._-]{0,63}$
+                              type: string
+                          required:
+                          - digest
+                          - id
+                          type: object
+                        maxItems: 32
+                        minItems: 1
+                        type: array
+                      acceptanceCriteriaSetDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - acceptanceCriteria
+                    - acceptanceCriteriaSetDigest
+                    type: object
+                  imageDigest:
+                    description: candidate image linked to revision
+                    properties:
+                      candidateCommit:
+                        type: string
+                      candidateRevisionDigest:
+                        type: string
+                      candidateTree:
+                        type: string
+                      imageRepository:
+                        type: string
+                      ociDigest:
+                        type: string
+                    required:
+                    - candidateCommit
+                    - candidateRevisionDigest
+                    - candidateTree
+                    - imageRepository
+                    - ociDigest
+                    type: object
+                type: object
               classification:
                 type: string
               contract:
@@ -93,13 +182,19 @@ spec:
               sourceRevision:
                 type: string
               workflowRef:
-                type: string
-              workflowUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
-                type: string
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
             required:
             - contract
             - digest
@@ -108,7 +203,6 @@ spec:
             - producerRef
             - producerUID
             - workflowRef
-            - workflowUID
             type: object
           status:
             properties:

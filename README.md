@@ -2,19 +2,11 @@
 
 SovereignAI is an experimental Kubernetes control plane for autonomous systems. It explores how AI-driven software workflows can be executed with the reliability, governance, isolation, recovery, and auditability expected of distributed services.
 
-The project operates below agent frameworks such as LangGraph and LangChain. It does not prescribe how an agent reasons. Instead, it manages the infrastructure around agent execution: workflow lifecycle, isolated workspaces, constrained capabilities, local inference, typed handoffs, deterministic utility operations, human intervention, validation, and failure recovery.
+The project operates below agent frameworks such as LangGraph and LangChain. It manages the infrastructure around agent execution: workflow lifecycle, isolated workspaces, constrained capabilities, local inference, typed handoffs, deterministic utility operations, human intervention, validation, and failure recovery.
 
-SovereignAI is designed first for sovereign, air-gapped, and regulated environments. The initial implementation runs local models on Kubernetes-managed GPU infrastructure. Cloud inference may become an optional provider later, but it is not an MVP goal.
+SovereignAI is designed first for sovereign, air-gapped, and regulated environments. The initial implementation runs local models on Kubernetes-managed GPU infrastructure.
 
-**Project status:** pre-alpha architectural prototype. The repository contains partially implemented controllers, APIs, CLI commands, GPU accounting, and agent-runtime scaffolding. It is NOT ready for production use and has NO plans to ever reach production.
-
-## Development Approach and AI Assistance
-
-I conceived, architected, and built the initial implementation of this software by hand. The original control plane binaries, controller code, inference, & all decision documents were written by me and were refined by me with AI review. I built up to basic handoffs and state transitions of generic task/result/artifact contracts between steps. 
-
-As this project is only worked in my free time and I needed to both represent the thesis I synthesized and reach an MVP stage by the first week of September I needed to re-accelerate. I begain using AI much more heavily in July 2026 to handle refactoring, implementation, testing, deployment, and documentation while working towards a September MVP. An informal estimate would place about half of the implementation as being AI written or substantially refined with AI.
-
-I have still remained responsible for the goals, architectural decisions, and accepted behaviors. Going forward, I'm aiming to simplify as much as I can for the MVP to ensure that what's built from here on is my own while using AI only for review, refinement, and trivial implementation work.
+**Project status:** pre-alpha architectural prototype. The repository contains partially implemented controllers, APIs, CLI commands, GPU accounting, and agent-runtime scaffolding. Currently, the demo MVP can be executed, and will complete about 70% of the way, but there's still a chance for the agentic operations to repeatedly fail when using small models. The primary failures in the agentic operations are mostly with the harness methodology and MCP issues. 
 
 ## Why this exists
 
@@ -29,28 +21,37 @@ Autonomous agents are often treated as application-library concerns. That leaves
 
 SovereignAI treats those questions as control-plane responsibilities.
 
-The project also provides a place to investigate a broader hypothesis: multiple small, short-lived agents may outperform a single large, long-lived agent at lower cost. The September MVP is not intended to prove that hypothesis; it establishes the infrastructure needed to study it later.
+The project's initial goal was to investigate broader hypotheses and questions: 
+- Do multiple small, short-lived agents outperform a single large, long-lived agent? Lower tokens, less hallucination, etc. 
+- Can we optimize a workflow for a cheaper & smaller model, by enforcing context boundaries and responsibility?
+- What information must actually survive a workflow to make it explainable, auditable, and recoverable?
+
+The September MVP is only aimed to experiment with the last hypothesis, while reneging to prove any of the other hypotheses. The infrastructure to study the others is implemented, but not ready to conduct a conclusive study.
 
 ## What Works
 - Ability to create projects
-- Ability to create workflows from YAML definitions
-- Workflow state transitions and failure recovery (reconciliation)
+- Ability to create workflows with change requests from YAML definitions for *mostly limited to Golang projects at this time*
+- Workflow can transition between states for the defined contracts
+- Failure recovery at the step or workflow level (workflow level has limitations, see retry.md)
 - GPU Scheduling of inference workloads
-- Rudimentary observability
+- Rudimentary observability, most of the focus being on lineage (remainder either not integrated here or not yet carried over)
 
+Workflow completion is fairly consistent, but can still encounter occasional failures under the advertised model.
 
 ## Intended MVP
 
-The first public demonstration targets an application developer and uses SovereignAI's own controller or API code as the workload. A predefined, sequential workflow will:
+The first public demonstration targets an application developer and uses a simple REST calculator app. The aim of the workflow is to add the divide operator support.
 
-1. prepare an isolated workspace and feature branch;
-2. run architect, test-writing, development, review, and test-execution stages;
-3. pass explicit artifacts between stages;
-4. use constrained local-model inference and a small MCP capability surface;
-5. perform Git operations through deterministic platform jobs rather than agent credentials;
-6. pause for human approval or intervention;
-7. expose an ephemeral validation environment through an Argo CD-based provider;
-8. recover cleanly from a demonstrated control-plane or inference failure; and
+A predefined, sequential workflow will:
+
+1. prepare an isolated workspace and feature branch
+2. run architect, test-writing, & development agents
+3. pass explicit artifacts between stages
+4. use constrained local-model inference and a small MCP capability surface as a sidecar
+5. perform Git operations through deterministic platform jobs rather than agent credentials
+6. pause for human approval or intervention during ephemeral validation
+7. expose an ephemeral validation environment through an Argo CD-based provider
+8. recover cleanly from a demonstrated control-plane or inference failure
 9. retain attributable evidence of platform, agent, and human actions.
 
 See [MVP scope](docs/mvp.md) for commitments and non-goals.
@@ -76,9 +77,7 @@ See [MVP scope](docs/mvp.md) for commitments and non-goals.
 | `cmd/gpu-watcher` | Node-local GPU/VRAM sensor | Partial |
 | `cmd/agent-wrapper` | Contract-enforcing agent supervisor | Stub |
 | `internal/api/v1alpha1` | Workflow and GPU custom-resource types | Evolving |
-| `internal/orchestration` | Reconciliation and resource builders | Evolving |
-| `internal/orchestration/inference` | GPU placement and inference lifecycle | Prototype |
-| `internal/argo` | Argo CD integration | To become a validation provider |
+| `internal/validation` | Validation Run & Argo CD integration | ArgoCD is in a more complete integration state, allowing a dev deployment of the workload. |
 | `decisions` | Historical and proposed architecture decisions | Requires normalization |
 | `docs/architecture` | Current target architecture | Authoritative direction |
 
@@ -97,6 +96,24 @@ See [MVP scope](docs/mvp.md) for commitments and non-goals.
 
 ## Current limitations
 
-The current code and the target architecture are not yet aligned. Known gaps include an unfinished agent wrapper, minimal tests, incomplete installation assets, inconsistent example manifests, and hard-coded configuration. The MVP workflow is not yet complete, and there are still significant design and non-working implementation issues.
+Over the course of building this, I've relaxed abstractions and leaked domain specific code across the control plane implementation. At this time, the workflow operation
+would only work on the Calculator application and applications that are architecturally similar.
+
+The custom harness is rudimentary and experimental, showing weeks of continual 'bandaids' on the design. It can fail often.
 
 The architecture documents describe the intended direction. Existing code should not be assumed to implement every documented guarantee.
+
+Much of the documentation is incomplete and disjointed. It's something that needs to catch up with where the architecture & operation actually is.
+
+## Future Effort
+
+Although there was no intention for this project to reach beyond an experiment, much of the future work will be to refactor domain elements out of the codebase to bring better domain separation
+and clarity in the operations, while allowing for more 'plug and play' for my future research experiments.
+
+## Development Approach and AI Assistance
+
+I conceived, architected, and built the initial implementation of this software by hand. The original control plane binaries, controller code, inference, & all decision documents were written by me and were refined by me with AI review. I built up to basic handoffs and state transitions of generic task/result/artifact contracts between steps. 
+
+As this project is only worked in my free time and I needed to both represent the thesis I synthesized and reach an MVP stage by the first week of September I needed to re-accelerate. I begain using AI much more heavily to handle refactoring, implementation, testing, deployment, and documentation while working towards a September MVP.
+
+I have still remained responsible for the goals, architectural decisions, and accepted behaviors.

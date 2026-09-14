@@ -1,0 +1,132 @@
+[
+  {
+    "name": "success",
+    "steps": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "requiredCheckpoints": [
+      "workflow-admission",
+      "authority",
+      "inputs",
+      "artifact-acceptance",
+      "approval-admission",
+      "completion"
+    ],
+    "expectedVerification": "complete",
+    "deferredPhases": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "fault": null
+  },
+  {
+    "name": "test-author-retry",
+    "steps": [
+      4
+    ],
+    "requiredCheckpoints": [
+      "attempt-failure",
+      "recovery",
+      "retry",
+      "authority",
+      "inputs",
+      "agent-authorization",
+      "attempt-success"
+    ],
+    "expectedVerification": "complete",
+    "deferredPhases": [
+      3,
+      4,
+      5,
+      8
+    ],
+    "fault": null,
+    "attempts": [
+      {
+        "number": 1,
+        "outcome": "failed"
+      },
+      {
+        "number": 2,
+        "retryOf": 1,
+        "outcome": "succeeded"
+      }
+    ]
+  },
+  {
+    "name": "rejected-artifact",
+    "steps": [
+      4
+    ],
+    "requiredCheckpoints": [
+      "artifact-rejection"
+    ],
+    "expectedVerification": "complete",
+    "deferredPhases": [
+      6,
+      8
+    ],
+    "fault": null,
+    "mustNotConsumeRejectedArtifact": true
+  },
+  {
+    "name": "approved-final-effect",
+    "steps": [
+      11,
+      12
+    ],
+    "requiredCheckpoints": [
+      "approval-subject",
+      "approval-admission",
+      "utility-authorization",
+      "completion"
+    ],
+    "expectedVerification": "complete",
+    "deferredPhases": [
+      7,
+      8
+    ],
+    "fault": null,
+    "equalDigests": [
+      "approved",
+      "authorized",
+      "operatedOn"
+    ]
+  },
+  {
+    "name": "missing-referenced-event",
+    "steps": [
+      2
+    ],
+    "requiredCheckpoints": [
+      "authority",
+      "inputs",
+      "agent-authorization"
+    ],
+    "expectedVerification": "incomplete",
+    "deferredPhases": [
+      3,
+      8
+    ],
+    "fault": {
+      "removeCheckpoint": "authority",
+      "preserveReference": true
+    }
+  }
+]

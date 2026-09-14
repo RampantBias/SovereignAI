@@ -1,0 +1,164 @@
+/* High-contrast presentation palette. Outcome colors never replace labels. */
+:root {
+  color-scheme: dark;
+  --background: #383a3c;
+  --navigation: #202834;
+  --text: #edf2f9;
+  --muted: #b5c3d5;
+  --border: #43536a;
+  --link: #a6c9ff;
+  --selected: #2b405c;
+  --success: #8ae0ad;
+  --failure: #ffabb4;
+  --pending: #f1ce84;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  background: var(--background);
+  color: var(--text);
+  font: 16px/1.5 system-ui, sans-serif;
+}
+
+h1, h2, h3 { font-weight: 500; }
+h1 { margin: 4px 0; font-size: 27px; }
+h2 { margin: 4px 0; font-size: 24px; }
+h3 { margin: 8px 0; font-size: 18px; }
+p, dd, li, #stamp { overflow-wrap: anywhere; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.muted { color: var(--muted); font-size: 14px; }
+.outcome { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.success { color: var(--success); }
+.failed, .issue { color: var(--failure); }
+.pending { color: var(--pending); }
+
+/* Page frame and independently scrollable reading columns. */
+.page-header { padding: 16px 24px; border-bottom: 1px solid var(--border); }
+.route-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 24px; border-bottom: 1px solid var(--border); }
+.route { min-width: 0; overflow-wrap: anywhere; }
+.reveal-control { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.reveal-control input { width: 18px; height: 18px; accent-color: var(--link); }
+.decision-explanation { margin-top: 16px; padding: 16px; background: #203149; border: 1px solid var(--border); border-radius: 6px; }
+.decision-explanation h3 { margin-top: 0; }
+.role-source { display: block; margin-top: 5px; }
+.relation-label { display: block; margin-top: 6px; color: #bcd6ff; font-size: 14px; }
+.selection-row.related { box-shadow: inset 3px 0 var(--link); }
+main {
+  display: grid;
+  grid-template-columns: minmax(270px, .85fr) minmax(270px, .85fr) minmax(420px, 1.6fr);
+  min-height: 0;
+  overflow: hidden;
+}
+.navigation-pane, article {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.navigation-pane {
+  padding: 0 12px 18px;
+  background: var(--navigation);
+  border-right: 1px solid var(--border);
+}
+.pane-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 16px 8px 12px;
+  background: var(--navigation);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.pane-heading h2 { font-size: 19px; }
+article { padding: 18px 24px 30px; }
+footer {
+  padding: 10px 24px;
+  color: var(--muted);
+  font-size: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* History and checkpoint rows share the same name/outcome alignment. */
+.selection-row {
+  display: block;
+  width: 100%;
+  padding: 12px 10px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  scroll-margin-top: 100px;
+}
+.selection-row:hover { background: #243349; }
+.selection-row[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: var(--link);
+}
+.row-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.row-name { min-width: 0; overflow-wrap: anywhere; }
+.row-heading .outcome { flex-shrink: 0; }
+.row-meta { display: block; margin-top: 4px; font-size: 14px; color: var(--muted); }
+.iteration { margin: 16px 10px 6px; color: var(--muted); font-size: 14px; }
+#unstarted { padding: 0 10px; }
+
+/* Evidence details. Source identities remain expandable for technical review. */
+.status { padding: 12px 14px; margin: 16px 0; background: var(--selected); }
+section { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border); }
+dl { margin: 8px 0; }
+.kv { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 14px; margin: 10px 0; }
+dt { color: var(--muted); font-size: 14px; }
+dd { margin: 0; }
+code, pre { font: 14px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+button.link, a {
+  color: var(--link);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.evidence { margin: 10px 0; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.recorded-relationship { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.relationship-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: start; }
+.relationship-endpoint { min-width: 0; }
+.relationship-kind { display: block; font-weight: 600; }
+.relationship-name { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+.relationship-label { max-width: 120px; color: var(--muted); text-align: center; }
+.relationship-arrow { display: inline-block; }
+.relationship-source { margin-top: 4px; }
+.relationship-source summary { font-size: 14px; }
+summary { cursor: pointer; color: var(--link); padding: 8px 0; }
+#back { margin-bottom: 10px; }
+ul { padding-left: 22px; }
+li { margin: 6px 0; }
+[hidden] { display: none !important; }
+
+/* Smaller windows retain scrollable lists without squeezing the evidence pane. */
+@media (max-width: 1000px) {
+  body { height: auto; display: block; }
+  main { grid-template-columns: 1fr 1fr; overflow: visible; }
+  .navigation-pane { max-height: 360px; border-bottom: 1px solid var(--border); }
+  article { grid-column: 1 / -1; overflow: visible; }
+}
+@media (max-width: 600px) {
+  main { grid-template-columns: 1fr; }
+  .navigation-pane { max-height: 300px; border-right: 0; }
+  .page-header, article { padding: 16px; }
+  .route-bar, footer { padding: 10px 16px; }
+  .kv { grid-template-columns: 1fr; gap: 2px; }
+  .relationship-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .relationship-label { max-width: none; text-align: left; }
+  .relationship-arrow { transform: rotate(90deg); }
+}
+@media (pointer: coarse) {
+  button, summary { min-height: 44px; }
+}

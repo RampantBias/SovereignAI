@@ -35,21 +35,40 @@ func fixtureBytes(t *testing.T, document map[string]any) []byte {
 	return data
 }
 
+func fixtureForContract(t *testing.T, contract string) contractFixture {
+	t.Helper()
+	for _, fixture := range loadFixtures(t) {
+		if fixture.Contract == contract {
+			return fixture
+		}
+	}
+	t.Fatalf("no fixture for contract %q", contract)
+	return contractFixture{}
+}
+
 func TestRegistryContainsAndAcceptsEveryFrozenArtifactContract(t *testing.T) {
 	fixtures := loadFixtures(t)
 	registry := DefaultRegistry()
-	if len(fixtures) != 10 {
-		t.Fatalf("fixture count = %d, want 10", len(fixtures))
+	contracts := registry.Contracts()
+	if len(fixtures) != len(contracts) {
+		t.Fatalf("fixture count = %d, registered contract count = %d: %v", len(fixtures), len(contracts), contracts)
 	}
-	if len(registry.Contracts()) != 10 {
-		t.Fatalf("registered contract count = %d, want 10: %v", len(registry.Contracts()), registry.Contracts())
-	}
+	seen := make(map[string]struct{}, len(fixtures))
 	for _, fixture := range fixtures {
+		if _, duplicate := seen[fixture.Contract]; duplicate {
+			t.Fatalf("duplicate fixture for contract %q", fixture.Contract)
+		}
+		seen[fixture.Contract] = struct{}{}
 		t.Run(fixture.Contract, func(t *testing.T) {
 			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err != nil {
 				t.Fatalf("valid fixture rejected: %v", err)
 			}
 		})
+	}
+	for _, contract := range contracts {
+		if _, ok := seen[contract]; !ok {
+			t.Errorf("registered contract %q has no fixture", contract)
+		}
 	}
 }
 
@@ -58,8 +77,12 @@ func TestCheckedInCalculatorChangeRequestMatchesFrozenContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateContract(ChangeRequestContract, data); err != nil {
-		t.Fatalf("checked-in calculator change request is invalid: %v", err)
+	prepared, err := PrepareChangeRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateContract(ChangeRequestContract, prepared); err != nil {
+		t.Fatalf("prepared calculator change request is invalid: %v", err)
 	}
 }
 
@@ -96,27 +119,69 @@ func TestRegistryRejectsTrailingJSONAndOversizedContent(t *testing.T) {
 	}
 }
 
-func TestChangeSetRejectsDigestAndPatchLimitViolations(t *testing.T) {
-	fixture := loadFixtures(t)[3]
-	fixture.Document["patchDigest"] = "sha256:" + strings.Repeat("0", 64)
-	if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patchDigest") {
-		t.Fatalf("expected patch digest rejection, got %v", err)
+func TestChangeSetsRejectInvalidChangedFiles(t *testing.T) {
+	for _, contract := range []string{TestChangeSetContract, ChangeSetContract} {
+		t.Run(contract, func(t *testing.T) {
+			fixture := fixtureForContract(t, contract)
+			files := fixture.Document["files"].([]any)
+			file := files[0].(map[string]any)
+			file["resultDigest"] = "sha256:" + strings.Repeat("0", 64)
+			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "resultDigest") {
+				t.Fatalf("expected result digest rejection, got %v", err)
+			}
+
+			fixture = fixtureForContract(t, contract)
+			files = fixture.Document["files"].([]any)
+			file = files[0].(map[string]any)
+			file["resultContent"] = strings.Repeat("x", MaxChangedFileBytes+1)
+			file["resultDigest"] = DigestBytes([]byte(file["resultContent"].(string)))
+			if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "resultContent") {
+				t.Fatalf("expected changed-file size rejection, got %v", err)
+			}
+		})
 	}
-	fixture = loadFixtures(t)[3]
-	fixture.Document["patch"] = strings.Repeat("x", MaxPatchBytes+1)
-	if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "patch must contain") {
-		t.Fatalf("expected patch size rejection, got %v", err)
+}
+
+func TestTestChangeSetRejectsProductionPaths(t *testing.T) {
+	fixture := fixtureForContract(t, TestChangeSetContract)
+	files := fixture.Document["files"].([]any)
+	files[0].(map[string]any)["path"] = "src/main.go"
+	if err := ValidateContract(fixture.Contract, fixtureBytes(t, fixture.Document)); err == nil || !strings.Contains(err.Error(), "recognized test path") {
+		t.Fatalf("expected production-path rejection, got %v", err)
+	}
+}
+
+func TestTestPathClassification(t *testing.T) {
+	for _, path := range []string{
+		"src/main_test.go",
+		"tests/calculator.go",
+		"src/test_data/divide.json",
+		"web/__tests__/calculator.ts",
+		"python/test_calculator.py",
+		"web/calculator.test.ts",
+		"web/calculator.spec.js",
+		"java/CalculatorTest.java",
+		"dotnet/Calculator.Tests/Divide.cs",
+	} {
+		if !isTestPath(path) {
+			t.Errorf("test path %q was not recognized", path)
+		}
+	}
+	for _, path := range []string{"src/main.go", "web/calculator.ts", "python/calculator.py", "docs/latest.md"} {
+		if isTestPath(path) {
+			t.Errorf("production path %q was recognized as a test", path)
+		}
 	}
 }
 
 func TestTestReportAndValidationSuccessPredicates(t *testing.T) {
-	testReport := loadFixtures(t)[5]
+	testReport := fixtureForContract(t, TestReportContract)
 	testReport.Document["workspaceClean"] = false
 	if err := ValidateContract(testReport.Contract, fixtureBytes(t, testReport.Document)); err == nil || !strings.Contains(err.Error(), "passed outcome") {
 		t.Fatalf("expected passing test predicate rejection, got %v", err)
 	}
 
-	validationResult := loadFixtures(t)[8]
+	validationResult := fixtureForContract(t, ValidationResultContract)
 	validationResult.Document["observedSourceRevision"] = strings.Repeat("f", 40)
 	if err := ValidateContract(validationResult.Contract, fixtureBytes(t, validationResult.Document)); err == nil || !strings.Contains(err.Error(), "passed outcome") {
 		t.Fatalf("expected passing validation predicate rejection, got %v", err)

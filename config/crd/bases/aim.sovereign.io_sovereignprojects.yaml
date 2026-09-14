@@ -120,6 +120,11 @@ spec:
                 properties:
                   imageName:
                     type: string
+                  imageSelector:
+                    description: |-
+                      ImageSelector is the image name present in the source manifests. It may
+                      differ from ImageName, which is the repository used for the built image.
+                    type: string
                   infrastructureRepository:
                     type: string
                   overlayPath:
@@ -201,6 +206,10 @@ spec:
                 format: int64
                 type: integer
               phase:
+                type: string
+              validationProviderRef:
+                description: ValidationProviderRef is the provisioned Argo AppProject
+                  name.
                 type: string
             type: object
         required:

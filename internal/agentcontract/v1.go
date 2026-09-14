@@ -6,9 +6,27 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const Version = "sovereign.ai/agent-contract/v1"
+
+const (
+	MaxRetryFeedbackReferenceBytes = 253
+	MaxRetryFeedbackCodeBytes      = 128
+	MaxRetryFeedbackMessageBytes   = 1024
+
+	CapabilityWorkspaceRead    = "workspace_read"
+	CapabilityWorkspaceWrite   = "workspace_write"
+	CapabilityWorkspaceCreate  = "workspace_create"
+	CapabilityWorkspaceSearch  = "workspace_search"
+	CapabilityWorkspaceReplace = "workspace_replace"
+	CapabilityWorkspaceDelete  = "workspace_delete"
+	CapabilityWorkspaceTree    = "workspace_tree"
+	CapabilityCandidateWrite   = "candidate_write"
+	CapabilityAgentComplete    = "agent_complete"
+)
 
 type ArtifactInput struct {
 	Name     string `json:"name"`
@@ -33,13 +51,35 @@ type WorkspaceWriteAuthority struct {
 	WriterEpoch    int32  `json:"writerEpoch"`
 }
 
+// RetryFeedback is a bounded diagnostic from a rejected prior attempt. It is
+// not an input artifact and does not grant authority to the receiving agent.
+type RetryFeedback struct {
+	PreviousAttemptRef string `json:"previousAttemptRef"`
+	Code               string `json:"code"`
+	Message            string `json:"message"`
+}
+
+func ContextCredentialName(run string) string { return run + "-context" }
+
+// ContextCapture configures a runtime-only upload, not a model capability.
+type ContextCapture struct {
+	Endpoint       string `json:"endpoint"`
+	Namespace      string `json:"namespace"`
+	AgentRun       string `json:"agentRun"`
+	AgentRunUID    string `json:"agentRunUID"`
+	CredentialPath string `json:"credentialPath"`
+	CAPath         string `json:"caPath"`
+}
+
 type Input struct {
+	ContextCapture    *ContextCapture         `json:"contextCapture,omitempty"`
 	SchemaVersion     string                  `json:"schemaVersion"`
 	WorkflowID        string                  `json:"workflowId"`
 	StepName          string                  `json:"stepName"`
 	Attempt           int32                   `json:"attempt"`
 	Role              string                  `json:"role"`
 	Responsibility    string                  `json:"responsibility"`
+	InferenceModel    string                  `json:"inferenceModel"`
 	Inputs            []ArtifactInput         `json:"inputs,omitempty"`
 	Outputs           []OutputObligation      `json:"outputs,omitempty"`
 	Capabilities      []string                `json:"capabilities,omitempty"`
@@ -50,6 +90,7 @@ type Input struct {
 	ControlPath       string                  `json:"controlPath,omitempty"`
 	ResultPath        string                  `json:"resultPath,omitempty"`
 	AuditEventsPath   string                  `json:"auditEventsPath,omitempty"`
+	RetryFeedback     *RetryFeedback          `json:"retryFeedback,omitempty"`
 	WorkspaceWrite    WorkspaceWriteAuthority `json:"workspaceWrite"`
 }
 
@@ -57,6 +98,14 @@ type ArtifactOutput struct {
 	Contract  string `json:"contract"`
 	Path      string `json:"path"`
 	MediaType string `json:"mediaType,omitempty"`
+}
+
+// AgentCompletion is the durable terminal action returned by agent_complete.
+// EvidenceDigest fences materialization to the exact candidate or workspace
+// state the agent declared complete.
+type AgentCompletion struct {
+	Summary        string `json:"summary"`
+	EvidenceDigest string `json:"evidenceDigest"`
 }
 
 type Result struct {
@@ -147,6 +196,11 @@ func (i Input) Validate() error {
 	if i.WorkspaceWrite.LeaseName == "" || i.WorkspaceWrite.HolderIdentity == "" || i.WorkspaceWrite.WriterEpoch < 1 {
 		return fmt.Errorf("workspaceWrite must identify a lease holder and positive writer epoch")
 	}
+	if i.RetryFeedback != nil {
+		if err := i.RetryFeedback.Validate(); err != nil {
+			return fmt.Errorf("retryFeedback: %w", err)
+		}
+	}
 	for name, path := range map[string]string{
 		"controlPath":     i.ControlPath,
 		"resultPath":      i.ResultPath,
@@ -168,6 +222,68 @@ func (i Input) Validate() error {
 		seen[contract] = struct{}{}
 	}
 	return nil
+}
+
+func (f RetryFeedback) Validate() error {
+	if err := boundedDiagnosticField("previousAttemptRef", f.PreviousAttemptRef, MaxRetryFeedbackReferenceBytes); err != nil {
+		return err
+	}
+	if len(f.Code) == 0 || len(f.Code) > MaxRetryFeedbackCodeBytes || !isDiagnosticCode(f.Code) {
+		return fmt.Errorf("code must be 1 through %d ASCII alphanumeric bytes beginning with a letter", MaxRetryFeedbackCodeBytes)
+	}
+	if err := boundedDiagnosticField("message", f.Message, MaxRetryFeedbackMessageBytes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func SanitizeRetryFeedbackMessage(value string) string {
+	var output strings.Builder
+	for _, current := range strings.ToValidUTF8(value, "") {
+		if unicode.IsControl(current) || unicode.IsSpace(current) {
+			output.WriteByte(' ')
+			continue
+		}
+		output.WriteRune(current)
+	}
+	normalized := strings.Join(strings.Fields(output.String()), " ")
+	for len([]byte(normalized)) > MaxRetryFeedbackMessageBytes {
+		normalized = normalized[:len(normalized)-1]
+		for !utf8.ValidString(normalized) {
+			normalized = normalized[:len(normalized)-1]
+		}
+	}
+	return normalized
+}
+
+func boundedDiagnosticField(field, value string, maximum int) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	if len([]byte(value)) > maximum {
+		return fmt.Errorf("%s exceeds %d bytes", field, maximum)
+	}
+	for _, current := range value {
+		if unicode.IsControl(current) {
+			return fmt.Errorf("%s contains a control character", field)
+		}
+	}
+	return nil
+}
+
+func isDiagnosticCode(value string) bool {
+	for index, current := range []byte(value) {
+		if index == 0 {
+			if (current < 'A' || current > 'Z') && (current < 'a' || current > 'z') {
+				return false
+			}
+			continue
+		}
+		if (current < 'A' || current > 'Z') && (current < 'a' || current > 'z') && (current < '0' || current > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func (r Result) Validate(stagingRoot string) error {

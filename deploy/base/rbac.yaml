@@ -70,6 +70,7 @@ rules:
       - humansessions/finalizers
       - inferenceendpoints/finalizers
       - inferenceleases/finalizers
+      - sovereignprojects/finalizers
       - sovereignworkflows/finalizers
       - stepattempts/finalizers
       - utilityoperations/finalizers

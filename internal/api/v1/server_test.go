@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -65,6 +66,7 @@ func TestCreateWorkflowCreatesIsolationNamespace(t *testing.T) {
 	scheme := testScheme(t)
 	project := &v1alpha1.SovereignProject{}
 	project.Name = "platform"
+	readyProjectForSubmission(project)
 	kubeClient := &assignUIDClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()}
 	recorder := &audit.MemoryRecorder{}
 	server := NewServer(kubeClient, recorder)
@@ -231,6 +233,7 @@ func TestCreateWorkflowRollsBackNamespaceWhenBootstrapStagingFails(t *testing.T)
 	scheme := testScheme(t)
 	project := &v1alpha1.SovereignProject{}
 	project.Name = "platform"
+	readyProjectForSubmission(project)
 	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(project).Build()
 	kubeClient := &failConfigMapCreateClient{Client: baseClient}
 	recorder := audit.NewMemoryRecorder()
@@ -252,6 +255,59 @@ func TestCreateWorkflowRollsBackNamespaceWhenBootstrapStagingFails(t *testing.T)
 	}
 	if !recorder.Has("WorkflowCreateFailed") || !recorder.Has("NamespaceRollbackRequested") {
 		t.Fatalf("bootstrap rollback was not audited: %#v", recorder.AllEvents())
+	}
+}
+
+func readyProjectForSubmission(project *v1alpha1.SovereignProject) {
+	project.Status.ValidationProviderRef = "sov-" + project.Name
+	project.Status.Conditions = []metav1.Condition{
+		{Type: v1alpha1.ProjectConditionConfigurationValid, Status: metav1.ConditionTrue, Reason: "ConfigurationValid", ObservedGeneration: project.Generation},
+		{Type: v1alpha1.ProjectConditionValidationProviderReady, Status: metav1.ConditionTrue, Reason: "AppProjectReady", ObservedGeneration: project.Generation},
+	}
+}
+
+func TestCreateWorkflowRequiresReadyProjectBeforeSideEffects(t *testing.T) {
+	for _, state := range []string{"missing conditions", "missing reference", "invalid configuration", "provider not ready", "stale configuration", "stale provider", "deleting"} {
+		t.Run(state, func(t *testing.T) {
+			project := &v1alpha1.SovereignProject{ObjectMeta: metav1.ObjectMeta{Name: "platform", Generation: 2}}
+			readyProjectForSubmission(project)
+			switch state {
+			case "missing conditions":
+				project.Status.Conditions = nil
+			case "missing reference":
+				project.Status.ValidationProviderRef = ""
+			case "invalid configuration":
+				project.Status.Conditions[0].Status = metav1.ConditionFalse
+			case "provider not ready":
+				project.Status.Conditions[1].Status = metav1.ConditionFalse
+			case "stale configuration":
+				project.Status.Conditions[0].ObservedGeneration = 1
+			case "stale provider":
+				project.Status.Conditions[1].ObservedGeneration = 1
+			case "deleting":
+				now := metav1.Now()
+				project.DeletionTimestamp = &now
+				project.Finalizers = []string{"test/cleanup"}
+			}
+			kube := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(project).Build()
+			recorder := audit.NewMemoryRecorder()
+			_, err := NewServer(kube, recorder).CreateWorkflow(contractMaintainerContext("frank"), &pb.CreateWorkflowRequest{
+				ProjectName: "platform", ManifestContent: validWorkflowManifest(), ChangeRequestContent: validWorkflowChangeRequest(t),
+			})
+			if grpcstatus.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("expected unready project rejection: %v", err)
+			}
+			var namespaces corev1.NamespaceList
+			if err := kube.List(context.Background(), &namespaces); err != nil {
+				t.Fatal(err)
+			}
+			if len(namespaces.Items) != 0 {
+				t.Fatal("unready project created a namespace")
+			}
+			if !recorder.Has("WorkflowCreateRejected") {
+				t.Fatal("missing rejection audit")
+			}
+		})
 	}
 }
 
@@ -365,9 +421,10 @@ func validWorkflowChangeRequest(t *testing.T) []byte {
 	t.Helper()
 	content, err := json.Marshal(artifactcontract.ChangeRequest{
 		Summary: "Add divide support", Description: "Implement calculator division.",
-		AcceptanceCriteria: []string{"84 / 2 returns 42"},
-		RepositoryURL:      "https://git.example.test/calculator.git",
-		SourceCommit:       strings.Repeat("a", 40),
+		AcceptanceCriteria:          []artifactcontract.AcceptanceCriterionV1{{ID: "RQ-001", Text: "84 / 2 returns 42", Digest: artifactcontract.CriterionDigest("RQ-001", "84 / 2 returns 42")}},
+		AcceptanceCriteriaSetDigest: artifactcontract.CriteriaSetDigest([]artifactcontract.CriterionIdentityV1{{ID: "RQ-001", Digest: artifactcontract.CriterionDigest("RQ-001", "84 / 2 returns 42")}}),
+		RepositoryURL:               "https://git.example.test/calculator.git",
+		SourceCommit:                strings.Repeat("a", 40),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	pathpkg "path"
 	"regexp"
@@ -11,7 +12,10 @@ import (
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
+	"github.com/SovereignAI/internal/repositorycredential"
+	"github.com/SovereignAI/internal/validation"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,12 +24,16 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
-	ProjectConditionConfigurationValid = "ConfigurationValid"
+	ProjectConditionConfigurationValid      = v1alpha1.ProjectConditionConfigurationValid
+	ProjectConditionValidationProviderReady = v1alpha1.ProjectConditionValidationProviderReady
+	ProjectFinalizer                        = "sovereign-ai.io/project-validation-cleanup"
+	projectDriftInterval                    = 5 * time.Minute
 
 	projectReasonConfigurationValid   = "ConfigurationValid"
 	projectReasonInvalidConfiguration = "InvalidConfiguration"
@@ -38,8 +46,9 @@ var fullGitSHA1 = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type SovereignProjectReconciler struct {
 	client.Client
-	Audit audit.Recorder
-	Now   func() time.Time
+	Provisioner validation.ProjectProvisioner
+	Audit       audit.Recorder
+	Now         func() time.Time
 }
 
 func (r *SovereignProjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -62,14 +71,134 @@ func (r *SovereignProjectReconciler) Reconcile(ctx context.Context, request ctrl
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// SovereignProject currently owns no external resource that requires
-	// cleanup. In particular, workflow namespaces must not be cascaded or
-	// retained by a Project finalizer.
 	if !project.DeletionTimestamp.IsZero() {
-		return ctrl.Result{}, nil
+		return r.cleanupValidationProject(ctx, &project)
 	}
 
-	return ctrl.Result{}, r.updateConfigurationStatus(ctx, request.NamespacedName)
+	if err := r.updateConfigurationStatus(ctx, request.NamespacedName); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Refresh the spec and resource version after updating configuration status.
+	if err := r.Get(ctx, request.NamespacedName, &project); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !project.DeletionTimestamp.IsZero() {
+		return r.cleanupValidationProject(ctx, &project)
+	}
+	if len(ValidateSovereignProjectSpec(&project)) > 0 {
+		return ctrl.Result{}, r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "InvalidConfiguration", "Project configuration must be valid before provisioning validation")
+	}
+	if r.Provisioner == nil {
+		return ctrl.Result{RequeueAfter: projectDriftInterval}, r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "ProviderUnavailable", "Validation project provisioner is not configured")
+	}
+	if !controllerutil.ContainsFinalizer(&project, ProjectFinalizer) {
+		controllerutil.AddFinalizer(&project, ProjectFinalizer)
+		return ctrl.Result{}, r.Update(ctx, &project)
+	}
+	credential, err := r.validationRepositoryCredential(ctx, &project)
+	if err != nil {
+		if statusErr := r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "RepositoryCredentialUnavailable", err.Error()); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+		return ctrl.Result{}, err
+	}
+	reference, err := r.Provisioner.EnsureProject(ctx, validationProjectRequest(&project, credential))
+	if err != nil {
+		reason := "ArgoProvisioningFailed"
+		if apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) {
+			reason = "ArgoResourceConflict"
+		}
+		if statusErr := r.updateValidationProviderStatus(ctx, &project, project.Status.ValidationProviderRef, metav1.ConditionFalse, reason, err.Error()); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
+		return ctrl.Result{}, err
+	}
+	if reference == "" {
+		return ctrl.Result{}, fmt.Errorf("validation provisioner returned an empty AppProject reference")
+	}
+	return ctrl.Result{RequeueAfter: projectDriftInterval}, r.updateValidationProviderStatus(ctx, &project, reference, metav1.ConditionTrue, "ArgoProjectReady", "Argo AppProject policy and project-scoped repository credential are provisioned")
+}
+
+func validationProjectRequest(project *v1alpha1.SovereignProject, credential validation.RepositoryCredential) validation.ProjectRequest {
+	return validation.ProjectRequest{Name: project.Name, UID: project.UID, InfrastructureRepo: project.Spec.Validation.InfrastructureRepo, RepositoryCredential: credential}
+}
+
+func (r *SovereignProjectReconciler) validationRepositoryCredential(ctx context.Context, project *v1alpha1.SovereignProject) (validation.RepositoryCredential, error) {
+	ref := project.Spec.ApplicationRepository.CredentialRef
+	var source corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &source); err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("resolve repository credential %s/%s for Argo: %w", ref.Namespace, ref.Name, err)
+	}
+	credential, err := repositorycredential.Parse(&source)
+	if err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("validate repository credential %s/%s for Argo: %w", ref.Namespace, ref.Name, err)
+	}
+	repositoryURL, err := url.Parse(project.Spec.Validation.InfrastructureRepo)
+	if err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("parse infrastructure repository for Argo credential scope: %w", err)
+	}
+	scopeURL, err := url.Parse(credential.ScopeURL)
+	if err != nil {
+		return validation.RepositoryCredential{}, fmt.Errorf("parse repository credential scope for Argo")
+	}
+	if !strings.EqualFold(repositoryURL.Scheme, scopeURL.Scheme) || !strings.EqualFold(repositoryURL.Host, scopeURL.Host) {
+		return validation.RepositoryCredential{}, fmt.Errorf("repository credential %s/%s does not match the infrastructure repository origin", ref.Namespace, ref.Name)
+	}
+	return validation.RepositoryCredential{Username: credential.Username, Password: credential.Password}, nil
+}
+
+func (r *SovereignProjectReconciler) cleanupValidationProject(ctx context.Context, project *v1alpha1.SovereignProject) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(project, ProjectFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.updateValidationProviderStatus(ctx, project, project.Status.ValidationProviderRef, metav1.ConditionFalse, "ProjectTerminating", "Waiting for referencing Applications and AppProject cleanup; workflow environments are not deleted automatically"); err != nil {
+		return ctrl.Result{}, err
+	}
+	if r.Provisioner == nil {
+		return ctrl.Result{}, fmt.Errorf("validation project provisioner is unavailable for cleanup")
+	}
+	done, err := r.Provisioner.DestroyProject(ctx, validationProjectRequest(project, validation.RepositoryCredential{}))
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !done {
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	// Read again after the status write; remove only our finalizer.
+	var latest v1alpha1.SovereignProject
+	if err := r.Get(ctx, client.ObjectKeyFromObject(project), &latest); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if latest.UID != project.UID {
+		return ctrl.Result{}, fmt.Errorf("project identity changed during cleanup")
+	}
+	controllerutil.RemoveFinalizer(&latest, ProjectFinalizer)
+	return ctrl.Result{}, r.Update(ctx, &latest)
+}
+
+func (r *SovereignProjectReconciler) updateValidationProviderStatus(ctx context.Context, project *v1alpha1.SovereignProject, reference string, status metav1.ConditionStatus, reason, message string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest v1alpha1.SovereignProject
+		if err := r.Get(ctx, client.ObjectKeyFromObject(project), &latest); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		if latest.UID != project.UID || latest.Generation != project.Generation {
+			return fmt.Errorf("project changed while provisioning validation; reconcile the current generation")
+		}
+		if status == metav1.ConditionTrue && !latest.DeletionTimestamp.IsZero() {
+			return fmt.Errorf("project is terminating")
+		}
+		if len(message) > maxProjectConditionMessageBytes {
+			message = message[:maxProjectConditionMessageBytes]
+		}
+		condition := metav1.Condition{Type: ProjectConditionValidationProviderReady, Status: status, Reason: reason, Message: message, ObservedGeneration: project.Generation, LastTransitionTime: r.now()}
+		if latest.Status.ValidationProviderRef == reference && conditionsEqual(apiMeta.FindStatusCondition(latest.Status.Conditions, condition.Type), condition) {
+			return nil
+		}
+		latest.Status.ValidationProviderRef = reference
+		apiMeta.SetStatusCondition(&latest.Status.Conditions, condition)
+		return r.Status().Update(ctx, &latest)
+	})
 }
 
 // ValidateSovereignProjectSpec validates the Project-owned authority that the
@@ -82,6 +211,10 @@ func ValidateSovereignProjectSpec(project *v1alpha1.SovereignProject) field.Erro
 
 	var errors field.ErrorList
 	specPath := field.NewPath("spec")
+	// This name is used verbatim in workflow namespace prefixes and Argo labels.
+	for _, problem := range k8svalidation.IsDNS1123Label(project.Name) {
+		errors = append(errors, field.Invalid(field.NewPath("metadata", "name"), project.Name, problem))
+	}
 
 	// validate tenant and policy profile names
 	if err := validateTenant(project.Spec.Tenant, specPath.Child("tenant")); err != nil {
@@ -111,7 +244,7 @@ func ValidateSovereignProjectSpec(project *v1alpha1.SovereignProject) field.Erro
 		validateJobTemplate(
 			project.Spec.BuildJob,
 			specPath.Child("buildJob"),
-			credentialRequired,
+			credentialOptional,
 		)...,
 	)
 	errors = append(
@@ -342,6 +475,9 @@ func validateProjectValidation(validation v1alpha1.ProjectValidationSpec, path *
 	}
 
 	errors = append(errors, validateValidationImageName(validation.ImageName, path.Child("imageName"))...)
+	if validation.ImageSelector != "" {
+		errors = append(errors, validateValidationImageName(validation.ImageSelector, path.Child("imageSelector"))...)
+	}
 
 	return errors
 }
@@ -472,7 +608,7 @@ func (r *SovereignProjectReconciler) appendProjectEvent(
 	references map[string]string,
 	data any,
 ) error {
-	return appendControllerEvent(ctx, r.Audit, "sovereignproject-controller", r.Now, audit.EventOptions{
+	return audit.AppendControllerEvent(ctx, r.Audit, "sovereignproject-controller", r.Now, audit.EventOptions{
 		Type:          eventType,
 		Subject:       audit.Subject{Project: project.Name},
 		Action:        action,

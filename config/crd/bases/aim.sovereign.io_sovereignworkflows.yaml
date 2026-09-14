@@ -89,6 +89,12 @@ spec:
                 type: string
               definitionRevision:
                 type: string
+              maxWorkflowAttempt:
+                description: MaxWorkflowAttempt bounds application-level test failure
+                  rewinds independently of infrastructure retries.
+                format: int32
+                minimum: 1
+                type: integer
               projectRef:
                 properties:
                   name:
@@ -180,9 +186,25 @@ spec:
                     inputs:
                       items:
                         properties:
+                          artifactRef:
+                            properties:
+                              name:
+                                type: string
+                              uid:
+                                description: |-
+                                  UID is a type that holds unique ID values, including UUIDs.  Because we
+                                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                  intent and helps make sure that UIDs and names do not get conflated.
+                                type: string
+                            required:
+                            - name
+                            - uid
+                            type: object
                           digest:
                             type: string
                           name:
+                            type: string
+                          producerAttemptRef:
                             type: string
                         required:
                         - name
@@ -209,6 +231,18 @@ spec:
                         - version
                         type: object
                       type: array
+                    requiresApproval:
+                      description: ApprovalRequirement names the earlier human gate
+                        and shared artifact input.
+                      properties:
+                        step:
+                          type: string
+                        subject:
+                          type: string
+                      required:
+                      - step
+                      - subject
+                      type: object
                     timeout:
                       type: string
                     utility:
@@ -226,6 +260,7 @@ spec:
                           - git.commit
                           - git.push
                           - git.merge
+                          - git.mergeRequest
                           - test.run
                           - build.image
                           type: string
@@ -379,10 +414,333 @@ spec:
                 type: string
               pvcName:
                 type: string
+              refinement:
+                description: |-
+                  WorkflowRefinementStatus records an application-level test failure that
+                  rewound the workflow. It is distinct from infrastructure retry state.
+                properties:
+                  agentCompletions:
+                    items:
+                      properties:
+                        attemptRef:
+                          type: string
+                        completion:
+                          description: |-
+                            AgentCompletionStatus is the controller-observed durable terminal action
+                            produced by agent_complete.
+                          properties:
+                            digest:
+                              type: string
+                            disposition:
+                              enum:
+                              - changed
+                              - no_change
+                              - contract_ambiguous
+                              type: string
+                            summary:
+                              maxLength: 1024
+                              minLength: 1
+                              type: string
+                          required:
+                          - disposition
+                          - summary
+                          type: object
+                        stepName:
+                          type: string
+                      required:
+                      - attemptRef
+                      - completion
+                      - stepName
+                      type: object
+                    type: array
+                  iteration:
+                    format: int32
+                    type: integer
+                  recovery:
+                    description: |-
+                      WorkflowRecoveryEvidence freezes the decision's inputs before the workflow
+                      advances, allowing audit writes to be retried without inventing new evidence.
+                    properties:
+                      evidenceEvents:
+                        items:
+                          type: string
+                        type: array
+                      failureReason:
+                        type: string
+                      feedback:
+                        properties:
+                          code:
+                            pattern: ^[A-Za-z][A-Za-z0-9]{0,127}$
+                            type: string
+                          message:
+                            maxLength: 1024
+                            minLength: 1
+                            type: string
+                          previousAttemptRef:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - code
+                        - message
+                        - previousAttemptRef
+                        type: object
+                      fromWorkflowAttempt:
+                        format: int32
+                        type: integer
+                      inputLinks:
+                        items:
+                          description: |-
+                            RecoveryInputLink proves a consumed artifact's producing attempt. All refs
+                            name immutable objects; these are not timestamp-based ancestry guesses.
+                          properties:
+                            consumer:
+                              properties:
+                                name:
+                                  type: string
+                                uid:
+                                  description: |-
+                                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                    intent and helps make sure that UIDs and names do not get conflated.
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                            input:
+                              properties:
+                                artifactRef:
+                                  properties:
+                                    name:
+                                      type: string
+                                    uid:
+                                      description: |-
+                                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                        intent and helps make sure that UIDs and names do not get conflated.
+                                      type: string
+                                  required:
+                                  - name
+                                  - uid
+                                  type: object
+                                digest:
+                                  type: string
+                                name:
+                                  type: string
+                                producerAttemptRef:
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            producer:
+                              properties:
+                                name:
+                                  type: string
+                                uid:
+                                  description: |-
+                                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                    intent and helps make sure that UIDs and names do not get conflated.
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                          required:
+                          - consumer
+                          - input
+                          - producer
+                          type: object
+                        type: array
+                      maxWorkflowAttempt:
+                        format: int32
+                        type: integer
+                      missing:
+                        items:
+                          type: string
+                        type: array
+                      previousAttempt:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      previousOutcome:
+                        type: string
+                      reports:
+                        items:
+                          properties:
+                            artifactRef:
+                              properties:
+                                name:
+                                  type: string
+                                uid:
+                                  description: |-
+                                    UID is a type that holds unique ID values, including UUIDs.  Because we
+                                    don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                                    intent and helps make sure that UIDs and names do not get conflated.
+                                  type: string
+                              required:
+                              - name
+                              - uid
+                              type: object
+                            digest:
+                              type: string
+                            name:
+                              type: string
+                            producerAttemptRef:
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      selectedAt:
+                        format: date-time
+                        type: string
+                      triggerAttempt:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                    required:
+                    - failureReason
+                    - fromWorkflowAttempt
+                    - maxWorkflowAttempt
+                    - selectedAt
+                    - triggerAttempt
+                    type: object
+                  restartStep:
+                    type: string
+                  retryObservation:
+                    description: |-
+                      WorkflowRetryObservation freezes when the controller verified the persisted
+                      replacement, separately from the earlier immutable recovery decision.
+                    properties:
+                      attempt:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      decisionEvent:
+                        type: string
+                      execution:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      observedAt:
+                        format: date-time
+                        type: string
+                    required:
+                    - attempt
+                    - decisionEvent
+                    - execution
+                    - observedAt
+                    type: object
+                  testReport:
+                    description: |-
+                      SelectedArtifact records the exact accepted artifact identity used for
+                      subsequent workflow inputs. ProducerAttemptRef is empty for bootstrap
+                      artifacts produced directly by the workflow.
+                    properties:
+                      contract:
+                        properties:
+                          name:
+                            type: string
+                          version:
+                            type: string
+                        required:
+                        - name
+                        - version
+                        type: object
+                      digest:
+                        type: string
+                      producerAttemptRef:
+                        type: string
+                    required:
+                    - contract
+                    - digest
+                    type: object
+                  triggerAttemptRef:
+                    type: string
+                  triggerStep:
+                    type: string
+                required:
+                - iteration
+                - restartStep
+                - triggerAttemptRef
+                - triggerStep
+                type: object
+              selectedArtifacts:
+                items:
+                  description: |-
+                    SelectedArtifact records the exact accepted artifact identity used for
+                    subsequent workflow inputs. ProducerAttemptRef is empty for bootstrap
+                    artifacts produced directly by the workflow.
+                  properties:
+                    contract:
+                      properties:
+                        name:
+                          type: string
+                        version:
+                          type: string
+                      required:
+                      - name
+                      - version
+                      type: object
+                    digest:
+                      type: string
+                    producerAttemptRef:
+                      type: string
+                  required:
+                  - contract
+                  - digest
+                  type: object
+                type: array
+              workflowAttempt:
+                format: int32
+                type: integer
               workspaceWriterLeaseRef:
                 type: string
             required:
             - phase
+            - workflowAttempt
             type: object
         type: object
     served: true

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/candidate-remote-proof.schema.json",
+  "title": "candidate-remote-proof/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidateRevisionDigest", "repositoryURL", "ref", "observedCommit", "verifiedAt"],
+  "properties": {
+    "candidateRevisionDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "repositoryURL": {"$ref": "common.schema.json#/$defs/RepositoryURL"},
+    "ref": {"type": "string", "minLength": 12, "maxLength": 266, "pattern": "^refs/heads/"},
+    "observedCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "verifiedAt": {"$ref": "common.schema.json#/$defs/Timestamp"}
+  }
+}

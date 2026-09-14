@@ -2,35 +2,33 @@
 
 Status: **Frozen for implementation**
 
-Version: **v3**
+Version: **v4**
 
-Revised: **2026-07-19**
-
-Implementation guide: [draft/Plan3.md](../draft/Plan3.md)
+Revised: **2026-08-03**
 
 ## Demonstration objective
 
 Demonstrate that SovereignAI can execute a useful, bounded software-development workflow against an independent application repository with credible reliability, security, human control, deterministic side effects, and auditability.
 
-The MVP is a vertical slice and public architectural demonstration. It is not a production release. It proves that the control plane can preserve authority and evidence across autonomous work, deterministic Git and build operations, local inference, validation, human approval, recovery, and merge.
+The MVP is a vertical slice and public architectural demonstration. It is not a production release, more like a research prototype. It proves that the control plane can preserve authority and evidence across autonomous work, deterministic Git, and build operations, local inference, validation, human approval, recovery, and final git merge.
 
-The demonstration workload is a separate Go HTTP calculator application. SovereignAI does not modify its own controller repository during the MVP.
+The demonstration workload is a separate Go HTTP calculator application with add, multiply, and subtraction incorporated into a single endpoint. I originally wanted SovereignAI to update its own controller code, but that was too complex for validation.
 
 ## Frozen demonstration workload
 
 The reference calculator repository contains:
 
-- a Go HTTP service;
-- `GET /healthz`;
-- a versioned JSON calculation endpoint;
-- baseline support for add, subtract, and multiply;
-- unit tests;
-- a Dockerfile that produces one application image; and
-- a Kustomize overlay suitable for ephemeral Argo CD validation.
+- a Go HTTP service
+- `GET /healthz`
+- a versioned JSON calculation endpoint
+- Integrated functionality for add, subtract, and multiply
+- unit tests covering add, subtract, multiply, and health; along with tests verifying divide and modulo don't work.
+- a Dockerfile that produces one application image
+- a Kustomize overlay suitable for ephemeral Argo CD validation
 
 The submitted change request is fixed:
 
-> Add divide support to the calculator without regressing existing operations. `84 / 2` must return `42`. Division by zero must return HTTP 422 with the stable error code `division_by_zero`.
+-> Add divide support to the calculator without regressing existing operations. `84 / 2` must return `42`. Division by zero must return HTTP 422 with the stable error code `division_by_zero`.
 
 The reference repository is hosted on an existing HTTPS Git remote. Git hosting is not installed by SovereignAI. The remote must be reachable from utility and Argo CD workloads, and repository credentials must be supplied through a Project-owned Kubernetes Secret. The calculator seed procedure must refuse to overwrite or initialize a remote that already contains a branch.
 
@@ -40,20 +38,20 @@ The reference repository is hosted on an existing HTTPS Git remote. Git hosting 
 - Application repository: the external calculator Git repository.
 - Cluster: self-managed, air-gap-capable k3s/Kubernetes.
 - Primary inference hardware: the NVIDIA 5060 Ti 16 GB node.
-- Non-gating hardware: the NVIDIA 1070 8 GB node. The MVP does not require it to serve a model or pass the demonstration.
 - Inference: one pinned vLLM image, one pinned model revision, one measured runtime profile, and policy-controlled warm endpoint reuse.
-- Validation: one Argo CD/Kustomize provider that deploys the exact calculator image digest.
+- Validation: one Argo CD/Kustomize provider that deploys the exact calculator image digest and generates a performance regression diff.
 - Audit: one shared PostgreSQL audit store used by the API, controllers, collectors, and runtime boundaries.
 
 ### Host prerequisites
 
 The operator supplies and configures:
 
-- k3s/Kubernetes and containerd;
-- the compatible NVIDIA host driver and NVIDIA container runtime;
-- a default or explicitly selected storage class;
-- network reachability to the existing HTTPS Git remote; and
-- any host-level registry trust or mirror configuration required by k3s/containerd.
+- k3s/Kubernetes and containerd
+- the compatible NVIDIA host driver and NVIDIA container runtime
+  - WSL was used in my case, however I wouldn't recommend it due to networking bugs I encountered
+- a default or explicitly selected storage class
+- network reachability to the existing HTTPS Git remote
+- any host-level registry trust or mirror configuration required by k3s/containerd
 
 SovereignAI preflight checks these prerequisites but does not install or modify host drivers, the container runtime, or Kubernetes itself.
 
@@ -61,15 +59,13 @@ SovereignAI preflight checks these prerequisites but does not install or modify 
 
 The demo distribution installs pinned, digest-addressed cluster resources for:
 
-- Argo CD;
-- PostgreSQL for audit storage;
-- a local OCI registry;
-- Prometheus;
-- the NVIDIA device plugin;
-- the model-cache PVC and controlled preload/verification jobs; and
-- SovereignAI CRDs, control-plane workloads, policies, and demo resources.
-
-Every third-party image and manifest revision must be recorded in the demo inventory. Air-gap packaging transfers the required images and manifests without embedding credentials, model access tokens, TLS private keys, or human JWTs in the repository.
+- Argo CD
+- PostgreSQL for audit storage
+- a local OCI registry
+- Prometheus
+- the NVIDIA device plugin
+- the model-cache PVC and controlled preload/verification jobs (Qwen)
+- SovereignAI CRDs, control-plane workloads, policies, and demo resources
 
 ## Canonical sequential workflow
 
@@ -79,15 +75,16 @@ The workflow graph is fixed and sequential. Repository initialization remains an
 | --- | --- | --- | --- |
 | 1 | Initialize repository | Utility: `repository.initialize` | accepted `repository-revision/v1` containing the immutable source commit |
 | 2 | Architect | AgentRun | accepted `implementation-plan/v1` |
-| 3 | Developer | AgentRun | accepted unified-diff `change-set/v1` |
-| 4 | Prepare candidate | Utility: `candidate.prepare` | accepted `prepared-candidate/v1` containing deterministic branch, base commit, change-set digest, and Git tree |
-| 5 | Test candidate | Utility: `test.run` | accepted `test-report/v1` bound to the prepared Git tree |
-| 6 | Commit candidate | Utility: `git.commit` | accepted `candidate-revision/v1` bound to the tested tree |
-| 7 | Push candidate | Utility: `git.push` | evidence that the remote candidate branch resolves to the exact candidate commit |
-| 8 | Build calculator | Utility: `build.image` | accepted `image-digest/v1` for one calculator image built from the candidate commit |
-| 9 | Ephemeral validation | ValidationRun | accepted `validation-result/v1`, Argo health, and direct review instructions |
-| 10 | Product approval | HumanGate | admitted ApprovalDecision for the exact validated subject |
-| 11 | Merge candidate | Utility: `git.merge` | accepted `merge-revision/v1` proving the approved candidate was merged and pushed once |
+| 3 | Test Writer | AgentRun | accepted unified-diff `test-change-set/v1` |
+| 4 | Developer | AgentRun | accepted unified-diff `change-set/v1` |
+| 5 | Prepare candidate | Utility: `candidate.prepare` | accepted `prepared-candidate/v1` binding both accepted patch digests, deterministic branch, base commit, and Git tree |
+| 6 | Test candidate | Utility: `test.run` | accepted `test-report/v1` proving the Project-owned test command passed without tree drift |
+| 7 | Commit candidate | Utility: `git.commit` | accepted `candidate-revision/v1` bound to the tested tree |
+| 8 | Push candidate | Utility: `git.push` | accepted `candidate-remote-proof/v1` proving the remote branch resolves to the exact candidate commit |
+| 9 | Build calculator | Utility: `build.image` | accepted `image-digest/v1` for one calculator image built from the candidate commit and tree |
+| 10 | Ephemeral validation | ValidationRun | accepted `validation-result/v1`, Argo health, and direct review instructions |
+| 11 | Product approval | HumanGate | admitted ApprovalDecision for the exact validated subject |
+| 12 | Merge candidate | Utility: `git.merge` | accepted `merge-revision/v1` proving the approved candidate was merged and pushed once |
 
 The submitted change request is an immutable workflow input. Every later input is resolved to an accepted Artifact by API version, kind, namespace, name, UID, digest, contract, producer, workflow UID, classification, and source commit before its consumer resource is created.
 
@@ -99,13 +96,13 @@ The submitted change request is an immutable workflow input. Every later input i
 - Require the exact referenced SovereignProject UID to be current and `Ready=True` before admitting the workflow.
 - Create one isolated namespace and PVC-backed workspace per workflow.
 - Validate the complete graph, operation vocabulary, contracts, capabilities, timeouts, model rules, and resource bounds before namespace creation.
-- Advance steps idempotently through Kubernetes reconciliation.
+- Advance workflow steps idempotently through Kubernetes reconciliation.
 - Represent every retry as a new StepAttempt and retain prior attempt history.
-- Enforce explicit TTL and cleanup behavior.
+- Enforce explicit cleanup behavior.
 
 ### Agent execution and context
 
-- Use exactly two short-lived agent roles: Architect and Developer.
+- Use exactly three short-lived agent roles: Architect, Developer, and Test Writer.
 - Supervise the repository-owned Go reference agent through the existing Go wrapper and versioned AgentContract.
 - Run a local MCP context server as a sidecar in each agent Pod.
 - Mount the admitted repository read-only into the MCP sidecar, not into the agent container.
@@ -114,7 +111,7 @@ The submitted change request is an immutable workflow input. Every later input i
 - Give agent and MCP containers no Kubernetes service-account token and no Git or registry credential.
 - Validate `result.json`, all declared artifacts, and every required output obligation before accepting the producer.
 
-The Architect consumes the immutable change request and bounded repository context and produces `implementation-plan/v1`. The Developer consumes that exact change request and accepted implementation plan, retrieves bounded context through MCP, and produces `change-set/v1` as a unified diff based on the admitted source commit.
+The Architect consumes the immutable change request and bounded repository context and produces `implementation-plan/v1`. The Test Writer consumes that change request, accepted implementation plan, and admitted repository revision and produces `test-change-set/v1` as a unified diff containing only test-code changes. The Developer consumes those same inputs plus the accepted test change set and produces `change-set/v1` as a unified diff containing the production-code changes.
 
 ### Artifact contracts and provenance
 
@@ -145,10 +142,12 @@ The Architect consumes the immutable change request and bounded repository conte
 - Success requires Argo to observe the intended source and image digest and report `Synced` and `Healthy`.
 - Validation produces `validation-result/v1` and documented port-forward instructions.
 - The review path exposes `/healthz` and the calculation endpoint from the ephemeral calculator deployment.
+- ValidationRun produces a performance diff for unit tests showing average performance change across 5 runs.
 - Validation teardown is idempotent, and its finalizer remains until Application deletion is observed.
 
 ### Human identity and approval
-
+- Update: Redacted service mesh to simplify demo
+  
 - Serve the gRPC API over TLS.
 - Authenticate human CLI calls with short-lived Ed25519-signed JWTs.
 - Validate issuer, audience, signature, subject, groups, issued time, and expiry.
@@ -158,7 +157,7 @@ The Architect consumes the immutable change request and bounded repository conte
 - Support explicit approve and deny CLI commands.
 - Treat denial as terminal for the MVP.
 
-HumanSession and interactive workspace editing are not part of the reduced MVP.
+HumanSession and interactive workspace editing are not part of the reduced MVP anymore.
 
 ### Inference and recovery
 
@@ -183,6 +182,16 @@ HumanSession and interactive workspace editing are not part of the reduced MVP.
 
 ## Primary failure demonstration
 
+Primary failure will be a manufactured failure to represent the decision lineage.
+
+1. Architect step finishes and its implementation plan becomes an accepted Artifact.
+2. Developer finishes with changes to the implementation code.
+3. Additional record (not a twin run) is submitted with the Developer propagating authority to modifying tests as well.
+4. Decision lineage shows the manufactured record is rejected due to authority propagation.
+5. Workflow continues with Test Writer and remaining steps.
+
+## Secondary failure demonstration
+
 The controlled failure occurs during the first Developer attempt:
 
 1. Architect completes and its implementation plan becomes an accepted Artifact.
@@ -196,8 +205,6 @@ The controlled failure occurs during the first Developer attempt:
 9. Developer succeeds, and the workflow continues without accepting failed-attempt content or duplicating a later side effect.
 
 The timeline must show the endpoint, lease, failed attempt, selected recovery policy, replacement attempt, preserved Artifact boundary, and final outcome without requiring log interpretation.
-
-A controller restart remains a rehearsed secondary scenario. It is not a substitute for the endpoint-loss demonstration.
 
 ## Acceptance criteria
 
@@ -241,13 +248,12 @@ The demonstration succeeds only when all of the following are true:
 
 ## Frozen implementation decisions
 
-- `draft/Plan3.md` is the sole active implementation guide.
 - The live demonstration ends in merge, not merely an approved candidate.
 - Repository initialization remains a visible workflow stage.
 - Candidate branch creation belongs to `candidate.prepare`.
 - The calculator repository is external and uses HTTPS Git credentials.
 - The calculator produces one candidate image digest.
-- The reference agent is a small Go executable with Architect and Developer modes.
+- The reference agent is a small generic Go executable which makes one inference call using a model-facing generation schema, then deterministically adds authoritative provenance and integrity fields before validating and publishing the canonical artifact contract.
 - Repository context is served by an authenticated MCP sidecar in the Agent Pod.
 - Artifact runtime authority is implemented with typed Go contracts and mirrored JSON Schemas.
 - Approval uses one `AnyOf` maintainers rule.

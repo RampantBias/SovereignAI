@@ -15,24 +15,29 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func main() {
 	namespace := flag.String("namespace", "", "workflow namespace")
-	workflow := flag.String("workflow", "", "workflow name")
+	workflowName := flag.String("workflow", "", "workflow name")
+	workflowuid := flag.String("workflowuid", "", "workflow uid")
 	attempt := flag.String("attempt", "", "step attempt name")
 	producerKind := flag.String("producer-kind", "", "authoritative producer resource kind")
 	producerAPIVersion := flag.String("producer-api-version", v1alpha1.GroupVersion.String(), "authoritative producer API version")
+	producerUID := flag.String("producer-uid", "", "authoritative producer resource uid")
+	producerGrant := flag.String("producer-grant", "", "authorizing step attempt name")
+	producerGrantUID := flag.String("producer-grant-uid", "", "authorizing step attempt uid")
 	resultPath := flag.String("result", "", "agent result contract")
 	stagingPath := flag.String("staging", "", "attempt staging directory")
 	artifactPath := flag.String("artifact-store", "", "content-addressed artifact directory")
 	auditEventsPath := flag.String("audit-events", "", "agent wrapper audit event JSONL path")
 	sourceRevision := flag.String("source-revision", "", "source revision")
 	flag.Parse()
-	if *namespace == "" || *workflow == "" || *attempt == "" || *producerKind == "" || *resultPath == "" || *stagingPath == "" || *artifactPath == "" {
-		log.Fatal("namespace, workflow, attempt, producer-kind, result, staging, and artifact-store are required")
+	if *namespace == "" || *workflowName == "" || *attempt == "" || *producerKind == "" || *producerUID == "" || *producerGrant == "" || *producerGrantUID == "" || *resultPath == "" || *stagingPath == "" || *artifactPath == "" {
+		log.Fatal("namespace, workflow, attempt, producer identity, producer grant, result, staging, and artifact-store are required")
 	}
 	if err := ingestRuntimeAudit(context.Background(), *auditEventsPath); err != nil {
 		log.Fatalf("ingest runtime audit: %v", err)
@@ -42,7 +47,8 @@ func main() {
 		log.Fatalf("validate result contract: %v", err)
 	}
 	producer := v1alpha1.TypedLocalReference{APIVersion: *producerAPIVersion, Kind: *producerKind, Name: *attempt}
-	collected, err := artifacts.Collect(*stagingPath, *artifactPath, *workflow, producer, *sourceRevision, result.Artifacts)
+	workflowRef := v1alpha1.UIDReference{Name: *workflowName, UID: types.UID(*workflowuid)}
+	collected, err := artifacts.Collect(*stagingPath, *artifactPath, workflowRef, producer, *sourceRevision, result.Artifacts)
 	if err != nil {
 		log.Fatalf("collect artifacts: %v", err)
 	}
@@ -56,7 +62,9 @@ func main() {
 	}
 	for index, item := range collected {
 		name := artifactName(*attempt, item.Spec.Contract.Name, index)
-		artifact := &v1alpha1.Artifact{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: *namespace, Labels: map[string]string{"sovereign-ai.io/workflow-id": *workflow, "sovereign-ai.io/attempt": *attempt}}, Spec: item.Spec}
+		item.Spec.ProducerUID = types.UID(*producerUID)
+		item.Spec.ProducerGrantRef = v1alpha1.UIDReference{Name: *producerGrant, UID: types.UID(*producerGrantUID)}
+		artifact := &v1alpha1.Artifact{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: *namespace, Labels: map[string]string{"sovereign-ai.io/workflow-id": *workflowName, "sovereign-ai.io/attempt": *attempt}}, Spec: item.Spec}
 		if err := kubernetes.Create(context.Background(), artifact); err != nil {
 			if apierrors.IsAlreadyExists(err) {
 				var existing v1alpha1.Artifact

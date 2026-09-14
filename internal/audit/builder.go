@@ -9,6 +9,7 @@ import (
 
 // Used for building events
 type EventOptions struct {
+	InstanceID    string
 	Source        string
 	Type          string
 	OccurredAt    time.Time
@@ -27,6 +28,7 @@ type EventOptions struct {
 }
 
 // Lite-factory for building events
+// TODO: Align Workflow UID and Name to correlation set and List methodologies
 func NewEvent(options EventOptions) (Event, error) {
 	payload, err := marshalData(options.Data)
 	if err != nil {
@@ -47,20 +49,24 @@ func NewEvent(options EventOptions) (Event, error) {
 	if correlationID == "" {
 		correlationID = options.Subject.Project
 	}
+	idParts := []string{
+		source,
+		options.Type,
+		options.Subject.Project,
+		options.Subject.Namespace,
+		options.Subject.Workflow,
+		options.Subject.Step,
+		fmt.Sprint(options.Subject.Attempt),
+		options.Action,
+		options.Target,
+		options.Outcome,
+		options.Reason,
+	}
+	if options.InstanceID != "" {
+		idParts = append(idParts, options.InstanceID)
+	}
 	return Event{
-		ID: DeterministicID(
-			source,
-			options.Type,
-			options.Subject.Project,
-			options.Subject.Namespace,
-			options.Subject.Workflow,
-			options.Subject.Step,
-			fmt.Sprint(options.Subject.Attempt),
-			options.Action,
-			options.Target,
-			options.Outcome,
-			options.Reason,
-		),
+		ID:            DeterministicID(idParts...),
 		Type:          options.Type,
 		SchemaVersion: "v1",
 		OccurredAt:    occurredAt.UTC(),
@@ -83,11 +89,25 @@ func AppendEvent(ctx context.Context, recorder Recorder, options EventOptions) e
 	if recorder == nil {
 		return nil
 	}
+	_, err := BuildAndAppendEvent(ctx, recorder, options)
+	return err
+}
+
+// BuildAndAppendEvent constructs and appends an event while returning the exact
+// event identity. Callers use the returned ID to create explicit lineage edges
+// between independently recorded audit events.
+func BuildAndAppendEvent(ctx context.Context, recorder Recorder, options EventOptions) (Event, error) {
 	event, err := NewEvent(options)
 	if err != nil {
-		return err
+		return Event{}, err
 	}
-	return recorder.Append(ctx, event)
+	if recorder == nil {
+		return event, nil
+	}
+	if err := recorder.Append(ctx, event); err != nil {
+		return Event{}, err
+	}
+	return event, nil
 }
 
 func marshalData(data any) (json.RawMessage, error) {

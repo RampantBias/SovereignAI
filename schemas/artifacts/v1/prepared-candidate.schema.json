@@ -4,9 +4,10 @@
   "title": "prepared-candidate/v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["repositoryRevisionDigest", "changeSetDigest", "baseCommit", "branch", "candidateTree", "changedPaths", "preparationCommandDigest"],
+  "required": ["repositoryRevisionDigest", "testChangeSetDigest", "changeSetDigest", "baseCommit", "branch", "candidateTree", "changedPaths", "preparationCommandDigest"],
   "properties": {
     "repositoryRevisionDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "testChangeSetDigest": {"$ref": "common.schema.json#/$defs/Digest"},
     "changeSetDigest": {"$ref": "common.schema.json#/$defs/Digest"},
     "baseCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
     "branch": {"$ref": "common.schema.json#/$defs/SovereignBranch"},

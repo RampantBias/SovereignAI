@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign.ai/schemas/artifacts/v1/test-change-set.schema.json",
+  "title": "test-change-set/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "baseCommit", "changeRequestDigest", "implementationPlanDigest", "files"],
+  "properties": {
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "baseCommit": {"$ref": "common.schema.json#/$defs/GitOID"},
+    "changeRequestDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "implementationPlanDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+    "files": {"title": "Changed Files", "type": "array", "minItems": 1, "maxItems": 128, "items": {"$ref": "#/$defs/ChangedFile"}}
+  },
+  "$defs": {
+    "ChangedFile": {
+      "title": "Changed File",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "action", "baseDigest"],
+      "properties": {
+        "path": {"$ref": "common.schema.json#/$defs/RepositoryRelativePath"},
+        "action": {"type": "string", "enum": ["add", "modify", "delete"]},
+        "baseDigest": {"oneOf": [{"const": "absent"}, {"$ref": "common.schema.json#/$defs/Digest"}]},
+        "resultDigest": {"$ref": "common.schema.json#/$defs/Digest"},
+        "resultContent": {"type": "string", "maxLength": 262144}
+      },
+      "allOf": [
+        {"if": {"properties": {"action": {"const": "add"}}}, "then": {"properties": {"baseDigest": {"const": "absent"}}, "required": ["resultDigest", "resultContent"]}},
+        {"if": {"properties": {"action": {"const": "modify"}}}, "then": {"properties": {"baseDigest": {"$ref": "common.schema.json#/$defs/Digest"}}, "required": ["resultDigest", "resultContent"]}},
+        {"if": {"properties": {"action": {"const": "delete"}}}, "then": {"properties": {"baseDigest": {"$ref": "common.schema.json#/$defs/Digest"}}, "not": {"anyOf": [{"required": ["resultDigest"]}, {"required": ["resultContent"]}]}}}
+      ]
+    }
+  }
+}

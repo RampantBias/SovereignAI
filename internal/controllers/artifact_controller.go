@@ -2,11 +2,11 @@ package controllers
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"reflect"
 
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/artifactcontract"
+	"github.com/SovereignAI/internal/artifacts"
 	"github.com/SovereignAI/internal/audit"
 	batchv1 "k8s.io/api/batch/v1"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -33,7 +33,7 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	// Check for namespace termination
-	terminating, err := namespaceTerminating(ctx, r.Client, artifact.Namespace)
+	terminating, err := NamespaceTerminating(ctx, r.Client, artifact.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -44,8 +44,8 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	// immutable Artifact spec and terminal status remain sufficient on later
 	// reconciliations; consumption performs its own identity/digest checks.
 	if artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" &&
-		bootstrapArtifactAccepted(&artifact) {
-		return ctrl.Result{}, nil
+		artifacts.ArtifactAccepted(&artifact) && artifacts.ValidateClaims(artifact.Spec.Contract, artifact.Spec.Claims) == nil {
+		return ctrl.Result{}, r.appendArtifactEvent(ctx, &artifact, v1alpha1.PhaseSucceeded, "ContractAccepted")
 	}
 
 	phase := v1alpha1.PhaseSucceeded
@@ -65,6 +65,9 @@ func (r *ArtifactReconciler) Reconcile(ctx context.Context, request ctrl.Request
 	}
 
 	if artifact.Status.Phase == phase && artifact.Status.ObservedGeneration == artifact.Generation {
+		if phase == v1alpha1.PhaseSucceeded {
+			return ctrl.Result{}, r.appendArtifactEvent(ctx, &artifact, phase, condition.Reason)
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -82,33 +85,11 @@ func (r *ArtifactReconciler) validateStoredArtifact(ctx context.Context, artifac
 	if artifact.Spec.Contract.Name == "" || artifact.Spec.Contract.Version == "" || artifact.Spec.Path == "" {
 		return "InvalidMetadata", "artifact requires a versioned contract and content path"
 	}
+	if err := artifacts.ValidateClaims(artifact.Spec.Contract, artifact.Spec.Claims); err != nil {
+		return "InvalidClaims", err.Error()
+	}
 	if artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" {
 		return r.validateBootstrapArtifact(ctx, artifact)
-	}
-	info, err := os.Lstat(artifact.Spec.Path)
-	if err != nil {
-		return "ContentUnavailable", "stored artifact content is unavailable"
-	}
-	if !info.Mode().IsRegular() {
-		return "InvalidContent", "stored artifact content must be a regular file"
-	}
-	if info.Size() > artifactcontract.MaxArtifactBytes {
-		return "ContentTooLarge", fmt.Sprintf("stored artifact exceeds %d-byte limit", artifactcontract.MaxArtifactBytes)
-	}
-	content, err := os.ReadFile(artifact.Spec.Path)
-	if err != nil {
-		return "ContentUnavailable", "stored artifact content cannot be read"
-	}
-	actualDigest := artifactcontract.DigestBytes(content)
-	if artifact.Spec.Digest != actualDigest {
-		return "DigestMismatch", fmt.Sprintf("stored artifact digest does not match declared digest: got %s", actualDigest)
-	}
-	registry := r.Contracts
-	if registry == nil {
-		registry = artifactcontract.DefaultRegistry()
-	}
-	if err := registry.Validate(artifact.Spec.Contract.Name, artifact.Spec.Contract.Version, content); err != nil {
-		return "ContractRejected", err.Error()
 	}
 	return "", ""
 }
@@ -119,19 +100,23 @@ func (r *ArtifactReconciler) validateBootstrapArtifact(ctx context.Context, arti
 	if err := r.Get(ctx, key, &workflow); err != nil {
 		return "BootstrapWorkflowUnavailable", "bootstrap workflow is unavailable"
 	}
-	if err := validateBootstrapArtifactIdentity(&workflow, artifact); err != nil {
+	if err := ValidateBootstrapArtifactIdentity(&workflow, artifact); err != nil {
 		return "InvalidBootstrapProvenance", err.Error()
 	}
-	_, changeRequest, err := loadBootstrapSource(ctx, r.Client, &workflow)
+	_, changeRequest, err := LoadBootstrapChangeRequest(ctx, r.Client, &workflow)
 	if err != nil {
 		return "InvalidBootstrapSource", err.Error()
+	}
+	expectedClaims, err := artifacts.ProjectChangeRequestClaims(changeRequest)
+	if err != nil || !reflect.DeepEqual(artifact.Spec.Claims, expectedClaims) {
+		return "InvalidBootstrapClaims", "bootstrap Artifact claims do not match the exact admitted change request"
 	}
 	if artifact.Spec.SourceRevision != changeRequest.SourceCommit {
 		return "InvalidBootstrapProvenance", "bootstrap Artifact source revision does not match the change request"
 	}
 	jobName := workflow.Status.BootstrapJobRef
 	if jobName == "" {
-		jobName = bootstrapJobName(workflow.Name)
+		jobName = BootstrapJobName(workflow.Name)
 	}
 	var job batchv1.Job
 	if err := r.Get(ctx, types.NamespacedName{Namespace: workflow.Namespace, Name: jobName}, &job); err != nil {
@@ -150,11 +135,35 @@ func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *
 		eventType = "ArtifactRejected"
 		outcome = "rejected"
 	}
-	return appendControllerEvent(ctx, r.Audit, "artifact-controller", nil, audit.EventOptions{
+	var data any = map[string]any{
+		"contract":       artifact.Spec.Contract,
+		"classification": artifact.Spec.Classification,
+		"sourceRevision": artifact.Spec.SourceRevision,
+	}
+	if phase == v1alpha1.PhaseSucceeded {
+		decisionEvent, err := r.producerDecisionEvent(ctx, artifact)
+		if err != nil {
+			return err
+		}
+		evidence := ArtifactEvidence(artifact)
+		data = audit.ConsequenceRecorded{
+			SchemaVersion: audit.PayloadSchemaVersionV1,
+			DecisionEvent: decisionEvent,
+			Consequences: []audit.ConsequenceEvidence{{
+				SchemaVersion: audit.PayloadSchemaVersionV1,
+				Kind:          "artifact-accepted",
+				Resource:      &evidence.Artifact,
+				Artifact:      &evidence,
+				Digest:        artifact.Spec.Digest,
+				Target:        artifact.Spec.Contract.Name + "/" + artifact.Spec.Contract.Version,
+			}},
+		}
+	}
+	return audit.AppendControllerEvent(ctx, r.Audit, "artifact-controller", nil, audit.EventOptions{
 		Type: eventType,
 		Subject: audit.Subject{
 			Namespace: artifact.Namespace,
-			Workflow:  artifact.Spec.WorkflowRef,
+			Workflow:  artifact.Spec.WorkflowRef.Name,
 		},
 		Action:  "validate",
 		Target:  artifact.Name,
@@ -166,10 +175,34 @@ func (r *ArtifactReconciler) appendArtifactEvent(ctx context.Context, artifact *
 			"path":     artifact.Spec.Path,
 			"producer": artifact.Spec.ProducerRef.Kind + "/" + artifact.Spec.ProducerRef.Name,
 		},
-		Data: map[string]any{
-			"contract":       artifact.Spec.Contract,
-			"classification": artifact.Spec.Classification,
-			"sourceRevision": artifact.Spec.SourceRevision,
-		},
+		Data: data,
 	})
+}
+
+func (r *ArtifactReconciler) producerDecisionEvent(ctx context.Context, artifact *v1alpha1.Artifact) (string, error) {
+	if r.Audit == nil || artifact.Spec.ProducerRef.Kind == "SovereignWorkflow" {
+		return "", nil
+	}
+	events, err := r.Audit.ListWorkflow(ctx, artifact.Spec.WorkflowRef.Name)
+	if err != nil {
+		return "", err
+	}
+	wantedType := map[string]string{
+		"AgentRun":         "AgentExecutionAuthorized",
+		"UtilityOperation": "UtilityExecutionAuthorized",
+		"ValidationRun":    "ValidationEvaluated",
+	}[artifact.Spec.ProducerRef.Kind]
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if event.Type != wantedType {
+			continue
+		}
+		if event.Target == artifact.Spec.ProducerRef.Name ||
+			event.References["agentRun"] == artifact.Spec.ProducerRef.Name ||
+			event.References["utilityOperation"] == artifact.Spec.ProducerRef.Name ||
+			event.References["validationRun"] == artifact.Spec.ProducerRef.Name {
+			return event.ID, nil
+		}
+	}
+	return "", nil
 }

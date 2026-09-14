@@ -1,0 +1,135 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: agent-runtime-smoke
+  namespace: __NAMESPACE__
+  labels:
+    sovereign-ai.io/project: __PROJECT_NAME__
+    sovereign-ai.io/workflow-id: agent-runtime-smoke
+spec:
+  projectRef:
+    name: __PROJECT_NAME__
+    uid: __PROJECT_UID__
+  workflowId: agent-runtime-smoke
+  requesterSubject: smoke/runtime-proof
+  bootstrap:
+    sourceRef:
+      name: agent-runtime-smoke-input
+      uid: __SOURCE_UID__
+    key: change-request.json
+    expectedDigest: __EXPECTED_DIGEST__
+    contract:
+      name: change-request
+      version: v1
+    artifactName: change-request
+  definitionRevision: agent-runtime-smoke-v1
+  classification: internal
+  requestedVolumeSize: 1Gi
+  steps:
+    - name: initialize-repository
+      kind: Utility
+      order: 1
+      utility:
+        name: repository.initialize
+      inputs:
+        - name: change-request
+      outputs:
+        - name: repository-revision
+          version: v1
+      timeout: 10m
+      maxAttempts: 1
+    - name: architect
+      kind: Agent
+      order: 2
+      agent:
+        responsibility: >
+          Analyze the change request and checked-out repository. Write the complete
+          implementation-plan candidate through candidate_write, identifying affected
+          files, changes, risks, and tests.
+          List every planned file change in affectedPaths using the exact
+          repository-relative path with / separators. Do not use a leading ./, an
+          absolute path, or any empty, ., .., or .git path segment. Each affectedPaths
+          path and action must correspond directly to an implementation step, and no
+          unrelated file may be listed.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["workspace_read", "workspace_tree", "workspace_search", "candidate_write", "agent_complete"]
+        inference:
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
+          estimatedKVRAMMiB: 1536
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: repository-revision
+      outputs:
+        - name: implementation-plan
+          version: v1
+      timeout: 15m
+      maxAttempts: 5
+    - name: test-author
+      kind: Agent
+      order: 3
+      agent:
+        responsibility: >
+          Use the change request, implementation plan, and repository to implement the
+          smallest targeted test changes directly in the attempt workspace, verifying
+          divide success, divide by zero, and preservation of existing calculator
+          behavior. Modify exactly
+          one existing file: src/main_test.go. Never include src/main.go or any other
+          path, and do not implement production behavior. Extend the existing tests;
+          do not rewrite package declarations, production types, handlers, or the
+          complete source file. Inspect the current file before editing. Do not generate
+          or return a diff or patchLines; trusted code derives the test-change-set from
+          the workspace.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
+        inference:
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
+          estimatedKVRAMMiB: 1536
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+      outputs:
+        - name: test-change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 5
+    - name: developer
+      kind: Agent
+      order: 4
+      agent:
+        responsibility: >
+          Use the change request, implementation plan, proposed tests, and repository
+          to implement the smallest targeted production changes directly in the attempt
+          workspace, adding divide success and the division-by-zero response while
+          preserving existing calculator behavior. Modify exactly one existing file:
+          src/main.go. Never
+          include src/main_test.go or any other path. Treat the accepted test change set
+          as read-only requirements; never repeat or modify its changes. Extend the
+          existing operation constants and calculation handler without rewriting the
+          package declaration, imports, unrelated handlers, or the complete source file.
+          Inspect the current file before editing. Do not generate or return a diff or
+          patchLines; trusted code derives the change-set from the workspace.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_tree", "workspace_search", "agent_complete"]
+        inference:
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
+          estimatedKVRAMMiB: 1536
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+        - name: test-change-set
+      outputs:
+        - name: change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 5

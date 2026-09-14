@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: internal/api/v1/orchestrator.proto
+// source: orchestrator.proto
 
 package pb
 
@@ -35,7 +35,7 @@ type CreateProjectRequest struct {
 
 func (x *CreateProjectRequest) Reset() {
 	*x = CreateProjectRequest{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[0]
+	mi := &file_orchestrator_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -47,7 +47,7 @@ func (x *CreateProjectRequest) String() string {
 func (*CreateProjectRequest) ProtoMessage() {}
 
 func (x *CreateProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[0]
+	mi := &file_orchestrator_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -60,7 +60,7 @@ func (x *CreateProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateProjectRequest.ProtoReflect.Descriptor instead.
 func (*CreateProjectRequest) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{0}
+	return file_orchestrator_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *CreateProjectRequest) GetProjectName() string {
@@ -108,7 +108,7 @@ type CreateProjectResponse struct {
 
 func (x *CreateProjectResponse) Reset() {
 	*x = CreateProjectResponse{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[1]
+	mi := &file_orchestrator_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -120,7 +120,7 @@ func (x *CreateProjectResponse) String() string {
 func (*CreateProjectResponse) ProtoMessage() {}
 
 func (x *CreateProjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[1]
+	mi := &file_orchestrator_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -133,7 +133,7 @@ func (x *CreateProjectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateProjectResponse.ProtoReflect.Descriptor instead.
 func (*CreateProjectResponse) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{1}
+	return file_orchestrator_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *CreateProjectResponse) GetSuccess() bool {
@@ -160,7 +160,7 @@ type CleanWorkflowRequest struct {
 
 func (x *CleanWorkflowRequest) Reset() {
 	*x = CleanWorkflowRequest{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[2]
+	mi := &file_orchestrator_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -172,7 +172,7 @@ func (x *CleanWorkflowRequest) String() string {
 func (*CleanWorkflowRequest) ProtoMessage() {}
 
 func (x *CleanWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[2]
+	mi := &file_orchestrator_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -185,7 +185,7 @@ func (x *CleanWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CleanWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*CleanWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{2}
+	return file_orchestrator_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CleanWorkflowRequest) GetWorkflowId() string {
@@ -212,7 +212,7 @@ type CleanWorkflowResponse struct {
 
 func (x *CleanWorkflowResponse) Reset() {
 	*x = CleanWorkflowResponse{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[3]
+	mi := &file_orchestrator_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -224,7 +224,7 @@ func (x *CleanWorkflowResponse) String() string {
 func (*CleanWorkflowResponse) ProtoMessage() {}
 
 func (x *CleanWorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[3]
+	mi := &file_orchestrator_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -237,7 +237,7 @@ func (x *CleanWorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CleanWorkflowResponse.ProtoReflect.Descriptor instead.
 func (*CleanWorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{3}
+	return file_orchestrator_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CleanWorkflowResponse) GetSuccess() bool {
@@ -266,7 +266,7 @@ type CreateWorkflowRequest struct {
 
 func (x *CreateWorkflowRequest) Reset() {
 	*x = CreateWorkflowRequest{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[4]
+	mi := &file_orchestrator_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -278,7 +278,7 @@ func (x *CreateWorkflowRequest) String() string {
 func (*CreateWorkflowRequest) ProtoMessage() {}
 
 func (x *CreateWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[4]
+	mi := &file_orchestrator_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -291,7 +291,7 @@ func (x *CreateWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*CreateWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{4}
+	return file_orchestrator_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateWorkflowRequest) GetProjectName() string {
@@ -324,7 +324,7 @@ type CreateWorkflowResponse struct {
 
 func (x *CreateWorkflowResponse) Reset() {
 	*x = CreateWorkflowResponse{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[5]
+	mi := &file_orchestrator_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +336,7 @@ func (x *CreateWorkflowResponse) String() string {
 func (*CreateWorkflowResponse) ProtoMessage() {}
 
 func (x *CreateWorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[5]
+	mi := &file_orchestrator_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,7 +349,7 @@ func (x *CreateWorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateWorkflowResponse.ProtoReflect.Descriptor instead.
 func (*CreateWorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{5}
+	return file_orchestrator_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CreateWorkflowResponse) GetWorkflowId() string {
@@ -368,7 +368,7 @@ type ListWorkflowsRequest struct {
 
 func (x *ListWorkflowsRequest) Reset() {
 	*x = ListWorkflowsRequest{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[6]
+	mi := &file_orchestrator_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -380,7 +380,7 @@ func (x *ListWorkflowsRequest) String() string {
 func (*ListWorkflowsRequest) ProtoMessage() {}
 
 func (x *ListWorkflowsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[6]
+	mi := &file_orchestrator_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -393,7 +393,7 @@ func (x *ListWorkflowsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkflowsRequest.ProtoReflect.Descriptor instead.
 func (*ListWorkflowsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{6}
+	return file_orchestrator_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListWorkflowsRequest) GetProjectName() string {
@@ -417,7 +417,7 @@ type WorkflowStatusDTO struct {
 
 func (x *WorkflowStatusDTO) Reset() {
 	*x = WorkflowStatusDTO{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[7]
+	mi := &file_orchestrator_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -429,7 +429,7 @@ func (x *WorkflowStatusDTO) String() string {
 func (*WorkflowStatusDTO) ProtoMessage() {}
 
 func (x *WorkflowStatusDTO) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[7]
+	mi := &file_orchestrator_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -442,7 +442,7 @@ func (x *WorkflowStatusDTO) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkflowStatusDTO.ProtoReflect.Descriptor instead.
 func (*WorkflowStatusDTO) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{7}
+	return file_orchestrator_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *WorkflowStatusDTO) GetProjectName() string {
@@ -489,7 +489,7 @@ type ListWorkflowsResponse struct {
 
 func (x *ListWorkflowsResponse) Reset() {
 	*x = ListWorkflowsResponse{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[8]
+	mi := &file_orchestrator_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -501,7 +501,7 @@ func (x *ListWorkflowsResponse) String() string {
 func (*ListWorkflowsResponse) ProtoMessage() {}
 
 func (x *ListWorkflowsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[8]
+	mi := &file_orchestrator_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -514,7 +514,7 @@ func (x *ListWorkflowsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkflowsResponse.ProtoReflect.Descriptor instead.
 func (*ListWorkflowsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{8}
+	return file_orchestrator_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListWorkflowsResponse) GetWorkflows() []*WorkflowStatusDTO {
@@ -533,7 +533,7 @@ type GetWorkflowTimelineRequest struct {
 
 func (x *GetWorkflowTimelineRequest) Reset() {
 	*x = GetWorkflowTimelineRequest{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[9]
+	mi := &file_orchestrator_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -545,7 +545,7 @@ func (x *GetWorkflowTimelineRequest) String() string {
 func (*GetWorkflowTimelineRequest) ProtoMessage() {}
 
 func (x *GetWorkflowTimelineRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[9]
+	mi := &file_orchestrator_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -558,7 +558,7 @@ func (x *GetWorkflowTimelineRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkflowTimelineRequest.ProtoReflect.Descriptor instead.
 func (*GetWorkflowTimelineRequest) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{9}
+	return file_orchestrator_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetWorkflowTimelineRequest) GetWorkflowId() string {
@@ -578,7 +578,7 @@ type AuditActorDTO struct {
 
 func (x *AuditActorDTO) Reset() {
 	*x = AuditActorDTO{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[10]
+	mi := &file_orchestrator_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -590,7 +590,7 @@ func (x *AuditActorDTO) String() string {
 func (*AuditActorDTO) ProtoMessage() {}
 
 func (x *AuditActorDTO) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[10]
+	mi := &file_orchestrator_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -603,7 +603,7 @@ func (x *AuditActorDTO) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditActorDTO.ProtoReflect.Descriptor instead.
 func (*AuditActorDTO) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{10}
+	return file_orchestrator_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AuditActorDTO) GetKind() string {
@@ -633,7 +633,7 @@ type AuditSubjectDTO struct {
 
 func (x *AuditSubjectDTO) Reset() {
 	*x = AuditSubjectDTO{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[11]
+	mi := &file_orchestrator_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -645,7 +645,7 @@ func (x *AuditSubjectDTO) String() string {
 func (*AuditSubjectDTO) ProtoMessage() {}
 
 func (x *AuditSubjectDTO) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[11]
+	mi := &file_orchestrator_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -658,7 +658,7 @@ func (x *AuditSubjectDTO) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditSubjectDTO.ProtoReflect.Descriptor instead.
 func (*AuditSubjectDTO) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{11}
+	return file_orchestrator_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *AuditSubjectDTO) GetProject() string {
@@ -720,7 +720,7 @@ type AuditEventDTO struct {
 
 func (x *AuditEventDTO) Reset() {
 	*x = AuditEventDTO{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[12]
+	mi := &file_orchestrator_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -732,7 +732,7 @@ func (x *AuditEventDTO) String() string {
 func (*AuditEventDTO) ProtoMessage() {}
 
 func (x *AuditEventDTO) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[12]
+	mi := &file_orchestrator_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -745,7 +745,7 @@ func (x *AuditEventDTO) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEventDTO.ProtoReflect.Descriptor instead.
 func (*AuditEventDTO) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{12}
+	return file_orchestrator_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *AuditEventDTO) GetId() string {
@@ -869,7 +869,7 @@ type GetWorkflowTimelineResponse struct {
 
 func (x *GetWorkflowTimelineResponse) Reset() {
 	*x = GetWorkflowTimelineResponse{}
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[13]
+	mi := &file_orchestrator_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -881,7 +881,7 @@ func (x *GetWorkflowTimelineResponse) String() string {
 func (*GetWorkflowTimelineResponse) ProtoMessage() {}
 
 func (x *GetWorkflowTimelineResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_api_v1_orchestrator_proto_msgTypes[13]
+	mi := &file_orchestrator_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -894,7 +894,7 @@ func (x *GetWorkflowTimelineResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkflowTimelineResponse.ProtoReflect.Descriptor instead.
 func (*GetWorkflowTimelineResponse) Descriptor() ([]byte, []int) {
-	return file_internal_api_v1_orchestrator_proto_rawDescGZIP(), []int{13}
+	return file_orchestrator_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetWorkflowTimelineResponse) GetEvents() []*AuditEventDTO {
@@ -904,11 +904,453 @@ func (x *GetWorkflowTimelineResponse) GetEvents() []*AuditEventDTO {
 	return nil
 }
 
-var File_internal_api_v1_orchestrator_proto protoreflect.FileDescriptor
+type ApprovalSubmission struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// show is read-only; approve and deny require the inspected request UID.
+	Action        string `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	WorkflowId    string `protobuf:"bytes,2,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	RequestUid    string `protobuf:"bytes,3,opt,name=request_uid,json=requestUid,proto3" json:"request_uid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
 
-const file_internal_api_v1_orchestrator_proto_rawDesc = "" +
+func (x *ApprovalSubmission) Reset() {
+	*x = ApprovalSubmission{}
+	mi := &file_orchestrator_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApprovalSubmission) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApprovalSubmission) ProtoMessage() {}
+
+func (x *ApprovalSubmission) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApprovalSubmission.ProtoReflect.Descriptor instead.
+func (*ApprovalSubmission) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ApprovalSubmission) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *ApprovalSubmission) GetWorkflowId() string {
+	if x != nil {
+		return x.WorkflowId
+	}
+	return ""
+}
+
+func (x *ApprovalSubmission) GetRequestUid() string {
+	if x != nil {
+		return x.RequestUid
+	}
+	return ""
+}
+
+type ApprovalResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApprovalResponse) Reset() {
+	*x = ApprovalResponse{}
+	mi := &file_orchestrator_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApprovalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApprovalResponse) ProtoMessage() {}
+
+func (x *ApprovalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApprovalResponse.ProtoReflect.Descriptor instead.
+func (*ApprovalResponse) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ApprovalResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ApprovalResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type StoreContextSnapshotRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	AgentRun      string                 `protobuf:"bytes,2,opt,name=agent_run,json=agentRun,proto3" json:"agent_run,omitempty"`
+	AgentRunUid   string                 `protobuf:"bytes,3,opt,name=agent_run_uid,json=agentRunUid,proto3" json:"agent_run_uid,omitempty"`
+	Snapshot      []byte                 `protobuf:"bytes,4,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StoreContextSnapshotRequest) Reset() {
+	*x = StoreContextSnapshotRequest{}
+	mi := &file_orchestrator_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StoreContextSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StoreContextSnapshotRequest) ProtoMessage() {}
+
+func (x *StoreContextSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StoreContextSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*StoreContextSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *StoreContextSnapshotRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *StoreContextSnapshotRequest) GetAgentRun() string {
+	if x != nil {
+		return x.AgentRun
+	}
+	return ""
+}
+
+func (x *StoreContextSnapshotRequest) GetAgentRunUid() string {
+	if x != nil {
+		return x.AgentRunUid
+	}
+	return ""
+}
+
+func (x *StoreContextSnapshotRequest) GetSnapshot() []byte {
+	if x != nil {
+		return x.Snapshot
+	}
+	return nil
+}
+
+type ContextSnapshotReceipt struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Digest        string                 `protobuf:"bytes,2,opt,name=digest,proto3" json:"digest,omitempty"`
+	EventId       string                 `protobuf:"bytes,3,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContextSnapshotReceipt) Reset() {
+	*x = ContextSnapshotReceipt{}
+	mi := &file_orchestrator_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContextSnapshotReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContextSnapshotReceipt) ProtoMessage() {}
+
+func (x *ContextSnapshotReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContextSnapshotReceipt.ProtoReflect.Descriptor instead.
+func (*ContextSnapshotReceipt) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ContextSnapshotReceipt) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ContextSnapshotReceipt) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *ContextSnapshotReceipt) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+type GetContextSnapshotRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContextSnapshotRequest) Reset() {
+	*x = GetContextSnapshotRequest{}
+	mi := &file_orchestrator_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContextSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContextSnapshotRequest) ProtoMessage() {}
+
+func (x *GetContextSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContextSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*GetContextSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetContextSnapshotRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type GetContextSnapshotResponse struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Receipt       *ContextSnapshotReceipt `protobuf:"bytes,1,opt,name=receipt,proto3" json:"receipt,omitempty"`
+	Snapshot      []byte                  `protobuf:"bytes,2,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContextSnapshotResponse) Reset() {
+	*x = GetContextSnapshotResponse{}
+	mi := &file_orchestrator_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContextSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContextSnapshotResponse) ProtoMessage() {}
+
+func (x *GetContextSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContextSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*GetContextSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *GetContextSnapshotResponse) GetReceipt() *ContextSnapshotReceipt {
+	if x != nil {
+		return x.Receipt
+	}
+	return nil
+}
+
+func (x *GetContextSnapshotResponse) GetSnapshot() []byte {
+	if x != nil {
+		return x.Snapshot
+	}
+	return nil
+}
+
+type GetWorkflowLineageRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowId string                 `protobuf:"bytes,1,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	EventId    string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	// Empty or stories preserves the audit-only projection; workflow adds live navigation.
+	View          string `protobuf:"bytes,3,opt,name=view,proto3" json:"view,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWorkflowLineageRequest) Reset() {
+	*x = GetWorkflowLineageRequest{}
+	mi := &file_orchestrator_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWorkflowLineageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWorkflowLineageRequest) ProtoMessage() {}
+
+func (x *GetWorkflowLineageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWorkflowLineageRequest.ProtoReflect.Descriptor instead.
+func (*GetWorkflowLineageRequest) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *GetWorkflowLineageRequest) GetWorkflowId() string {
+	if x != nil {
+		return x.WorkflowId
+	}
+	return ""
+}
+
+func (x *GetWorkflowLineageRequest) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *GetWorkflowLineageRequest) GetView() string {
+	if x != nil {
+		return x.View
+	}
+	return ""
+}
+
+type GetWorkflowLineageResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ProjectionJson string                 `protobuf:"bytes,1,opt,name=projection_json,json=projectionJson,proto3" json:"projection_json,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetWorkflowLineageResponse) Reset() {
+	*x = GetWorkflowLineageResponse{}
+	mi := &file_orchestrator_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWorkflowLineageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWorkflowLineageResponse) ProtoMessage() {}
+
+func (x *GetWorkflowLineageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWorkflowLineageResponse.ProtoReflect.Descriptor instead.
+func (*GetWorkflowLineageResponse) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GetWorkflowLineageResponse) GetProjectionJson() string {
+	if x != nil {
+		return x.ProjectionJson
+	}
+	return ""
+}
+
+var File_orchestrator_proto protoreflect.FileDescriptor
+
+const file_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\"internal/api/v1/orchestrator.proto\x12\x06api.v1\"\xbe\x02\n" +
+	"\x12orchestrator.proto\x12\x06api.v1\"\xbe\x02\n" +
 	"\x14CreateProjectRequest\x12!\n" +
 	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12\x1d\n" +
 	"\n" +
@@ -986,28 +1428,62 @@ const file_internal_api_v1_orchestrator_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"L\n" +
 	"\x1bGetWorkflowTimelineResponse\x12-\n" +
-	"\x06events\x18\x01 \x03(\v2\x15.api.v1.AuditEventDTOR\x06events2\xb0\x03\n" +
+	"\x06events\x18\x01 \x03(\v2\x15.api.v1.AuditEventDTOR\x06events\"n\n" +
+	"\x12ApprovalSubmission\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x12\x1f\n" +
+	"\vworkflow_id\x18\x02 \x01(\tR\n" +
+	"workflowId\x12\x1f\n" +
+	"\vrequest_uid\x18\x03 \x01(\tR\n" +
+	"requestUid\"F\n" +
+	"\x10ApprovalResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x98\x01\n" +
+	"\x1bStoreContextSnapshotRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x1b\n" +
+	"\tagent_run\x18\x02 \x01(\tR\bagentRun\x12\"\n" +
+	"\ragent_run_uid\x18\x03 \x01(\tR\vagentRunUid\x12\x1a\n" +
+	"\bsnapshot\x18\x04 \x01(\fR\bsnapshot\"[\n" +
+	"\x16ContextSnapshotReceipt\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
+	"\x06digest\x18\x02 \x01(\tR\x06digest\x12\x19\n" +
+	"\bevent_id\x18\x03 \x01(\tR\aeventId\"+\n" +
+	"\x19GetContextSnapshotRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"r\n" +
+	"\x1aGetContextSnapshotResponse\x128\n" +
+	"\areceipt\x18\x01 \x01(\v2\x1e.api.v1.ContextSnapshotReceiptR\areceipt\x12\x1a\n" +
+	"\bsnapshot\x18\x02 \x01(\fR\bsnapshot\"k\n" +
+	"\x19GetWorkflowLineageRequest\x12\x1f\n" +
+	"\vworkflow_id\x18\x01 \x01(\tR\n" +
+	"workflowId\x12\x19\n" +
+	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\x12\n" +
+	"\x04view\x18\x03 \x01(\tR\x04view\"E\n" +
+	"\x1aGetWorkflowLineageResponse\x12'\n" +
+	"\x0fprojection_json\x18\x01 \x01(\tR\x0eprojectionJson2\x8f\x06\n" +
 	"\x13OrchestratorService\x12L\n" +
 	"\rCreateProject\x12\x1c.api.v1.CreateProjectRequest\x1a\x1d.api.v1.CreateProjectResponse\x12L\n" +
 	"\rCleanWorkflow\x12\x1c.api.v1.CleanWorkflowRequest\x1a\x1d.api.v1.CleanWorkflowResponse\x12O\n" +
 	"\x0eCreateWorkflow\x12\x1d.api.v1.CreateWorkflowRequest\x1a\x1e.api.v1.CreateWorkflowResponse\x12L\n" +
 	"\rListWorkflows\x12\x1c.api.v1.ListWorkflowsRequest\x1a\x1d.api.v1.ListWorkflowsResponse\x12^\n" +
-	"\x13GetWorkflowTimeline\x12\".api.v1.GetWorkflowTimelineRequest\x1a#.api.v1.GetWorkflowTimelineResponseB\vZ\tapi/v1/pbb\x06proto3"
+	"\x13GetWorkflowTimeline\x12\".api.v1.GetWorkflowTimelineRequest\x1a#.api.v1.GetWorkflowTimelineResponse\x12[\n" +
+	"\x14StoreContextSnapshot\x12#.api.v1.StoreContextSnapshotRequest\x1a\x1e.api.v1.ContextSnapshotReceipt\x12[\n" +
+	"\x12GetContextSnapshot\x12!.api.v1.GetContextSnapshotRequest\x1a\".api.v1.GetContextSnapshotResponse\x12[\n" +
+	"\x12GetWorkflowLineage\x12!.api.v1.GetWorkflowLineageRequest\x1a\".api.v1.GetWorkflowLineageResponse\x12F\n" +
+	"\x0eSubmitApproval\x12\x1a.api.v1.ApprovalSubmission\x1a\x18.api.v1.ApprovalResponseB\vZ\tapi/v1/pbb\x06proto3"
 
 var (
-	file_internal_api_v1_orchestrator_proto_rawDescOnce sync.Once
-	file_internal_api_v1_orchestrator_proto_rawDescData []byte
+	file_orchestrator_proto_rawDescOnce sync.Once
+	file_orchestrator_proto_rawDescData []byte
 )
 
-func file_internal_api_v1_orchestrator_proto_rawDescGZIP() []byte {
-	file_internal_api_v1_orchestrator_proto_rawDescOnce.Do(func() {
-		file_internal_api_v1_orchestrator_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_internal_api_v1_orchestrator_proto_rawDesc), len(file_internal_api_v1_orchestrator_proto_rawDesc)))
+func file_orchestrator_proto_rawDescGZIP() []byte {
+	file_orchestrator_proto_rawDescOnce.Do(func() {
+		file_orchestrator_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_orchestrator_proto_rawDesc), len(file_orchestrator_proto_rawDesc)))
 	})
-	return file_internal_api_v1_orchestrator_proto_rawDescData
+	return file_orchestrator_proto_rawDescData
 }
 
-var file_internal_api_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
-var file_internal_api_v1_orchestrator_proto_goTypes = []any{
+var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_orchestrator_proto_goTypes = []any{
 	(*CreateProjectRequest)(nil),        // 0: api.v1.CreateProjectRequest
 	(*CreateProjectResponse)(nil),       // 1: api.v1.CreateProjectResponse
 	(*CleanWorkflowRequest)(nil),        // 2: api.v1.CleanWorkflowRequest
@@ -1022,53 +1498,70 @@ var file_internal_api_v1_orchestrator_proto_goTypes = []any{
 	(*AuditSubjectDTO)(nil),             // 11: api.v1.AuditSubjectDTO
 	(*AuditEventDTO)(nil),               // 12: api.v1.AuditEventDTO
 	(*GetWorkflowTimelineResponse)(nil), // 13: api.v1.GetWorkflowTimelineResponse
-	nil,                                 // 14: api.v1.CreateProjectRequest.ExtendedMetadataEntry
-	nil,                                 // 15: api.v1.AuditEventDTO.ReferencesEntry
+	(*ApprovalSubmission)(nil),          // 14: api.v1.ApprovalSubmission
+	(*ApprovalResponse)(nil),            // 15: api.v1.ApprovalResponse
+	(*StoreContextSnapshotRequest)(nil), // 16: api.v1.StoreContextSnapshotRequest
+	(*ContextSnapshotReceipt)(nil),      // 17: api.v1.ContextSnapshotReceipt
+	(*GetContextSnapshotRequest)(nil),   // 18: api.v1.GetContextSnapshotRequest
+	(*GetContextSnapshotResponse)(nil),  // 19: api.v1.GetContextSnapshotResponse
+	(*GetWorkflowLineageRequest)(nil),   // 20: api.v1.GetWorkflowLineageRequest
+	(*GetWorkflowLineageResponse)(nil),  // 21: api.v1.GetWorkflowLineageResponse
+	nil,                                 // 22: api.v1.CreateProjectRequest.ExtendedMetadataEntry
+	nil,                                 // 23: api.v1.AuditEventDTO.ReferencesEntry
 }
-var file_internal_api_v1_orchestrator_proto_depIdxs = []int32{
-	14, // 0: api.v1.CreateProjectRequest.extended_metadata:type_name -> api.v1.CreateProjectRequest.ExtendedMetadataEntry
+var file_orchestrator_proto_depIdxs = []int32{
+	22, // 0: api.v1.CreateProjectRequest.extended_metadata:type_name -> api.v1.CreateProjectRequest.ExtendedMetadataEntry
 	7,  // 1: api.v1.ListWorkflowsResponse.workflows:type_name -> api.v1.WorkflowStatusDTO
 	10, // 2: api.v1.AuditEventDTO.actor:type_name -> api.v1.AuditActorDTO
 	11, // 3: api.v1.AuditEventDTO.subject:type_name -> api.v1.AuditSubjectDTO
-	15, // 4: api.v1.AuditEventDTO.references:type_name -> api.v1.AuditEventDTO.ReferencesEntry
+	23, // 4: api.v1.AuditEventDTO.references:type_name -> api.v1.AuditEventDTO.ReferencesEntry
 	12, // 5: api.v1.GetWorkflowTimelineResponse.events:type_name -> api.v1.AuditEventDTO
-	0,  // 6: api.v1.OrchestratorService.CreateProject:input_type -> api.v1.CreateProjectRequest
-	2,  // 7: api.v1.OrchestratorService.CleanWorkflow:input_type -> api.v1.CleanWorkflowRequest
-	4,  // 8: api.v1.OrchestratorService.CreateWorkflow:input_type -> api.v1.CreateWorkflowRequest
-	6,  // 9: api.v1.OrchestratorService.ListWorkflows:input_type -> api.v1.ListWorkflowsRequest
-	9,  // 10: api.v1.OrchestratorService.GetWorkflowTimeline:input_type -> api.v1.GetWorkflowTimelineRequest
-	1,  // 11: api.v1.OrchestratorService.CreateProject:output_type -> api.v1.CreateProjectResponse
-	3,  // 12: api.v1.OrchestratorService.CleanWorkflow:output_type -> api.v1.CleanWorkflowResponse
-	5,  // 13: api.v1.OrchestratorService.CreateWorkflow:output_type -> api.v1.CreateWorkflowResponse
-	8,  // 14: api.v1.OrchestratorService.ListWorkflows:output_type -> api.v1.ListWorkflowsResponse
-	13, // 15: api.v1.OrchestratorService.GetWorkflowTimeline:output_type -> api.v1.GetWorkflowTimelineResponse
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	17, // 6: api.v1.GetContextSnapshotResponse.receipt:type_name -> api.v1.ContextSnapshotReceipt
+	0,  // 7: api.v1.OrchestratorService.CreateProject:input_type -> api.v1.CreateProjectRequest
+	2,  // 8: api.v1.OrchestratorService.CleanWorkflow:input_type -> api.v1.CleanWorkflowRequest
+	4,  // 9: api.v1.OrchestratorService.CreateWorkflow:input_type -> api.v1.CreateWorkflowRequest
+	6,  // 10: api.v1.OrchestratorService.ListWorkflows:input_type -> api.v1.ListWorkflowsRequest
+	9,  // 11: api.v1.OrchestratorService.GetWorkflowTimeline:input_type -> api.v1.GetWorkflowTimelineRequest
+	16, // 12: api.v1.OrchestratorService.StoreContextSnapshot:input_type -> api.v1.StoreContextSnapshotRequest
+	18, // 13: api.v1.OrchestratorService.GetContextSnapshot:input_type -> api.v1.GetContextSnapshotRequest
+	20, // 14: api.v1.OrchestratorService.GetWorkflowLineage:input_type -> api.v1.GetWorkflowLineageRequest
+	14, // 15: api.v1.OrchestratorService.SubmitApproval:input_type -> api.v1.ApprovalSubmission
+	1,  // 16: api.v1.OrchestratorService.CreateProject:output_type -> api.v1.CreateProjectResponse
+	3,  // 17: api.v1.OrchestratorService.CleanWorkflow:output_type -> api.v1.CleanWorkflowResponse
+	5,  // 18: api.v1.OrchestratorService.CreateWorkflow:output_type -> api.v1.CreateWorkflowResponse
+	8,  // 19: api.v1.OrchestratorService.ListWorkflows:output_type -> api.v1.ListWorkflowsResponse
+	13, // 20: api.v1.OrchestratorService.GetWorkflowTimeline:output_type -> api.v1.GetWorkflowTimelineResponse
+	17, // 21: api.v1.OrchestratorService.StoreContextSnapshot:output_type -> api.v1.ContextSnapshotReceipt
+	19, // 22: api.v1.OrchestratorService.GetContextSnapshot:output_type -> api.v1.GetContextSnapshotResponse
+	21, // 23: api.v1.OrchestratorService.GetWorkflowLineage:output_type -> api.v1.GetWorkflowLineageResponse
+	15, // 24: api.v1.OrchestratorService.SubmitApproval:output_type -> api.v1.ApprovalResponse
+	16, // [16:25] is the sub-list for method output_type
+	7,  // [7:16] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
-func init() { file_internal_api_v1_orchestrator_proto_init() }
-func file_internal_api_v1_orchestrator_proto_init() {
-	if File_internal_api_v1_orchestrator_proto != nil {
+func init() { file_orchestrator_proto_init() }
+func file_orchestrator_proto_init() {
+	if File_orchestrator_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_api_v1_orchestrator_proto_rawDesc), len(file_internal_api_v1_orchestrator_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orchestrator_proto_rawDesc), len(file_orchestrator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_internal_api_v1_orchestrator_proto_goTypes,
-		DependencyIndexes: file_internal_api_v1_orchestrator_proto_depIdxs,
-		MessageInfos:      file_internal_api_v1_orchestrator_proto_msgTypes,
+		GoTypes:           file_orchestrator_proto_goTypes,
+		DependencyIndexes: file_orchestrator_proto_depIdxs,
+		MessageInfos:      file_orchestrator_proto_msgTypes,
 	}.Build()
-	File_internal_api_v1_orchestrator_proto = out.File
-	file_internal_api_v1_orchestrator_proto_goTypes = nil
-	file_internal_api_v1_orchestrator_proto_depIdxs = nil
+	File_orchestrator_proto = out.File
+	file_orchestrator_proto_goTypes = nil
+	file_orchestrator_proto_depIdxs = nil
 }

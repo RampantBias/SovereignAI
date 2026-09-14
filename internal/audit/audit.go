@@ -21,6 +21,13 @@ type Subject struct {
 	Attempt   int32  `json:"attempt,omitempty"`
 }
 
+/*
+When did something happen?
+Who emitted it?
+Which workflow/step does it belong to?
+What event caused it?
+What decision ID is associated with it?
+*/
 type Event struct {
 	ID            string            `json:"id"`
 	Type          string            `json:"type"`

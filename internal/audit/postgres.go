@@ -3,7 +3,9 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,7 +23,13 @@ CREATE TABLE IF NOT EXISTS audit_events (
   payload jsonb NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_events_workflow_time
-  ON audit_events (workflow_id, occurred_at, id);`
+  ON audit_events (workflow_id, occurred_at, id);
+CREATE TABLE IF NOT EXISTS private_context_snapshots (
+ id text PRIMARY KEY,
+ digest text NOT NULL,
+ evidence jsonb NOT NULL,
+ content bytea NOT NULL
+);`
 
 type PostgresRecorder struct {
 	pool *pgxpool.Pool
@@ -81,4 +89,62 @@ func (p *PostgresRecorder) ListWorkflow(ctx context.Context, workflow string) ([
 func (m *PostgresRecorder) Has(eventType string) bool {
 	// Search for first occurrence of event type
 	return false
+}
+
+func (p *PostgresRecorder) SaveContext(ctx context.Context, snapshot ContextSnapshot) (ContextSnapshotEvidence, error) {
+	if err := ValidateSnapshot(snapshot); err != nil {
+		return ContextSnapshotEvidence{}, err
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return ContextSnapshotEvidence{}, err
+	}
+	defer tx.Rollback(ctx)
+	evidence, err := json.Marshal(snapshot.Evidence)
+	if err != nil {
+		return ContextSnapshotEvidence{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO private_context_snapshots (id,digest,evidence,content) VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING`, snapshot.Evidence.SnapshotID, snapshot.Evidence.Digest, evidence, snapshot.Bytes)
+	if err != nil {
+		return ContextSnapshotEvidence{}, fmt.Errorf("persist context snapshot: %w", err)
+	}
+	var digest string
+	if err := tx.QueryRow(ctx, `SELECT digest,evidence FROM private_context_snapshots WHERE id=$1`, snapshot.Evidence.SnapshotID).Scan(&digest, &evidence); err != nil {
+		return ContextSnapshotEvidence{}, err
+	}
+	if digest != snapshot.Evidence.Digest {
+		return ContextSnapshotEvidence{}, ErrSnapshotConflict
+	}
+	var saved ContextSnapshotEvidence
+	if err := json.Unmarshal(evidence, &saved); err != nil {
+		return saved, err
+	}
+	event, err := ContextEvent(saved)
+	if err != nil {
+		return saved, err
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return saved, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO audit_events (id,event_type,schema_version,occurred_at,workflow_id,correlation_id,causation_id,payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`, event.ID, event.Type, event.SchemaVersion, event.OccurredAt, event.Subject.Workflow, event.CorrelationID, event.CausationID, payload)
+	if err != nil {
+		return saved, err
+	}
+	return saved, tx.Commit(ctx)
+}
+func (p *PostgresRecorder) GetContext(ctx context.Context, id string) (ContextSnapshot, error) {
+	var result ContextSnapshot
+	var evidence []byte
+	err := p.pool.QueryRow(ctx, `SELECT evidence,content FROM private_context_snapshots WHERE id=$1`, id).Scan(&evidence, &result.Bytes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, ErrSnapshotNotFound
+	}
+	if err != nil {
+		return result, err
+	}
+	if err := json.Unmarshal(evidence, &result.Evidence); err != nil {
+		return result, err
+	}
+	return result, ValidateSnapshot(result)
 }

@@ -1,20 +1,26 @@
 package artifactcontract
 
+import "github.com/SovereignAI/internal/filemanifest"
+
 const (
-	ChangeRequestContract      = "change-request/v1"
-	RepositoryRevisionContract = "repository-revision/v1"
-	ImplementationPlanContract = "implementation-plan/v1"
-	ChangeSetContract          = "change-set/v1"
-	PreparedCandidateContract  = "prepared-candidate/v1"
-	TestReportContract         = "test-report/v1"
-	CandidateRevisionContract  = "candidate-revision/v1"
-	ImageDigestContract        = "image-digest/v1"
-	ValidationResultContract   = "validation-result/v1"
-	MergeRevisionContract      = "merge-revision/v1"
-	MaxArtifactBytes           = 1 << 20
-	MaxPatchBytes              = 256 << 10
-	MaxCapturedTestOutputBytes = 1 << 20
-	MaxTestOutputExcerptBytes  = 16 << 10
+	ChangeRequestContract        = "change-request/v1"
+	RepositoryRevisionContract   = "repository-revision/v1"
+	BranchReferenceContract      = "branch-reference/v1"
+	ImplementationPlanContract   = "implementation-plan/v1"
+	TestChangeSetContract        = "test-change-set/v1"
+	ChangeSetContract            = "change-set/v1"
+	PreparedCandidateContract    = "prepared-candidate/v1"
+	TestReportContract           = "test-report/v1"
+	CandidateRevisionContract    = "candidate-revision/v1"
+	CandidateRemoteProofContract = "candidate-remote-proof/v1"
+	ImageDigestContract          = "image-digest/v1"
+	ValidationResultContract     = "validation-result/v1"
+	MergeRevisionContract        = "merge-revision/v1"
+	MergeRequestContract         = "merge-request/v1"
+	MaxArtifactBytes             = 1 << 20
+	MaxChangedFileBytes          = 256 << 10
+	MaxCapturedTestOutputBytes   = 1 << 20
+	MaxTestOutputExcerptBytes    = 16 << 10
 )
 
 type ObjectIdentity struct {
@@ -24,11 +30,12 @@ type ObjectIdentity struct {
 }
 
 type ChangeRequest struct {
-	Summary            string   `json:"summary"`
-	Description        string   `json:"description"`
-	AcceptanceCriteria []string `json:"acceptanceCriteria"`
-	RepositoryURL      string   `json:"repositoryURL"`
-	SourceCommit       string   `json:"sourceCommit"`
+	Summary                     string                  `json:"summary"`
+	Description                 string                  `json:"description"`
+	AcceptanceCriteria          []AcceptanceCriterionV1 `json:"acceptanceCriteria"`
+	AcceptanceCriteriaSetDigest string                  `json:"acceptanceCriteriaSetDigest"`
+	RepositoryURL               string                  `json:"repositoryURL"`
+	SourceCommit                string                  `json:"sourceCommit"`
 }
 
 type RepositoryRevision struct {
@@ -36,6 +43,15 @@ type RepositoryRevision struct {
 	RequestedRevision string         `json:"requestedRevision"`
 	ResolvedCommit    string         `json:"resolvedCommit"`
 	UtilityOperation  ObjectIdentity `json:"utilityOperation"`
+}
+
+type BranchReference struct {
+	RepositoryURL    string         `json:"repositoryURL"`
+	Branch           string         `json:"branch"`
+	BaseCommit       string         `json:"baseCommit"`
+	Commit           string         `json:"commit"`
+	UtilityOperation ObjectIdentity `json:"utilityOperation"`
+	IdempotencyKey   string         `json:"idempotencyKey"`
 }
 
 type AffectedPath struct {
@@ -61,26 +77,27 @@ type ImplementationPlan struct {
 	Assumptions              []string            `json:"assumptions"`
 }
 
-type LineCounts struct {
-	Added   int `json:"added"`
-	Deleted int `json:"deleted"`
+type ChangedFile = filemanifest.File
+
+type TestChangeSet struct {
+	Summary                  string        `json:"summary"`
+	BaseCommit               string        `json:"baseCommit"`
+	ChangeRequestDigest      string        `json:"changeRequestDigest"`
+	ImplementationPlanDigest string        `json:"implementationPlanDigest"`
+	Files                    []ChangedFile `json:"files"`
 }
 
 type ChangeSet struct {
-	Format                   string     `json:"format"`
-	Summary                  string     `json:"summary"`
-	BaseCommit               string     `json:"baseCommit"`
-	ChangeRequestDigest      string     `json:"changeRequestDigest"`
-	ImplementationPlanDigest string     `json:"implementationPlanDigest"`
-	Patch                    string     `json:"patch"`
-	PatchDigest              string     `json:"patchDigest"`
-	Files                    []string   `json:"files"`
-	ByteCount                int        `json:"byteCount"`
-	LineCounts               LineCounts `json:"lineCounts"`
+	Summary                  string        `json:"summary"`
+	BaseCommit               string        `json:"baseCommit"`
+	ChangeRequestDigest      string        `json:"changeRequestDigest"`
+	ImplementationPlanDigest string        `json:"implementationPlanDigest"`
+	Files                    []ChangedFile `json:"files"`
 }
 
 type PreparedCandidate struct {
 	RepositoryRevisionDigest string   `json:"repositoryRevisionDigest"`
+	TestChangeSetDigest      string   `json:"testChangeSetDigest"`
 	ChangeSetDigest          string   `json:"changeSetDigest"`
 	BaseCommit               string   `json:"baseCommit"`
 	Branch                   string   `json:"branch"`
@@ -177,6 +194,14 @@ type RemoteProof struct {
 	Ref            string `json:"ref"`
 	ObservedCommit string `json:"observedCommit"`
 	VerifiedAt     string `json:"verifiedAt"`
+}
+
+type CandidateRemoteProof struct {
+	CandidateRevisionDigest string `json:"candidateRevisionDigest"`
+	RepositoryURL           string `json:"repositoryURL"`
+	Ref                     string `json:"ref"`
+	ObservedCommit          string `json:"observedCommit"`
+	VerifiedAt              string `json:"verifiedAt"`
 }
 
 type MergeRevision struct {

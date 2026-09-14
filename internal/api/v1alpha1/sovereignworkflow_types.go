@@ -7,6 +7,9 @@ type ProjectValidationSpec struct {
 	InfrastructureRepo string `json:"infrastructureRepository"`
 	OverlayPath        string `json:"overlayPath"`
 	ImageName          string `json:"imageName,omitempty"`
+	// ImageSelector is the image name present in the source manifests. It may
+	// differ from ImageName, which is the repository used for the built image.
+	ImageSelector string `json:"imageSelector,omitempty"`
 }
 
 // StepConfig declares one workflow stage and exactly one domain execution primitive.
@@ -19,17 +22,18 @@ type ProjectValidationSpec struct {
 // +kubebuilder:validation:XValidation:rule="self.kind != 'Validation' || has(self.validation)",message="validation is required for Validation steps"
 // +kubebuilder:validation:XValidation:rule="self.kind == 'Validation' || !has(self.validation)",message="validation is only allowed for Validation steps"
 type StepConfig struct {
-	Name        string                   `json:"name"`
-	Kind        ExecutionKind            `json:"kind"`
-	Agent       *AgentStepSpec           `json:"agent,omitempty"`
-	Utility     *UtilityOperationRequest `json:"utility,omitempty"`
-	Approval    *ApprovalSpec            `json:"approval,omitempty"`
-	Validation  *ValidationStepSpec      `json:"validation,omitempty"`
-	Inputs      []ArtifactReference      `json:"inputs,omitempty"`
-	Outputs     []ContractReference      `json:"outputs,omitempty"`
-	Timeout     *metav1.Duration         `json:"timeout,omitempty"`
-	MaxAttempts int32                    `json:"maxAttempts,omitempty"`
-	Order       int                      `json:"order"`
+	RequiresApproval *ApprovalRequirement     `json:"requiresApproval,omitempty"`
+	Name             string                   `json:"name"`
+	Kind             ExecutionKind            `json:"kind"`
+	Agent            *AgentStepSpec           `json:"agent,omitempty"`
+	Utility          *UtilityOperationRequest `json:"utility,omitempty"`
+	Approval         *ApprovalSpec            `json:"approval,omitempty"`
+	Validation       *ValidationStepSpec      `json:"validation,omitempty"`
+	Inputs           []ArtifactReference      `json:"inputs,omitempty"`
+	Outputs          []ContractReference      `json:"outputs,omitempty"`
+	Timeout          *metav1.Duration         `json:"timeout,omitempty"`
+	MaxAttempts      int32                    `json:"maxAttempts,omitempty"`
+	Order            int                      `json:"order"`
 }
 
 // AgentStepSpec declares delegated autonomous work. These fields are never
@@ -48,7 +52,7 @@ type AgentStepSpec struct {
 // an arbitrary process command. The controller derives the idempotency key and
 // resolves Project-owned commands and credentials before scheduling a Job.
 type UtilityOperationRequest struct {
-	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;candidate.prepare;git.commit;git.push;git.merge;test.run;build.image
+	// +kubebuilder:validation:Enum=repository.initialize;git.createBranch;candidate.prepare;git.commit;git.push;git.merge;git.mergeRequest;test.run;build.image
 	Name       string            `json:"name"`
 	Parameters map[string]string `json:"parameters,omitempty"`
 }
@@ -93,21 +97,55 @@ type SovereignWorkflowSpec struct {
 	Classification      string                `json:"classification,omitempty"`
 	Steps               []StepConfig          `json:"steps"`
 	RequestedVolumeSize string                `json:"requestedVolumeSize"`
+	// MaxWorkflowAttempt bounds application-level test failure rewinds independently of infrastructure retries.
+	// +kubebuilder:validation:Minimum=1
+	MaxWorkflowAttempt int32 `json:"maxWorkflowAttempt,omitempty"`
+}
+
+// SelectedArtifact records the exact accepted artifact identity used for
+// subsequent workflow inputs. ProducerAttemptRef is empty for bootstrap
+// artifacts produced directly by the workflow.
+type SelectedArtifact struct {
+	Contract           ContractReference `json:"contract"`
+	Digest             string            `json:"digest"`
+	ProducerAttemptRef string            `json:"producerAttemptRef,omitempty"`
+}
+
+// WorkflowRefinementStatus records an application-level test failure that
+// rewound the workflow. It is distinct from infrastructure retry state.
+type WorkflowRefinementStatus struct {
+	RetryObservation  *WorkflowRetryObservation   `json:"retryObservation,omitempty"`
+	Recovery          *WorkflowRecoveryEvidence   `json:"recovery,omitempty"`
+	Iteration         int32                       `json:"iteration"`
+	TriggerStepName   string                      `json:"triggerStep"`
+	TriggerAttemptRef string                      `json:"triggerAttemptRef"`
+	RestartStepName   string                      `json:"restartStep"`
+	TestReport        *SelectedArtifact           `json:"testReport,omitempty"`
+	AgentCompletions  []RefinementAgentCompletion `json:"agentCompletions,omitempty"`
+}
+
+type RefinementAgentCompletion struct {
+	StepName   string                `json:"stepName"`
+	AttemptRef string                `json:"attemptRef"`
+	Completion AgentCompletionStatus `json:"completion"`
 }
 
 // SovereignWorkflowStatus defines the observed state
 type SovereignWorkflowStatus struct {
-	Phase                   string             `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
-	ActiveStepName          string             `json:"activeStep,omitempty"`       // Currently executing step
-	ActiveAttemptRef        string             `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
-	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
-	PvcName                 string             `json:"pvcName,omitempty"`                 // Bound storage resource
-	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"` // Lease serializing writable workspace mounts
-	BootstrapJobRef         string             `json:"bootstrapJobRef,omitempty"`
-	BootstrapArtifactRef    *UIDReference      `json:"bootstrapArtifactRef,omitempty"`
-	BootstrapWriterEpoch    int32              `json:"bootstrapWriterEpoch,omitempty"`
-	BootstrapWriterReleased bool               `json:"bootstrapWriterReleased,omitempty"`
-	Conditions              []metav1.Condition `json:"conditions,omitempty"` // Standard K8s status conditions
+	Phase                   string                    `json:"phase"`                      // e.g., Pending, Running, Stalled, Completed
+	ActiveStepName          string                    `json:"activeStep,omitempty"`       // Currently executing step
+	ActiveAttemptRef        string                    `json:"activeAttemptRef,omitempty"` // Reference to the current attempt
+	WorkflowAttempt         int32                     `json:"workflowAttempt"`
+	ObservedGeneration      int64                     `json:"observedGeneration,omitempty"`
+	PvcName                 string                    `json:"pvcName,omitempty"`                 // Bound storage resource
+	WorkspaceWriterLeaseRef string                    `json:"workspaceWriterLeaseRef,omitempty"` // Lease serializing writable workspace mounts
+	BootstrapJobRef         string                    `json:"bootstrapJobRef,omitempty"`
+	BootstrapArtifactRef    *UIDReference             `json:"bootstrapArtifactRef,omitempty"`
+	BootstrapWriterEpoch    int32                     `json:"bootstrapWriterEpoch,omitempty"`
+	BootstrapWriterReleased bool                      `json:"bootstrapWriterReleased,omitempty"`
+	SelectedArtifacts       []SelectedArtifact        `json:"selectedArtifacts,omitempty"`
+	Refinement              *WorkflowRefinementStatus `json:"refinement,omitempty"`
+	Conditions              []metav1.Condition        `json:"conditions,omitempty"` // Standard K8s status conditions
 }
 
 // +kubebuilder:object:root=true
@@ -151,9 +189,11 @@ type SovereignProjectSpec struct {
 }
 
 type SovereignProjectStatus struct {
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Phase              ResourcePhase      `json:"phase,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	// ValidationProviderRef is the provisioned Argo AppProject name.
+	ValidationProviderRef string             `json:"validationProviderRef,omitempty"`
+	ObservedGeneration    int64              `json:"observedGeneration,omitempty"`
+	Phase                 ResourcePhase      `json:"phase,omitempty"`
+	Conditions            []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

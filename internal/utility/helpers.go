@@ -70,7 +70,13 @@ func runCommand(ctx context.Context, workspace string, name string, args ...stri
 }
 
 func runGit(ctx context.Context, workspace string, args ...string) (commandOutput, error) {
-	return runCommand(ctx, workspace, "git", args...)
+	return runCommand(ctx, workspace, "git", gitCommandArgs(workspace, args...)...)
+}
+
+func gitCommandArgs(workspace string, args ...string) []string {
+	commandArgs := make([]string, 0, len(args)+2)
+	commandArgs = append(commandArgs, "-c", "safe.directory="+workspace)
+	return append(commandArgs, args...)
 }
 
 // gitOutput is the query-oriented Git adapter. It preserves runGit's exit-code
@@ -84,7 +90,7 @@ func gitOutput(ctx context.Context, workspace string, args ...string) (string, e
 	return strings.TrimSpace(output.Stdout), nil
 }
 
-func ensureWorkspace(input utilitycontract.Input) error {
+func EnsureWorkspace(input utilitycontract.Input) error {
 	info, err := os.Stat(input.WorkspacePath)
 	if err != nil {
 		return fmt.Errorf("inspect workspace: %w", err)
@@ -103,7 +109,7 @@ func parameter(input utilitycontract.Input, name string) (string, error) {
 	return value, nil
 }
 
-func optionalParameter(input utilitycontract.Input, name, fallback string) string {
+func OptionalParameter(input utilitycontract.Input, name, fallback string) string {
 	if value := strings.TrimSpace(input.Parameters[name]); value != "" {
 		return value
 	}
@@ -120,7 +126,7 @@ func verifyAdmittedRepository(ctx context.Context, input utilitycontract.Input) 
 	if err != nil {
 		return err
 	}
-	actual, err := gitOutput(ctx, input.WorkspacePath, "remote", "get-url", "origin")
+	actual, err := gitOutput(ctx, input.WorkspacePath, "config", "--get", "remote.origin.url")
 	if err != nil {
 		return err
 	}

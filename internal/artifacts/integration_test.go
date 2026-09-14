@@ -27,9 +27,10 @@ func TestTypedArtifactPassesCollectorStoreAndReconciliation(t *testing.T) {
 	store := t.TempDir()
 	content, err := json.Marshal(artifactcontract.ChangeRequest{
 		Summary: "Add divide support", Description: "Add calculator division.",
-		AcceptanceCriteria: []string{"84 / 2 returns 42"},
-		RepositoryURL:      "https://git.example.test/calculator.git",
-		SourceCommit:       strings.Repeat("a", 40),
+		AcceptanceCriteria:          []artifactcontract.AcceptanceCriterionV1{{ID: "RQ-001", Text: "84 / 2 returns 42", Digest: artifactcontract.CriterionDigest("RQ-001", "84 / 2 returns 42")}},
+		AcceptanceCriteriaSetDigest: artifactcontract.CriteriaSetDigest([]artifactcontract.CriterionIdentityV1{{ID: "RQ-001", Digest: artifactcontract.CriterionDigest("RQ-001", "84 / 2 returns 42")}}),
+		RepositoryURL:               "https://git.example.test/calculator.git",
+		SourceCommit:                strings.Repeat("a", 40),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +39,8 @@ func TestTypedArtifactPassesCollectorStoreAndReconciliation(t *testing.T) {
 	if err := os.WriteFile(source, content, 0o440); err != nil {
 		t.Fatal(err)
 	}
-	collected, err := artifacts.Collect(staging, store, "workflow", v1alpha1.TypedLocalReference{
+	workflowRef := v1alpha1.UIDReference{Name: "workflow", UID: "workflow-uid"}
+	collected, err := artifacts.Collect(staging, store, workflowRef, v1alpha1.TypedLocalReference{
 		APIVersion: v1alpha1.GroupVersion.String(), Kind: "AgentRun", Name: "fixture",
 	}, strings.Repeat("a", 40), []agentcontract.ArtifactOutput{{
 		Contract: artifactcontract.ChangeRequestContract, Path: source, MediaType: "application/json",
@@ -75,6 +77,16 @@ func TestTypedArtifactPassesCollectorStoreAndReconciliation(t *testing.T) {
 	}
 	if accepted.Status.Phase != v1alpha1.PhaseSucceeded {
 		t.Fatalf("phase = %s, want Succeeded: %#v", accepted.Status.Phase, accepted.Status.Conditions)
+	}
+	var canonical artifactcontract.ChangeRequest
+	if err := json.Unmarshal(content, &canonical); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Spec.Claims == nil || accepted.Spec.Claims.ChangeRequest == nil ||
+		accepted.Spec.Claims.ChangeRequest.AcceptanceCriteriaSetDigest != canonical.AcceptanceCriteriaSetDigest ||
+		len(accepted.Spec.Claims.ChangeRequest.AcceptanceCriteria) != len(canonical.AcceptanceCriteria) ||
+		accepted.Spec.Claims.ChangeRequest.AcceptanceCriteria[0].Digest != canonical.AcceptanceCriteria[0].Digest {
+		t.Fatal("collector/store/admission lost canonical criterion claims")
 	}
 	stored, err := os.ReadFile(accepted.Spec.Path)
 	if err != nil {

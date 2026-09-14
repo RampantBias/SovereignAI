@@ -14,6 +14,7 @@ const (
 	OperationGitCommit            = "git.commit"
 	OperationGitPush              = "git.push"
 	OperationGitMerge             = "git.merge"
+	OperationGitMergeRequest      = "git.mergeRequest"
 	OperationTestRun              = "test.run"
 	OperationBuildImage           = "build.image"
 
@@ -45,9 +46,11 @@ func DefaultRegistry() Registry {
 	return NewRegistry(
 		RepositoryInitialize{},
 		GitCreateBranch{},
+		CandidatePrepare{},
 		GitCommit{},
 		GitPush{},
 		GitMerge{},
+		GitMergeRequest{},
 		TestRun{},
 		BuildImage{},
 	)
@@ -62,7 +65,7 @@ func IsPrivilegedOperation(name string) bool {
 	// Privileged means the controller must require a policy decision before the
 	// operation is materialized. Credential needs are classified separately.
 	switch name {
-	case OperationGitCommit, OperationGitPush, OperationGitMerge, OperationBuildImage:
+	case OperationCandidatePrepare, OperationGitCommit, OperationGitPush, OperationGitMerge, OperationGitMergeRequest, OperationBuildImage:
 		return true
 	default:
 		return false
@@ -74,7 +77,7 @@ func IsPrivilegedOperation(name string) bool {
 // than concrete Secret names.
 func ExpectedCredentialClass(name string) string {
 	switch name {
-	case OperationRepositoryInitialize, OperationGitPush, OperationGitMerge:
+	case OperationRepositoryInitialize, OperationGitPush, OperationGitMerge, OperationGitMergeRequest:
 		return CredentialClassRepository
 	case OperationBuildImage:
 		return CredentialClassRegistry

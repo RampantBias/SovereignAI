@@ -15,13 +15,22 @@ spec:
     provider: argocd-kustomize
     infrastructureRepository: https://github.com/RampantBias/calculator-demo.git
     overlayPath: deploy/overlays/validation
-    imageName: calculator
+    imageName: 192.168.1.19:30500/sovereign/calculator
+    imageSelector: calculator
   testJob:
-    image: registry.internal/sovereign/utility:dev
-    command: ["/utility", "test"]
+    image: sovereign-test-runner:dev
+    command: ["go", "test", "./..."]
   buildJob:
-    image: registry.internal/sovereign/utility:dev
-    command: ["/utility", "build"]
-    credentialRef:
-      namespace: sovereign-orchestrator-system
-      name: sovereign-ai-registry
+    image: sovereign-build-runner:dev
+    command: ["/usr/bin/buildctl-daemonless.sh", "build"]
+    args:
+      - --frontend
+      - dockerfile.v0
+      - --local
+      - context=/workspace
+      - --local
+      - dockerfile=/workspace
+      - --output
+      - type=image,name=192.168.1.19:30500/sovereign/calculator,push=true,registry.insecure=true
+      - --metadata-file
+      - /workspace/image-metadata.json

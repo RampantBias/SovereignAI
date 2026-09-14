@@ -52,8 +52,10 @@ type ContractReference struct {
 }
 
 type ArtifactReference struct {
-	Name   string `json:"name"`
-	Digest string `json:"digest,omitempty"`
+	Name               string        `json:"name"`
+	Digest             string        `json:"digest,omitempty"`
+	ArtifactRef        *UIDReference `json:"artifactRef,omitempty"`
+	ProducerAttemptRef string        `json:"producerAttemptRef,omitempty"`
 }
 
 // TypedLocalReference identifies the domain primitive owned by a StepAttempt.
@@ -61,6 +63,28 @@ type TypedLocalReference struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
 	Name       string `json:"name"`
+}
+
+type FailedAgentAttempt struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	PreviousAttemptRef string `json:"previousAttemptRef"`
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9]{0,127}$`
+	Code string `json:"code"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Message string `json:"message"`
+}
+
+// AgentCompletionStatus is the controller-observed durable terminal action
+// produced by agent_complete.
+type AgentCompletionStatus struct {
+	// +kubebuilder:validation:Enum=changed;no_change;contract_ambiguous
+	Disposition string `json:"disposition"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Summary string `json:"summary"`
+	Digest  string `json:"digest,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -78,10 +102,11 @@ type StepAttempt struct {
 // StepAttemptSpec is a workflow lifecycle envelope. Domain execution intent is
 // held by the owned AgentRun, UtilityOperation, ApprovalRequest, or ValidationRun.
 type StepAttemptSpec struct {
-	WorkflowRef string        `json:"workflowRef"`
-	StepName    string        `json:"stepName"`
-	Attempt     int32         `json:"attempt"`
-	Kind        ExecutionKind `json:"kind"`
+	WorkflowRef     UIDReference  `json:"workflowRef"`
+	StepName        string        `json:"stepName"`
+	RetryNumber     int32         `json:"retryNumber"`
+	WorkflowAttempt int32         `json:"workflowAttempt"`
+	Kind            ExecutionKind `json:"kind"`
 }
 
 type InferenceRequestSpec struct {
@@ -98,10 +123,13 @@ type StepAttemptStatus struct {
 	Phase              ResourcePhase        `json:"phase,omitempty"`
 	ExecutionRef       *TypedLocalReference `json:"executionRef,omitempty"`
 	FailureReason      string               `json:"failureReason,omitempty"`
-	Retryable          bool                 `json:"retryable,omitempty"`
-	StartedAt          *metav1.Time         `json:"startedAt,omitempty"`
-	CompletedAt        *metav1.Time         `json:"completedAt,omitempty"`
-	Conditions         []metav1.Condition   `json:"conditions,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	FailureMessage string                 `json:"failureMessage,omitempty"`
+	Retryable      bool                   `json:"retryable,omitempty"`
+	Completion     *AgentCompletionStatus `json:"completion,omitempty"`
+	StartedAt      *metav1.Time           `json:"startedAt,omitempty"`
+	CompletedAt    *metav1.Time           `json:"completedAt,omitempty"`
+	Conditions     []metav1.Condition     `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -125,7 +153,8 @@ type AgentRun struct {
 
 type AgentRunSpec struct {
 	AttemptRef      string                `json:"attemptRef"`
-	WorkflowRef     string                `json:"workflowRef"`
+	PriorAttemptRef *FailedAgentAttempt   `json:"priorAttemptRef,omitempty"`
+	WorkflowRef     UIDReference          `json:"workflowRef"`
 	StepName        string                `json:"stepName"`
 	Attempt         int32                 `json:"attempt"`
 	Responsibility  string                `json:"responsibility"`
@@ -139,19 +168,22 @@ type AgentRunSpec struct {
 }
 
 type AgentRunStatus struct {
-	ObservedGeneration      int64              `json:"observedGeneration,omitempty"`
-	Phase                   ResourcePhase      `json:"phase,omitempty"`
-	PodRef                  string             `json:"podRef,omitempty"`
-	CollectorJobRef         string             `json:"collectorJobRef,omitempty"`
-	InferenceLeaseRef       string             `json:"inferenceLeaseRef,omitempty"`
-	WorkspaceWriterLeaseRef string             `json:"workspaceWriterLeaseRef,omitempty"`
-	WorkspaceWriterEpoch    int32              `json:"workspaceWriterEpoch,omitempty"`
-	WorkspaceWriterReleased bool               `json:"workspaceWriterReleased,omitempty"`
-	FailureReason           string             `json:"failureReason,omitempty"`
-	Retryable               bool               `json:"retryable,omitempty"`
-	StartedAt               *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt             *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions              []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration      int64         `json:"observedGeneration,omitempty"`
+	Phase                   ResourcePhase `json:"phase,omitempty"`
+	PodRef                  string        `json:"podRef,omitempty"`
+	CollectorJobRef         string        `json:"collectorJobRef,omitempty"`
+	InferenceLeaseRef       string        `json:"inferenceLeaseRef,omitempty"`
+	WorkspaceWriterLeaseRef string        `json:"workspaceWriterLeaseRef,omitempty"`
+	WorkspaceWriterEpoch    int32         `json:"workspaceWriterEpoch,omitempty"`
+	WorkspaceWriterReleased bool          `json:"workspaceWriterReleased,omitempty"`
+	FailureReason           string        `json:"failureReason,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	FailureMessage string                 `json:"failureMessage,omitempty"`
+	Retryable      bool                   `json:"retryable,omitempty"`
+	Completion     *AgentCompletionStatus `json:"completion,omitempty"`
+	StartedAt      *metav1.Time           `json:"startedAt,omitempty"`
+	CompletedAt    *metav1.Time           `json:"completedAt,omitempty"`
+	Conditions     []metav1.Condition     `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -174,8 +206,9 @@ type UtilityOperation struct {
 }
 
 type UtilityOperationSpec struct {
+	Approval        *ResolvedApproval       `json:"approval,omitempty"`
 	AttemptRef      string                  `json:"attemptRef"`
-	WorkflowRef     string                  `json:"workflowRef"`
+	WorkflowRef     UIDReference            `json:"workflowRef"`
 	StepName        string                  `json:"stepName"`
 	Attempt         int32                   `json:"attempt"`
 	Operation       UtilityOperationRequest `json:"operation"`
@@ -194,6 +227,7 @@ type UtilityOperationStatus struct {
 	WorkspaceWriterEpoch    int32              `json:"workspaceWriterEpoch,omitempty"`
 	WorkspaceWriterReleased bool               `json:"workspaceWriterReleased,omitempty"`
 	FailureReason           string             `json:"failureReason,omitempty"`
+	FailureMessage          string             `json:"failureMessage,omitempty"`
 	Retryable               bool               `json:"retryable,omitempty"`
 	StartedAt               *metav1.Time       `json:"startedAt,omitempty"`
 	CompletedAt             *metav1.Time       `json:"completedAt,omitempty"`
@@ -229,13 +263,14 @@ type ApprovalRequestSpec struct {
 }
 
 type ApprovalRequestStatus struct {
+	DecisionUID        types.UID          `json:"decisionUID,omitempty"`
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Phase              ResourcePhase      `json:"phase,omitempty"`
 	DecisionRef        string             `json:"decisionRef,omitempty"`
 	FailureReason      string             `json:"failureReason,omitempty"`
 	Retryable          bool               `json:"retryable,omitempty"`
 	StartedAt          *metav1.Time       `json:"startedAt,omitempty"`
-	CompletedAt        *metav1.Time       `json:"completedAt,omitempty"`
+	CompletedAt        *AuditTime         `json:"completedAt,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 
@@ -263,7 +298,7 @@ type ApprovalDecisionSpec struct {
 	ApprovalRequestRef UIDReference   `json:"approvalRequestRef"`
 	Decision           ApprovalChoice `json:"decision"`
 	Reason             string         `json:"reason"`
-	AuthoredAt         *metav1.Time   `json:"authoredAt"`
+	AuthoredAt         *AuditTime     `json:"authoredAt"`
 	Subject            Subject        `json:"subject"`
 }
 
@@ -292,8 +327,7 @@ type Artifact struct {
 }
 
 type ArtifactSpec struct {
-	WorkflowRef      string              `json:"workflowRef"`
-	WorkflowUID      types.UID           `json:"workflowUID"`
+	WorkflowRef      UIDReference        `json:"workflowRef"`
 	ProducerRef      TypedLocalReference `json:"producerRef"`
 	ProducerUID      types.UID           `json:"producerUID"`
 	ProducerGrantRef UIDReference        `json:"producerGrantRef"`
@@ -302,6 +336,57 @@ type ArtifactSpec struct {
 	Path             string              `json:"path"`
 	Classification   string              `json:"classification,omitempty"`
 	SourceRevision   string              `json:"sourceRevision,omitempty"`
+	Claims           *ArtifactClaims     `json:"claims,omitempty"`
+}
+
+// lightweight container for summary of artifact content, for validation provider
+type ArtifactClaims struct {
+	ChangeRequest        *ChangeRequestClaims        `json:"changeRequest,omitempty"`
+	CandidateRevision    *CandidateRevisionClaims    `json:"candidateRevision,omitempty"`
+	CandidateRemoteProof *CandidateRemoteProofClaims `json:"candidateRemoteProof,omitempty"`
+	ImageDigest          *ImageDigestClaims          `json:"imageDigest,omitempty"`
+}
+
+// Canonical criterion identities projected from validated change-request bytes.
+type CriterionIdentity struct {
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9._-]{0,63}$`
+	ID string `json:"id"`
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest"`
+}
+
+type ChangeRequestClaims struct {
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	AcceptanceCriteria []CriterionIdentity `json:"acceptanceCriteria"`
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	AcceptanceCriteriaSetDigest string `json:"acceptanceCriteriaSetDigest"`
+}
+
+// identity of revision
+type CandidateRevisionClaims struct {
+	RepositoryURL string `json:"repositoryURL"`
+	Branch        string `json:"branch"`
+	Commit        string `json:"commit"`
+	Tree          string `json:"tree"`
+}
+
+// revision content and metadata
+type CandidateRemoteProofClaims struct {
+	CandidateRevisionDigest string `json:"candidateRevisionDigest"`
+	RepositoryURL           string `json:"repositoryURL"`
+	Ref                     string `json:"ref"`
+	ObservedCommit          string `json:"observedCommit"`
+	VerifiedAt              string `json:"verifiedAt"`
+}
+
+// candidate image linked to revision
+type ImageDigestClaims struct {
+	CandidateRevisionDigest string `json:"candidateRevisionDigest"`
+	ImageRepository         string `json:"imageRepository"`
+	OCIDigest               string `json:"ociDigest"`
+	CandidateCommit         string `json:"candidateCommit"`
+	CandidateTree           string `json:"candidateTree"`
 }
 
 type ArtifactStatus struct {
@@ -329,7 +414,7 @@ type HumanSession struct {
 }
 
 type HumanSessionSpec struct {
-	WorkflowRef      string           `json:"workflowRef"`
+	WorkflowRef      UIDReference     `json:"workflowRef"`
 	RequesterSubject string           `json:"requesterSubject"`
 	ToolProfile      string           `json:"toolProfile"`
 	Capabilities     []string         `json:"capabilities,omitempty"`
@@ -372,7 +457,7 @@ type ValidationRun struct {
 
 type ValidationRunSpec struct {
 	AttemptRef  string              `json:"attemptRef"`
-	WorkflowRef string              `json:"workflowRef"`
+	WorkflowRef UIDReference        `json:"workflowRef"`
 	StepName    string              `json:"stepName"`
 	Attempt     int32               `json:"attempt"`
 	Provider    string              `json:"provider"`

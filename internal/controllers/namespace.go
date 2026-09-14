@@ -9,7 +9,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func namespaceTerminating(ctx context.Context, reader client.Reader, namespace string) (bool, error) {
+func NamespaceTerminating(ctx context.Context, reader client.Reader, namespace string) (bool, error) {
 	if namespace == "" {
 		return false, nil
 	}

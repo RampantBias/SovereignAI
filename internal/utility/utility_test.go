@@ -2,12 +2,14 @@ package utility
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/utilitycontract"
 )
 
@@ -33,7 +35,14 @@ func TestRepositoryBranchCommitPushAreIdempotent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "change.txt"), []byte("controlled change\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	commit := utilityInput(t, workspace, "commit", OperationGitCommit, map[string]string{"message": "controlled change"}, "git-revision")
+	gitTestCommand(t, workspace, "add", "-A")
+	tree := gitTestOutput(t, workspace, "write-tree")
+	commit := utilityInput(t, workspace, "commit", OperationGitCommit, map[string]string{"message": "controlled change"}, "candidate-revision")
+	changeSetDigest := "sha256:" + strings.Repeat("c", 64)
+	addUtilityInputArtifact(t, &commit, "prepared-candidate", artifactcontract.PreparedCandidateContract, map[string]any{
+		"changeSetDigest": changeSetDigest, "baseCommit": initialCommit, "branch": "feature/control-plane", "candidateTree": tree,
+	})
+	addUtilityInputArtifact(t, &commit, "test-report", artifactcontract.TestReportContract, map[string]any{"candidateTree": tree, "outcome": "passed"})
 	firstCommit := runUtility(t, commit)
 	secondCommit := runUtility(t, commit)
 	if firstCommit.Metadata["commit"] == "" || firstCommit.Metadata["commit"] != secondCommit.Metadata["commit"] {
@@ -42,8 +51,20 @@ func TestRepositoryBranchCommitPushAreIdempotent(t *testing.T) {
 
 	push := utilityInput(t, workspace, "push", OperationGitPush, map[string]string{
 		"remote": "origin", "branch": "feature/control-plane",
-	}, "pushed-revision")
+	}, "candidate-remote-proof")
+	candidateData, err := os.ReadFile(firstCommit.Artifacts[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	push.Inputs = append(push.Inputs, utilitycontract.ArtifactInput{
+		Name: "candidate-revision", Contract: artifactcontract.CandidateRevisionContract,
+		Digest: artifactcontract.DigestBytes(candidateData), Path: firstCommit.Artifacts[0].Path,
+	})
 	firstPush := runUtility(t, push)
+	firstProof, err := os.ReadFile(firstPush.Artifacts[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	secondPush := runUtility(t, push)
 	if firstPush.Metadata["commit"] != secondPush.Metadata["commit"] {
 		t.Fatalf("push retry did not converge: %#v %#v", firstPush.Metadata, secondPush.Metadata)
@@ -51,6 +72,13 @@ func TestRepositoryBranchCommitPushAreIdempotent(t *testing.T) {
 	remoteCommit := gitTestOutput(t, workspace, "ls-remote", "--heads", "origin", "refs/heads/feature/control-plane")
 	if !strings.HasPrefix(remoteCommit, firstCommit.Metadata["commit"]) {
 		t.Fatalf("remote ref = %q, want commit %s", remoteCommit, firstCommit.Metadata["commit"])
+	}
+	secondProof, err := os.ReadFile(secondPush.Artifacts[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstProof) != string(secondProof) {
+		t.Fatal("push retry changed the remote proof artifact")
 	}
 }
 
@@ -96,8 +124,18 @@ func TestMergeRequiresAndPreservesApprovedCandidate(t *testing.T) {
 	feature := runUtility(t, utilityInput(t, workspace, "commit", OperationGitCommit, map[string]string{"message": "feature"}, "git-revision")).Metadata["commit"]
 	merge := utilityInput(t, workspace, "merge", OperationGitMerge, map[string]string{
 		"sourceBranch": "feature", "targetBranch": "main", "candidateRevision": feature,
-		"approvalDecisionRef": "approval-1", "validationRunRef": "validation-1",
+		"approvalRequestRef": "request-1", "approvalRequestUID": "request-uid",
+		"approvalDecisionRef": "approval-1", "approvalDecisionUID": "approval-uid", "validationRunRef": "validation-1",
 	}, "merge-revision")
+	tree := gitTestOutput(t, workspace, "rev-parse", feature+"^{tree}")
+	addUtilityInputArtifact(t, &merge, "candidate-revision", artifactcontract.CandidateRevisionContract, map[string]any{"branch": "feature", "commit": feature, "tree": tree})
+	candidateDigest := merge.Inputs[0].Digest
+	addUtilityInputArtifact(t, &merge, "candidate-remote-proof", artifactcontract.CandidateRemoteProofContract, map[string]any{
+		"candidateRevisionDigest": candidateDigest, "observedCommit": feature,
+	})
+	addUtilityInputArtifact(t, &merge, "validation-result", artifactcontract.ValidationResultContract, map[string]any{
+		"validationRun": map[string]string{"namespace": "wf", "name": "validation-1", "uid": "validation-uid"}, "candidateRevisionDigest": candidateDigest, "outcome": "passed",
+	})
 	first := runUtility(t, merge)
 	second := runUtility(t, merge)
 	if first.Metadata["commit"] == "" || first.Metadata["commit"] != second.Metadata["commit"] {
@@ -114,17 +152,15 @@ func TestProjectTemplateOperations(t *testing.T) {
 	workspace := t.TempDir()
 	runUtility(t, utilityInput(t, workspace, "initialize", OperationRepositoryInitialize, map[string]string{"repositoryURL": remote, "revision": initialCommit}, "repository-revision"))
 
-	testInput := utilityInput(t, workspace, "tests", OperationTestRun, nil, "test-report")
+	testInput := utilityInput(t, workspace, "tests", OperationTestRun, nil, "test-result")
 	testInput.Command = []string{"go", "version"}
 	runUtility(t, testInput)
 
 	digest := "sha256:" + strings.Repeat("a", 64)
-	if err := os.WriteFile(filepath.Join(workspace, "image.digest"), []byte(digest), 0o640); err != nil {
-		t.Fatal(err)
-	}
+	writeBuildKitMetadata(t, workspace, "image.digest", digest)
 	buildInput := utilityInput(t, workspace, "build", OperationBuildImage, map[string]string{
 		"imageName": "registry.internal/sovereign/controller", "digestFile": "image.digest",
-	}, "image-digest")
+	}, "build-result")
 	buildInput.Command = []string{"go", "version"}
 	result := runUtility(t, buildInput)
 	repeated := runUtility(t, buildInput)
@@ -133,6 +169,17 @@ func TestProjectTemplateOperations(t *testing.T) {
 	}
 	if repeated.Metadata["digest"] != result.Metadata["digest"] || repeated.Metadata["commit"] != result.Metadata["commit"] {
 		t.Fatalf("build retry did not reuse the admitted result: %#v %#v", result.Metadata, repeated.Metadata)
+	}
+}
+
+func writeBuildKitMetadata(t *testing.T, workspace, name, digest string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]string{buildKitImageDigestKey: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, name), data, 0o640); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -166,6 +213,19 @@ func runUtility(t *testing.T, input utilitycontract.Input) utilitycontract.Resul
 		t.Fatal(err)
 	}
 	return result
+}
+
+func addUtilityInputArtifact(t *testing.T, input *utilitycontract.Input, name, contract string, document any) {
+	t.Helper()
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(input.StagingPath, name+"-input.json")
+	if err := os.WriteFile(path, data, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	input.Inputs = append(input.Inputs, utilitycontract.ArtifactInput{Name: name, Contract: contract, Digest: artifactcontract.DigestBytes(data), Path: path})
 }
 
 func seedBareRepository(t *testing.T) (string, string) {

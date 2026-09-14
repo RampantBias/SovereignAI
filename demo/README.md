@@ -82,3 +82,10 @@ The controller validates the source Secret before creating an immutable,
 operation-scoped copy. Only the `credentials` key is projected into the trusted
 utility container. Audit events record only safe identity such as Secret
 namespace, name, UID, and credential class.
+
+## Change-request requirements
+
+Keep acceptance criteria as text in `demo/change-requests/calculator-divide.v1.json`.
+The workflow API assigns requirement IDs and calculates digests before storing
+the admitted input. See [canonical acceptance criteria](../docs/architecture/acceptance-criteria.md)
+for structured revisions that preserve existing requirement IDs.

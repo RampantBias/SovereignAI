@@ -15,6 +15,8 @@ spec:
       labels:
         app.kubernetes.io/name: sovereign-api
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
       serviceAccountName: sovereign-controller
       containers:
         - name: api
@@ -23,6 +25,33 @@ spec:
           envFrom:
             - secretRef:
                 name: sovereign-audit-client
+          env:
+            - name: SOVEREIGN_API_TLS_CERT_FILE
+              value: /var/run/sovereign/api-tls/tls.crt
+            - name: SOVEREIGN_API_TLS_KEY_FILE
+              value: /var/run/sovereign/api-tls/tls.key
+            - name: SOVEREIGN_API_AUTH_PUBLIC_KEY_FILE
+              value: /var/run/sovereign/human-auth/public.pem
+            - name: SOVEREIGN_API_AUTH_ISSUER
+              value: sovereign-demo
+            - name: SOVEREIGN_API_AUTH_AUDIENCE
+              value: sovereign-api
+            - name: SOVEREIGN_API_AUTH_MAX_TOKEN_LIFETIME
+              value: 24h
           ports:
             - name: grpc
               containerPort: 8080
+          volumeMounts:
+            - name: api-tls
+              mountPath: /var/run/sovereign/api-tls
+              readOnly: true
+            - name: human-auth
+              mountPath: /var/run/sovereign/human-auth
+              readOnly: true
+      volumes:
+        - name: api-tls
+          secret:
+            secretName: sovereign-api-tls
+        - name: human-auth
+          secret:
+            secretName: sovereign-human-auth

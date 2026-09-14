@@ -9,6 +9,12 @@ import (
 	"github.com/SovereignAI/internal/api/v1alpha1"
 	"github.com/SovereignAI/internal/audit"
 	"github.com/SovereignAI/internal/controllers"
+	"github.com/SovereignAI/internal/controllers/agentrun"
+	"github.com/SovereignAI/internal/controllers/stepattempt"
+	"github.com/SovereignAI/internal/controllers/utilityoperation"
+	"github.com/SovereignAI/internal/controllers/validationrun"
+	"github.com/SovereignAI/internal/controllers/workflow"
+	"github.com/SovereignAI/internal/inference"
 	"github.com/SovereignAI/internal/policy"
 	"github.com/SovereignAI/internal/validation"
 	"github.com/go-logr/logr"
@@ -76,6 +82,11 @@ func main() {
 		log.Printf("Audit recorder initialized with %s backend", auditMode)
 	}
 
+	contextAPIAddress := ""
+	if auditMode == "postgres" {
+		contextAPIAddress = env("SOVEREIGN_CONTEXT_API_ADDRESS", "sovereign-api."+systemNamespace+".svc:8080")
+	}
+
 	// Initialize in-memory OPA
 	policyEvaluator, err := policy.NewMVP(ctx)
 	if err != nil {
@@ -86,65 +97,104 @@ func main() {
 		log.Fatalf("unable to create validation client: %v", err)
 	}
 
+	// Initialize vLLM inference snapshot for MVP
+	inferenceProfile := inference.Profile{
+		RuntimeImage:       env("SOVEREIGN_VLLM_IMAGE", "docker.io/vllm/vllm-openai@sha256:770fe65b2c73ee74a5c42165cf3433de4048cc2cd9c57a937ca4e35aba5aa87b"), //7/25/26 v0.26.0 linux/amd64
+		ModelID:            env("SOVEREIGN_MODEL_ID", "cyankiwi/Qwen3.5-9B-AWQ-4bit"),
+		ModelRevision:      env("SOVEREIGN_MODEL_REVISION", "156edc4bbeb8d1910ee7be9196bafaf1bc052156"),
+		ServedModelName:    env("SOVEREIGN_SERVED_MODEL_NAME", "code-qwen35-9b-awq"),
+		DType:              env("SOVEREIGN_VLLM_DTYPE", "bfloat16"),
+		Quantization:       env("SOVEREIGN_VLLM_QUANTIZATION", "compressed-tensors"),
+		AttentionBackend:   env("SOVEREIGN_VLLM_ATTENTION_BACKEND", ""),
+		ToolCallParser:     env("SOVEREIGN_VLLM_TOOL_CALL_PARSER", "qwen3_coder"),
+		ReasoningParser:    env("SOVEREIGN_VLLM_REASONING_PARSER", "qwen3"),
+		LanguageModelOnly:  envBool("SOVEREIGN_VLLM_LANGUAGE_MODEL_ONLY", true),
+		EnableThinking:     envBool("SOVEREIGN_VLLM_ENABLE_THINKING", true),
+		MaxModelLen:        envInt("SOVEREIGN_VLLM_MAX_MODEL_LEN", 16384),
+		KVCacheMemoryBytes: int64(envInt("SOVEREIGN_VLLM_KV_CACHE_MEMORY_BYTES", 4294967296)),
+		CachePVCName:       env("SOVEREIGN_MODEL_CACHE_PVC", "sovereign-model-cache"),
+		CachePath:          env("SOVEREIGN_MODEL_CACHE_PATH", "/model-cache"),
+		GPUNodeLabelKey:    "sovereign-ai.io/gpu-node",
+		GPUNodeLabelValue:  "true",
+		StartupTimeout:     time.Minute * 15,
+		RequestTimeout:     time.Minute * 3,
+		MaxOutputTokens:    4096,
+		MaxResponseBytes:   4194304, // 4 MB
+	}
+
+	// Validate inference profile
+	if err := inferenceProfile.Validate(); err != nil {
+		log.Fatalf("invalid inference profile: %v", err)
+	}
+
 	// Inject Argo/Kustomize deployment into ephemeral workspace
 	validationProvider := validation.NewArgoKustomize(dynamicClient, env("SOVEREIGN_ARGO_NAMESPACE", "argocd"))
 
 	// Controller initialization
 	reconcilers := []interface{ SetupWithManager(ctrl.Manager) error }{
 		&controllers.SovereignProjectReconciler{
-			Client: mgr.GetClient(),
-			Audit:  recorder},
-		&controllers.WorkflowReconciler{
+			Client:      mgr.GetClient(),
+			Provisioner: validationProvider,
+			Audit:       recorder},
+		&workflow.WorkflowReconciler{
 			Client:         mgr.GetClient(),
+			Reader:         mgr.GetAPIReader(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,
 			StorageClass:   storageClass,
 			BootstrapImage: env("SOVEREIGN_BOOTSTRAP_IMAGE", "sovereign-artifact-bootstrap:dev")},
-		&controllers.StepAttemptReconciler{
+		&stepattempt.StepAttemptReconciler{
 			Client: mgr.GetClient(),
+			Reader: mgr.GetAPIReader(),
 			Scheme: mgr.GetScheme(),
 			Audit:  recorder},
-		&controllers.AgentRunReconciler{
-			Client:         mgr.GetClient(),
-			Scheme:         mgr.GetScheme(),
-			Audit:          recorder,
-			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev")},
-		&controllers.UtilityOperationReconciler{
+		&agentrun.AgentRunReconciler{
+			ContextAPIAddress:   contextAPIAddress,
+			ContextTLSNamespace: systemNamespace,
+			ContextTLSSecret:    env("SOVEREIGN_CONTEXT_TLS_SECRET", "sovereign-api-tls"),
+			Client:              mgr.GetClient(),
+			Scheme:              mgr.GetScheme(),
+			Audit:               recorder,
+			CollectorImage:      env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
+			MCPImage:            env("SOVEREIGN_MCP_IMAGE", "sovereign-mcp-server:dev")},
+		&utilityoperation.UtilityOperationReconciler{
 			Client:         mgr.GetClient(),
 			Scheme:         mgr.GetScheme(),
 			Audit:          recorder,
 			Policy:         policyEvaluator,
 			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
 			UtilityImage:   env("SOVEREIGN_UTILITY_IMAGE", "sovereign-utility-runner:dev")},
+		&controllers.HumanSessionReconciler{
+			Client:          mgr.GetClient(),
+			Scheme:          mgr.GetScheme(),
+			Audit:           recorder,
+			CodeServerImage: env("SOVEREIGN_CODE_SERVER_IMAGE", "ghcr.io/coder/code-server:4.99.4")},
+		&validationrun.ValidationRunReconciler{
+			CollectorImage: env("SOVEREIGN_COLLECTOR_IMAGE", "sovereign-artifact-collector:dev"),
+			Client:         mgr.GetClient(),
+			Provider:       validationProvider,
+			Audit:          recorder},
+		&controllers.InferenceEndpointReconciler{
+			Client:  mgr.GetClient(),
+			Scheme:  mgr.GetScheme(),
+			Audit:   recorder,
+			Profile: inferenceProfile},
+		&controllers.InferenceLeaseReconciler{
+			Client:               mgr.GetClient(),
+			Scheme:               mgr.GetScheme(),
+			Profile:              inferenceProfile,
+			DefaultStaticVRAMMiB: int64(envInt("SOVEREIGN_MODEL_VRAM_MIB", 9216)),
+			DefaultMaxKVRAMMiB:   int64(envInt("SOVEREIGN_KV_VRAM_MIB", 4096)),
+			SafetyHeadroomMiB:    int64(envInt("SOVEREIGN_VRAM_HEADROOM_MIB", 2048)),
+			Policy:               policyEvaluator,
+			Audit:                recorder,
+		},
 		&controllers.ApprovalRequestReconciler{
 			Client: mgr.GetClient(),
 			Audit:  recorder},
 		&controllers.ArtifactReconciler{
 			Client: mgr.GetClient(),
 			Audit:  recorder},
-		&controllers.HumanSessionReconciler{
-			Client:          mgr.GetClient(),
-			Scheme:          mgr.GetScheme(),
-			Audit:           recorder,
-			CodeServerImage: env("SOVEREIGN_CODE_SERVER_IMAGE", "ghcr.io/coder/code-server:4.99.4")},
-		&controllers.ValidationRunReconciler{
-			Client:   mgr.GetClient(),
-			Provider: validationProvider,
-			Audit:    recorder},
-		&controllers.InferenceEndpointReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
-			Audit:  recorder},
-		&controllers.InferenceLeaseReconciler{
-			Client:               mgr.GetClient(),
-			Scheme:               mgr.GetScheme(),
-			RuntimeImage:         env("SOVEREIGN_VLLM_IMAGE", "vllm/vllm-openai:v0.10.2"),
-			DefaultStaticVRAMMiB: int64(envInt("SOVEREIGN_MODEL_VRAM_MIB", 4096)),
-			DefaultMaxKVRAMMiB:   int64(envInt("SOVEREIGN_KV_VRAM_MIB", 8192)),
-			SafetyHeadroomMiB:    int64(envInt("SOVEREIGN_VRAM_HEADROOM_MIB", 1024)),
-			Policy:               policyEvaluator,
-			Audit:                recorder,
-		},
 	}
 	for _, reconciler := range reconcilers {
 		if err := reconciler.SetupWithManager(mgr); err != nil {

@@ -51,6 +51,18 @@ func TestMVPPolicyGovernsUtilityOperations(t *testing.T) {
 		{name: "candidate preparation without credential", allowed: true, request: map[string]any{
 			"operation": "candidate.prepare", "workflow": "wf", "step": "prepare-candidate", "project": "project",
 		}},
+		{name: "anonymous registry build", allowed: true, request: map[string]any{
+			"operation": "build.image", "credentialClass": "registry", "hasCredential": false,
+			"parameters": map[string]string{"imageName": "registry.internal/example/app"},
+		}},
+		{name: "authenticated registry build", allowed: true, request: map[string]any{
+			"operation": "build.image", "credentialClass": "registry", "hasCredential": true,
+			"parameters": map[string]string{"imageName": "registry.internal/example/app"},
+		}},
+		{name: "registry build without image name", allowed: false, request: map[string]any{
+			"operation": "build.image", "credentialClass": "registry", "hasCredential": false,
+			"parameters": map[string]string{},
+		}},
 		{name: "push without repository credential", allowed: false, request: map[string]any{
 			"operation": "git.push", "credentialClass": "repository", "hasCredential": false,
 			"parameters": map[string]string{"branch": "feature"},

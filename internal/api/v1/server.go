@@ -219,9 +219,10 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse workflow manifest: %v", err)
 	}
 
-	// Validate the exact submitted bytes. Do not decode and re-marshal them:
-	// their digest and eventual stored representation are byte-preserving.
-	if err := artifactcontract.ValidateContract(artifactcontract.ChangeRequestContract, req.GetChangeRequestContent()); err != nil {
+	// Expand authoring input before admission. Every stored digest below refers
+	// to the structured artifact; fully structured requests remain byte-preserving.
+	changeRequestContent, err := artifactcontract.PrepareChangeRequest(req.GetChangeRequestContent())
+	if err != nil {
 		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
 			"submit", workflowCRD.Name, "rejected", "InvalidChangeRequest", projectName, nil,
 			map[string]string{"error": err.Error()}); auditErr != nil {
@@ -247,6 +248,13 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		}
 		return nil, status.Errorf(codes.Internal, "failed to read project: %v", err)
 	}
+	if !v1alpha1.ProjectReady(&project) {
+		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
+			"submit", workflowCRD.Name, "rejected", "ProjectNotReady", projectName, nil, nil); auditErr != nil {
+			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
+		}
+		return nil, status.Error(codes.FailedPrecondition, "project must have current ConfigurationValid and ValidationProviderReady conditions before workflow submission")
+	}
 	// Verify workflow has at least 1 step
 	if len(workflowCRD.Spec.Steps) == 0 {
 		if auditErr := s.appendAPIEvent(ctx, "WorkflowCreateRejected", audit.Subject{Project: projectName},
@@ -255,6 +263,9 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 			return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
 		}
 		return nil, status.Error(codes.InvalidArgument, "workflow must contain at least one step")
+	}
+	if err := v1alpha1.ValidateApprovalRequirements(workflowCRD.Spec.Steps); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid approval binding: %v", err)
 	}
 	// normalize workflow and namespace names
 	baseName := normalizeName(workflowCRD.Name)
@@ -311,7 +322,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 			},
 		},
 		Immutable:  &immutable,
-		BinaryData: map[string][]byte{bootstrapKey: append([]byte(nil), req.ChangeRequestContent...)},
+		BinaryData: map[string][]byte{bootstrapKey: append([]byte(nil), changeRequestContent...)},
 	}
 	if err := s.Client.Create(ctx, changeRequestCm); err != nil {
 		auditErr := s.appendAPIEvent(ctx, "WorkflowCreateFailed", subject, "create", changeRequestCm.Name, "failed",
@@ -324,7 +335,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 		}
 		return nil, status.Errorf(codes.Internal, "failed to create bootstrap input: %v", err)
 	}
-	changeRequestDigest := artifactcontract.DigestBytes(req.ChangeRequestContent)
+	changeRequestDigest := artifactcontract.DigestBytes(changeRequestContent)
 	if auditErr := s.appendAPIEvent(ctx, "WorkflowBootstrapInputStaged", subject, "create", changeRequestCm.Name, "created", "",
 		workflowID, map[string]string{"configMap": changeRequestCm.Name, "digest": changeRequestDigest}, nil); auditErr != nil {
 		return nil, status.Errorf(codes.Internal, "failed to record audit event: %v", auditErr)
@@ -338,7 +349,7 @@ func (s *Server) CreateWorkflow(ctx context.Context, req *pb.CreateWorkflowReque
 	}
 	workflowCRD.ObjectMeta.Labels["sovereign-ai.io/project"] = projectName
 	workflowCRD.ObjectMeta.Labels["sovereign-ai.io/workflow-id"] = workflowID
-	workflowCRD.Spec.Project.Name = projectName
+	workflowCRD.Spec.Project = v1alpha1.UIDReference{Name: projectName, UID: project.UID}
 	workflowCRD.Spec.WorkflowID = workflowID
 	workflowCRD.Spec.RequesterSubject = requester.Subject
 	workflowCRD.Spec.Bootstrap = v1alpha1.WorkflowBootstrapSpec{

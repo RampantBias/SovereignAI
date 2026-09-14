@@ -54,28 +54,27 @@ spec:
         name: git.createBranch
         parameters:
           branch: feature/control-plane-boundary
-    - name: test-writer
-      kind: Agent
-      agent:
-        responsibility: Produce tests from the admitted plan
-        image: software-agent:dev
-        executable: ["/domain-agent", "--role", "test-writer"]
-      inputs:
-        - contract: implementation-plan/v1
-      outputs:
-        - contract: patch/v1
-        - contract: test-plan/v1
     - name: developer
       kind: Agent
       agent:
-        responsibility: Implement the admitted plan and tests
+        responsibility: Implement the admitted plan
         image: software-agent:dev
         executable: ["/domain-agent", "--role", "developer"]
       inputs:
         - contract: implementation-plan/v1
-        - contract: test-plan/v1
       outputs:
-        - contract: patch/v1
+        - contract: change-set/v1
+    - name: test-writer
+      kind: Agent
+      agent:
+        responsibility: Produce tests for the admitted requirements and developer files
+        image: software-agent:dev
+        executable: ["/domain-agent", "--role", "test-writer"]
+      inputs:
+        - contract: implementation-plan/v1
+        - contract: change-set/v1
+      outputs:
+        - contract: test-change-set/v1
     - name: tests
       kind: Utility
       utility:
@@ -255,7 +254,7 @@ Artifacts should be formally typed even when a step may produce a variable numbe
 - security classification; and
 - validation status.
 
-Examples include `implementation-plan/v1`, `patch/v1`, `test-report/v1`, `review/v1`, and `validation-result/v1`.
+Examples include `implementation-plan/v1`, `change-set/v1`, `test-change-set/v1`, `test-report/v1`, and `validation-result/v1`.
 
 Variable output is represented as a collection conforming to a declared contract, not as untyped files discovered after execution.
 
@@ -263,11 +262,11 @@ Variable output is represented as a collection conforming to a declared contract
 
 Utility steps execute narrow, audited operations without model inference. Git is the first important example.
 
-Agents may inspect repository material through read-only context capabilities and produce proposed patches. They do not receive repository credentials. Trusted utility jobs perform operations such as:
+Agents inspect repository material and mutate isolated attempt overlays through bounded context capabilities. Trusted runtime code materializes those overlays as complete changed-file manifests. Agents do not receive repository credentials. Trusted utility jobs perform operations such as:
 
 - clone or initialize workspace;
 - create a workflow branch;
-- apply an accepted patch;
+- verify accepted file base digests and stage the declared complete results;
 - commit with workflow and artifact provenance;
 - push a branch;
 - create a merge request; and
@@ -275,7 +274,10 @@ Agents may inspect repository material through read-only context capabilities an
 
 Every utility step receives a typed request, a least-privilege credential, a restricted network policy, and a terminal output contract.
 
-The workflow declares a named utility request, not a shell command. The workflow controller creates an immutable `UtilityOperation` CRD. Its controller derives one stable idempotency key per workflow step, evaluates policy, resolves the Project repository and test/build templates, and mounts an operation-scoped credential only when the admitted operation requires it. `repository.initialize`, `git.createBranch`, `git.commit`, `git.push`, `git.merge`, `test.run`, and `build.image` are the MVP operation vocabulary.
+The workflow declares a named utility request, not a shell command. The workflow controller creates an immutable `UtilityOperation` CRD. Its controller derives one stable idempotency key per workflow step, evaluates policy, resolves the Project repository and test/build templates, and mounts an operation-scoped credential only when the admitted operation requires it. `repository.initialize`, `git.createBranch`, `git.commit`, `git.push`, `git.merge`, `git.mergeRequest`, `test.run`, and `build.image` are the MVP operation vocabulary.
+
+The canonical workflow uses a `git.mergeRequest` to finish the workflow with a pull request,
+without merging the target. No useful message is currently included with the merge at this time.
 
 ## Human gates and intervention
 
@@ -314,4 +316,3 @@ Dynamic planning can preserve determinism through immutable workflow revisions:
 5. execution continues against that revision.
 
 No agent may silently rewrite its active graph.
-

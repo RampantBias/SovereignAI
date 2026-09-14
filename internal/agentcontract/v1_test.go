@@ -3,15 +3,41 @@ package agentcontract
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestRetryFeedbackValidationAndSanitization(t *testing.T) {
+	feedback := RetryFeedback{
+		PreviousAttemptRef: "test-author-001",
+		Code:               "InvalidChangedFile",
+		Message:            "patch\tfailed\nvalidation\x00",
+	}
+	feedback.Message = SanitizeRetryFeedbackMessage(feedback.Message)
+	if feedback.Message != "patch failed validation" {
+		t.Fatalf("sanitized message = %q", feedback.Message)
+	}
+	if err := feedback.Validate(); err != nil {
+		t.Fatalf("valid feedback rejected: %v", err)
+	}
+
+	feedback.Code = "invalid-code"
+	if err := feedback.Validate(); err == nil {
+		t.Fatal("invalid diagnostic code accepted")
+	}
+	feedback.Code = "InvalidChangedFile"
+	feedback.Message = strings.Repeat("x", MaxRetryFeedbackMessageBytes+1)
+	if err := feedback.Validate(); err == nil {
+		t.Fatal("oversized diagnostic message accepted")
+	}
+}
 
 func TestResultRejectsArtifactPathEscape(t *testing.T) {
 	root := t.TempDir()
 	result := Result{
 		SchemaVersion: Version,
 		Outcome:       "Succeeded",
-		Artifacts:     []ArtifactOutput{{Contract: "patch/v1", Path: filepath.Join(root, "..", "secret")}},
+		Artifacts:     []ArtifactOutput{{Contract: "change-set/v1", Path: filepath.Join(root, "..", "secret")}},
 	}
 	if err := result.Validate(root); err == nil {
 		t.Fatal("expected path escape to be rejected")
@@ -20,12 +46,12 @@ func TestResultRejectsArtifactPathEscape(t *testing.T) {
 
 func TestWriteAndReadResult(t *testing.T) {
 	root := t.TempDir()
-	artifact := filepath.Join(root, "patch.diff")
+	artifact := filepath.Join(root, "change-set.json")
 	resultPath := filepath.Join(root, "control", "result.json")
 	want := Result{
 		SchemaVersion: Version,
 		Outcome:       "Succeeded",
-		Artifacts:     []ArtifactOutput{{Contract: "patch/v1", Path: artifact}},
+		Artifacts:     []ArtifactOutput{{Contract: "change-set/v1", Path: artifact}},
 	}
 	if err := WriteResult(resultPath, want); err != nil {
 		t.Fatal(err)

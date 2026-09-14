@@ -11,6 +11,10 @@ import (
 
 const Version = "sovereign.ai/utility-contract/v1"
 
+// TestRunCodeError identifies filtered output from a failed Go test command.
+// It is diagnostic evidence, not proof that the failure is in application code.
+const TestRunCodeError = "TestRunCodeError"
+
 type ArtifactInput struct {
 	Name     string `json:"name"`
 	Contract string `json:"contract"`
@@ -44,6 +48,17 @@ type WorkspaceWriteAuthority struct {
 	WriterEpoch    int32  `json:"writerEpoch"`
 }
 
+// LineageReferences carries the durable control-plane decisions into the
+// runtime boundary. The runner uses these event identities to attach its
+// invariant evaluations and observed consequences to the authority that
+// permitted this exact invocation.
+type LineageReferences struct {
+	AdmissionDecisionEvent string `json:"admissionDecisionEvent,omitempty"`
+	AuthorityEvent         string `json:"authorityEvent,omitempty"`
+	InputsEvent            string `json:"inputsEvent,omitempty"`
+	ExecutionDecisionEvent string `json:"executionDecisionEvent,omitempty"`
+}
+
 type Input struct {
 	SchemaVersion    string                  `json:"schemaVersion"`
 	WorkflowID       string                  `json:"workflowId"`
@@ -64,6 +79,7 @@ type Input struct {
 	ResultPath       string                  `json:"resultPath,omitempty"`
 	AuditEventsPath  string                  `json:"auditEventsPath,omitempty"`
 	WorkspaceWrite   WorkspaceWriteAuthority `json:"workspaceWrite"`
+	Lineage          *LineageReferences      `json:"lineage,omitempty"`
 }
 
 type ArtifactOutput struct {

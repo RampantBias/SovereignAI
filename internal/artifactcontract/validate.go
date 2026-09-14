@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,7 +33,7 @@ func (v ChangeRequest) Validate() error {
 	if err := boundedText("description", v.Description, 16<<10); err != nil {
 		return err
 	}
-	if err := validateStringList("acceptanceCriteria", v.AcceptanceCriteria, 1, 32, 4<<10, false); err != nil {
+	if err := ValidateAcceptanceCriteria(v.AcceptanceCriteria, v.AcceptanceCriteriaSetDigest); err != nil {
 		return err
 	}
 	if err := validateRepositoryURL(v.RepositoryURL); err != nil {
@@ -54,6 +53,24 @@ func (v RepositoryRevision) Validate() error {
 		return err
 	}
 	return validateObjectIdentity("utilityOperation", v.UtilityOperation)
+}
+
+func (v BranchReference) Validate() error {
+	if err := validateRepositoryURL(v.RepositoryURL); err != nil {
+		return fieldError("repositoryURL", err)
+	}
+	if err := validateBranch(v.Branch); err != nil {
+		return fieldError("branch", err)
+	}
+	for field, value := range map[string]string{"baseCommit": v.BaseCommit, "commit": v.Commit} {
+		if err := validateGitOIDField(field, value); err != nil {
+			return err
+		}
+	}
+	if err := validateObjectIdentity("utilityOperation", v.UtilityOperation); err != nil {
+		return err
+	}
+	return boundedText("idempotencyKey", v.IdempotencyKey, 512)
 }
 
 func (v ImplementationPlan) Validate() error {
@@ -118,10 +135,19 @@ func (v ImplementationPlan) Validate() error {
 	return validateStringList("assumptions", v.Assumptions, 0, 32, 4<<10, true)
 }
 
-func (v ChangeSet) Validate() error {
-	if v.Format != "unified-diff" {
-		return fmt.Errorf("format must be unified-diff")
+func (v TestChangeSet) Validate() error {
+	if err := ChangeSet(v).Validate(); err != nil {
+		return err
 	}
+	for _, file := range v.Files {
+		if !isTestPath(file.Path) {
+			return fmt.Errorf("test change set file %q is not a recognized test path", file.Path)
+		}
+	}
+	return nil
+}
+
+func (v ChangeSet) Validate() error {
 	if err := boundedText("summary", v.Summary, 1024); err != nil {
 		return err
 	}
@@ -131,41 +157,68 @@ func (v ChangeSet) Validate() error {
 	for field, value := range map[string]string{
 		"changeRequestDigest":      v.ChangeRequestDigest,
 		"implementationPlanDigest": v.ImplementationPlanDigest,
-		"patchDigest":              v.PatchDigest,
 	} {
 		if err := validateDigestField(field, value); err != nil {
 			return err
 		}
 	}
-	patchBytes := []byte(v.Patch)
-	if len(patchBytes) == 0 || len(patchBytes) > MaxPatchBytes {
-		return fmt.Errorf("patch must contain 1 through %d UTF-8 bytes", MaxPatchBytes)
+	return validateChangedFiles(v.Files)
+}
+
+func validateChangedFiles(files []ChangedFile) error {
+	if len(files) == 0 || len(files) > 128 {
+		return fmt.Errorf("files must contain 1 through 128 changed files")
 	}
-	if !utf8.ValidString(v.Patch) || strings.ContainsRune(v.Patch, '\x00') || strings.Contains(v.Patch, "\r") {
-		return fmt.Errorf("patch must be UTF-8 with LF line endings and no NUL")
+	paths := make([]string, 0, len(files))
+	for index, file := range files {
+		field := fmt.Sprintf("files[%d]", index)
+		if err := validateRepositoryPath(file.Path); err != nil {
+			return fieldError(field+".path", err)
+		}
+		if !slices.Contains([]string{"add", "modify", "delete"}, file.Action) {
+			return fmt.Errorf("%s.action is invalid", field)
+		}
+		switch file.Action {
+		case "add":
+			if file.BaseDigest != "absent" {
+				return fmt.Errorf("%s.baseDigest must be absent for an added file", field)
+			}
+		case "modify", "delete":
+			if err := validateDigestField(field+".baseDigest", file.BaseDigest); err != nil {
+				return err
+			}
+		}
+		if file.Action == "delete" {
+			if file.ResultContent != nil || file.ResultDigest != "" {
+				return fmt.Errorf("%s delete must omit resultContent and resultDigest", field)
+			}
+		} else {
+			if file.ResultContent == nil {
+				return fmt.Errorf("%s.resultContent is required", field)
+			}
+			content := []byte(*file.ResultContent)
+			if len(content) > MaxChangedFileBytes || !utf8.Valid(content) || strings.ContainsRune(*file.ResultContent, '\x00') {
+				return fmt.Errorf("%s.resultContent must be UTF-8 text without NUL and at most %d bytes", field, MaxChangedFileBytes)
+			}
+			if err := validateDigestField(field+".resultDigest", file.ResultDigest); err != nil {
+				return err
+			}
+			if file.ResultDigest != DigestBytes(content) {
+				return fmt.Errorf("%s.resultDigest does not match resultContent", field)
+			}
+			if file.Action == "modify" && file.ResultDigest == file.BaseDigest {
+				return fmt.Errorf("%s modify does not change file content", field)
+			}
+		}
+		paths = append(paths, file.Path)
 	}
-	if v.ByteCount != len(patchBytes) {
-		return fmt.Errorf("byteCount does not match patch bytes")
-	}
-	if v.PatchDigest != DigestBytes(patchBytes) {
-		return fmt.Errorf("patchDigest does not match patch bytes")
-	}
-	files, added, deleted, err := inspectUnifiedDiff(v.Patch)
-	if err != nil {
-		return err
-	}
-	if !slices.Equal(files, v.Files) {
-		return fmt.Errorf("files does not match parsed patch paths")
-	}
-	if v.LineCounts.Added != added || v.LineCounts.Deleted != deleted {
-		return fmt.Errorf("lineCounts does not match parsed patch")
-	}
-	return nil
+	return requireSortedUnique("files", paths)
 }
 
 func (v PreparedCandidate) Validate() error {
 	for field, value := range map[string]string{
 		"repositoryRevisionDigest": v.RepositoryRevisionDigest,
+		"testChangeSetDigest":      v.TestChangeSetDigest,
 		"changeSetDigest":          v.ChangeSetDigest,
 		"preparationCommandDigest": v.PreparationCommandDigest,
 	} {
@@ -431,6 +484,27 @@ func (v RemoteProof) Validate(targetBranch, mergeCommit string) error {
 	return fieldError("verifiedAt", err)
 }
 
+func (v CandidateRemoteProof) Validate() error {
+	if err := validateDigestField("candidateRevisionDigest", v.CandidateRevisionDigest); err != nil {
+		return err
+	}
+	if err := validateRepositoryURL(v.RepositoryURL); err != nil {
+		return fieldError("repositoryURL", err)
+	}
+	branch, ok := strings.CutPrefix(v.Ref, "refs/heads/")
+	if !ok {
+		return fmt.Errorf("ref must identify a branch")
+	}
+	if err := validateBranch(branch); err != nil {
+		return fieldError("ref", err)
+	}
+	if err := validateGitOIDField("observedCommit", v.ObservedCommit); err != nil {
+		return err
+	}
+	_, err := parseTimestamp(v.VerifiedAt)
+	return fieldError("verifiedAt", err)
+}
+
 func (v MergeRevision) Validate() error {
 	for field, value := range map[string]string{
 		"candidateRevisionDigest": v.CandidateRevisionDigest,
@@ -465,54 +539,6 @@ func (v MergeRevision) Validate() error {
 		}
 	}
 	return fieldError("remoteProof", v.RemoteProof.Validate(v.TargetBranch, v.MergeCommit))
-}
-
-func inspectUnifiedDiff(patch string) ([]string, int, int, error) {
-	if strings.Contains(patch, "```") {
-		return nil, 0, 0, fmt.Errorf("patch contains Markdown fencing")
-	}
-	for _, forbidden := range []string{"GIT binary patch", "Binary files ", "Subproject commit ", "\nold mode ", "\nnew mode "} {
-		if strings.Contains(patch, forbidden) {
-			return nil, 0, 0, fmt.Errorf("patch contains forbidden binary, submodule, or mode content")
-		}
-	}
-	lines := strings.Split(patch, "\n")
-	files := make([]string, 0)
-	hunks := 0
-	added := 0
-	deleted := 0
-	for _, line := range lines {
-		if strings.HasPrefix(line, "diff --git ") {
-			fields := strings.Fields(line)
-			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") {
-				return nil, 0, 0, fmt.Errorf("patch has malformed diff header")
-			}
-			oldPath := strings.TrimPrefix(fields[2], "a/")
-			newPath := strings.TrimPrefix(fields[3], "b/")
-			if err := validateRepositoryPath(oldPath); err != nil {
-				return nil, 0, 0, fieldError("old patch path", err)
-			}
-			if err := validateRepositoryPath(newPath); err != nil {
-				return nil, 0, 0, fieldError("new patch path", err)
-			}
-			files = append(files, oldPath, newPath)
-		}
-		if strings.HasPrefix(line, "@@ ") {
-			hunks++
-		}
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			added++
-		}
-		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			deleted++
-		}
-	}
-	if len(files) == 0 || hunks == 0 || added+deleted == 0 {
-		return nil, 0, 0, fmt.Errorf("patch must contain a non-empty unified diff")
-	}
-	sort.Strings(files)
-	files = slices.Compact(files)
-	return files, added, deleted, nil
 }
 
 func boundedText(field, value string, maximum int) error {
@@ -611,6 +637,31 @@ func validateRepositoryPath(value string) error {
 		}
 	}
 	return nil
+}
+
+func isTestPath(value string) bool {
+	segments := strings.Split(value, "/")
+	for _, segment := range segments[:len(segments)-1] {
+		directory := strings.ToLower(segment)
+		if directory == "test" || directory == "tests" || directory == "testdata" || directory == "test_data" ||
+			directory == "__tests__" || strings.HasSuffix(directory, ".tests") {
+			return true
+		}
+	}
+
+	base := segments[len(segments)-1]
+	lowerBase := strings.ToLower(base)
+	if strings.HasPrefix(lowerBase, "test_") || lowerBase == "conftest.py" {
+		return true
+	}
+	extension := strings.LastIndexByte(base, '.')
+	if extension <= 0 {
+		return false
+	}
+	stem := base[:extension]
+	lowerStem := strings.ToLower(stem)
+	return strings.HasSuffix(lowerStem, "_test") || strings.HasSuffix(lowerStem, ".test") ||
+		strings.HasSuffix(lowerStem, ".spec") || strings.HasSuffix(stem, "Test") || strings.HasSuffix(stem, "Tests")
 }
 
 func validateBranch(value string) error {

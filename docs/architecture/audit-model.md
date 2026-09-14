@@ -5,7 +5,7 @@
 
 ## Purpose
 
-SovereignAI must explain what happened, who or what caused it, what authority was used, which inputs informed it, and which artifacts resulted. This is necessary for regulated environments, incident investigation, human review, and evaluation of autonomous behavior.
+SovereignAI's goal with obervability is to go beyond regular telemetry, and put significant focus on gathering the right semantics to make autonomous workflows explainable and auditable after the fact. This means understanding how authority, and specifically warrants, propagate through the system, what inputs and outputs were used and created, and how these elements can relate together. The core principle is using the research I'm reading and synthesizing semantic models across this specific control plane
 
 Audit records are authoritative domain evidence. Application logs, Kubernetes Events, metrics, and traces are valuable operational telemetry, but they are not substitutes for an audit record.
 
@@ -49,16 +49,18 @@ Decision lineage is the causal path through the audit event graph. It is assembl
 
 1. which workflow and step definition revision was admitted;
 2. which agent image, model, inference runtime, and hardware served the attempt;
-3. which context bundle, input artifacts, contracts, and capabilities were supplied;
+3. which context bundle, input artifacts, contracts, and capabilities were supplied (including what changes to the context between inference calls);
 4. which tools and platform services were invoked;
 5. which state transitions, policy decisions, and validation results occurred;
 6. which human actions or approvals affected progression;
 7. which failure signal was observed and which recovery policy was selected; and
 8. where related artifacts, logs, traces, and metric windows can be inspected.
 
-Playback is a user experience built from that lineage. It may resemble a video timeline, but it reconstructs externally observable actions and evidence; it does not expose hidden model reasoning or guarantee deterministic re-execution.
+Playback is a user experience built from that lineage. Initially implemented as a json output, but will be routed through a slightly friendlier projection in html; it does not expose hidden model reasoning or guarantee deterministic re-execution. 
 
-The display medium is intentionally undecided. A CLI timeline is sufficient for the first implementation; a graphical playback interface may follow.
+My idea for playback is simple: Can I explain what happened in a way that execution telemetry cannot, and can that explanation actually serve real value, especially under failures? 
+
+The display is still a work in progress, mostly scratch now. A CLI timeline is sufficient for the first implementation; a graphical playback interface may follow.
 
 ## Event envelope
 
@@ -243,9 +245,27 @@ High-frequency hardware metrics belong in the telemetry system. Evaluation recor
 
 Comparisons must identify the workflow population and domain. A successful microservices-development workflow should not be treated as evidence that a structurally different engineering workflow is equally automatable.
 
+## Audit Events
+
+I will utilize a variety of audit events that can be joined together into a cohesive evidence model for a workflow.
+
+
+```mermaid
+flowchart TD
+    A[DecisionEvidence] --> B[SourceEventRef]
+    A --> C[AuthorityEstablished]
+	A --> D[ArtifactEvidence]
+	A --> E[DecisionEvaluated]
+	A --> F[InvariantResult]
+	A --> G[ConsequenceEvidence]
+	A --> H[Verification]
+```
+
 ## Demo presentation
 
-The September demonstration should present an execution playback derived from decision lineage. It should visibly distinguish:
+The September demonstration should present an execution playback derived from decision lineage. The goal of the playback display will be to build the causal graph of the workflow operation. That graph should be able to answer operational questions, based on the expected MVP failures, to help show how decision lineage (at least as an experiment) could provide a bridge in the agent trust gap.
+
+It should visibly distinguish:
 
 - autonomous agent actions;
 - deterministic platform operations;
@@ -253,16 +273,8 @@ The September demonstration should present an execution playback derived from de
 - validation results; and
 - injected failure and recovery decisions.
 
-The failure segment should link to the relevant inference and GPU metric window so the operator can move from “what happened” to “what the hardware and serving stack were doing.”
-
-This timeline is the clearest proof of the project's reliability, governance, and attribution goals.
+The failure segment will focus purely on the lineage, as it best supports the focus of the talk.
 
 ## Open audit decisions
 
-- **AUTHOR NOTE:** Define required retention and deletion behavior for the target regulated scenario.
-- **AUTHOR NOTE:** Decide whether prompt/context bodies are retained, and under which policy.
-- **AUTHOR NOTE:** Define the MVP event transport and behavior when the audit sink is unavailable.
-- **AUTHOR NOTE:** Define integrity requirements: database controls, chained hashes, signatures, or immutable object storage.
-- **AUTHOR NOTE:** Choose the first public event schema convention, such as CloudEvents-inspired envelopes or a project-specific format.
-- **AUTHOR NOTE:** Define the initial playback query/API and whether the MVP renders it through the CLI or a minimal web view.
-- **AUTHOR NOTE:** Define the comparison cohort and outcome metrics used in the first cross-workflow evaluation.
+- Define a comparison between execution and lineage, showing how execution may retain some of the core information but not in a way that assigns valuable meaning.

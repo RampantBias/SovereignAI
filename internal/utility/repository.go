@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/SovereignAI/internal/artifactcontract"
 	"github.com/SovereignAI/internal/utilitycontract"
 )
 
@@ -17,7 +18,7 @@ type RepositoryInitialize struct{}
 func (RepositoryInitialize) Name() string { return OperationRepositoryInitialize }
 
 func (RepositoryInitialize) Validate(input utilitycontract.Input) error {
-	if err := ensureWorkspace(input); err != nil {
+	if err := EnsureWorkspace(input); err != nil {
 		return err
 	}
 	if _, err := parameter(input, "repositoryURL"); err != nil {
@@ -66,8 +67,12 @@ func (RepositoryInitialize) Run(ctx context.Context, input utilitycontract.Input
 	if err != nil {
 		return utilitycontract.Result{}, err
 	}
-	return gitArtifactResult(input, "repository snapshot initialized", map[string]string{
+	metadata := map[string]string{
 		"repository": repositoryURL, "requestedRevision": revision, "revision": commit, "idempotencyKey": input.IdempotencyKey,
+	}
+	return GitArtifactResult(input, "repository snapshot initialized", metadata, artifactcontract.RepositoryRevision{
+		RepositoryURL: repositoryURL, RequestedRevision: revision, ResolvedCommit: commit,
+		UtilityOperation: artifactcontract.ObjectIdentity{Namespace: input.Authority.Namespace, Name: input.Authority.Name, UID: input.Authority.UID},
 	})
 }
 

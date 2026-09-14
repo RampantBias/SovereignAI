@@ -79,9 +79,25 @@ spec:
               inputs:
                 items:
                   properties:
+                    artifactRef:
+                      properties:
+                        name:
+                          type: string
+                        uid:
+                          description: |-
+                            UID is a type that holds unique ID values, including UUIDs.  Because we
+                            don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                            intent and helps make sure that UIDs and names do not get conflated.
+                          type: string
+                      required:
+                      - name
+                      - uid
+                      type: object
                     digest:
                       type: string
                     name:
+                      type: string
+                    producerAttemptRef:
                       type: string
                   required:
                   - name
@@ -99,6 +115,24 @@ spec:
                   - version
                   type: object
                 type: array
+              priorAttemptRef:
+                properties:
+                  code:
+                    pattern: ^[A-Za-z][A-Za-z0-9]{0,127}$
+                    type: string
+                  message:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  previousAttemptRef:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - code
+                - message
+                - previousAttemptRef
+                type: object
               responsibility:
                 type: string
               stepName:
@@ -106,7 +140,19 @@ spec:
               timeout:
                 type: string
               workflowRef:
-                type: string
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
             required:
             - attempt
             - attemptRef
@@ -123,6 +169,27 @@ spec:
               completedAt:
                 format: date-time
                 type: string
+              completion:
+                description: |-
+                  AgentCompletionStatus is the controller-observed durable terminal action
+                  produced by agent_complete.
+                properties:
+                  digest:
+                    type: string
+                  disposition:
+                    enum:
+                    - changed
+                    - no_change
+                    - contract_ambiguous
+                    type: string
+                  summary:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                required:
+                - disposition
+                - summary
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -179,6 +246,9 @@ spec:
                   - type
                   type: object
                 type: array
+              failureMessage:
+                maxLength: 1024
+                type: string
               failureReason:
                 type: string
               inferenceLeaseRef:

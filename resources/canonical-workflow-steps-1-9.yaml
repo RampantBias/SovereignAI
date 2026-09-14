@@ -1,0 +1,187 @@
+apiVersion: aim.sovereign.io/v1alpha1
+kind: SovereignWorkflow
+metadata:
+  name: calculator-plan4
+spec:
+  projectRef:
+    name: calculator
+    uid: replace-with-project-uid
+  definitionRevision: plan4-v1
+  classification: internal
+  requestedVolumeSize: 1Gi
+  maxWorkflowAttempt: 3
+  steps:
+    - name: initialize-repository
+      kind: Utility
+      order: 1
+      utility:
+        name: repository.initialize
+      inputs:
+        - name: change-request
+      outputs:
+        - name: repository-revision
+          version: v1
+      timeout: 10m
+      maxAttempts: 2
+    - name: architect
+      kind: Agent
+      order: 2
+      agent:
+        responsibility: >
+          Analyze the change-request input and checked-out repository. Write the
+          complete implementation-plan candidate through candidate_write, identifying
+          affected files, planned changes, risks, and testing requirements. List every planned file change in
+          affectedPaths using the exact repository-relative path with / separators.
+          Do not use a leading ./, an absolute path, or any empty, ., .., or .git
+          path segment. Each affectedPaths path and action must correspond directly
+          to an implementation step, and no unrelated file may be listed.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["workspace_read", "workspace_tree", "workspace_search", "candidate_write", "agent_complete"]
+        inference:
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
+          estimatedKVRAMMiB: 1536
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: repository-revision
+      outputs:
+        - name: implementation-plan
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: developer
+      kind: Agent
+      order: 3
+      agent:
+        responsibility: >
+          Analyze the change request, implementation plan, and repository revision.
+          Implement the concrete production-code changes directly in
+          the attempt workspace to satisfy the change request and follow the implementation
+          plan. Select production paths only from affectedPaths entries that exactly 
+          match files discovered in the
+          repository, and never select or modify a recognized test path. Inspect current
+          content before editing and make the smallest targeted workspace changes.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_create", "workspace_tree", "workspace_search", "agent_complete"]
+        inference:
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
+          estimatedKVRAMMiB: 1536
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+      outputs:
+        - name: change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: test-author
+      kind: Agent
+      order: 4
+      agent:
+        responsibility: >
+          You are a unit test author. You will analyze the change 
+          request, implementation plan, repository revision, and developer change request. You are responsible 
+          for reading the test files relevant to the change request and implementation 
+          plan, and you will modify the test files to provide test coverage for the developer's changes. 
+          Current tests verify the current behavior, they may not verify the target behavior.
+          Your result must be compilable and include any relevant packages.
+          Implement the concrete test-code changes directly in the attempt workspace 
+          to verify the requested behavior, including relevant success, failure, and 
+          edge cases. Production paths in the implementation plan describe the 
+          behavior to test; they do not authorize production changes. Modify or add 
+          only to files under recognized test paths, specifically files with _test.go in the name.
+
+          For Golang, a recognized test path must end in _test.go and must be selected from 
+          an exact _test.go path discovered in the repository. Inspect current content 
+          before editing, do not invent a test directory or production path, and make 
+          the smallest targeted workspace changes.
+        image: sovereign-reference-agent:dev
+        executable: ["/reference-agent"]
+        capabilities: ["workspace_read", "workspace_write", "workspace_replace", "workspace_tree", "workspace_search", "agent_complete"]
+        inference:
+          model: code-qwen35-9b-awq
+          modelRevision: "156edc4bbeb8d1910ee7be9196bafaf1bc052156"
+          estimatedKVRAMMiB: 1536
+          sharingScope: SharedWithinWorkflow
+      inputs:
+        - name: change-request
+        - name: implementation-plan
+        - name: repository-revision
+        - name: change-set
+      outputs:
+        - name: test-change-set
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: prepare-candidate
+      kind: Utility
+      order: 5
+      utility:
+        name: candidate.prepare
+      inputs:
+        - name: change-set
+        - name: repository-revision
+        - name: test-change-set
+      outputs:
+        - name: prepared-candidate
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: test-candidate
+      kind: Utility
+      order: 6
+      utility:
+        name: test.run
+      inputs:
+        - name: prepared-candidate
+      outputs:
+        - name: test-report
+          version: v1
+      timeout: 15m
+      maxAttempts: 2
+    - name: commit-candidate
+      kind: Utility
+      order: 7
+      utility:
+        name: git.commit
+        parameters:
+          message: "placeholder commit message"
+      inputs:
+        - name: prepared-candidate
+        - name: test-report
+      outputs:
+        - name: candidate-revision
+          version: v1
+      timeout: 10m
+      maxAttempts: 2
+    - name: push-candidate
+      kind: Utility
+      order: 8
+      utility:
+        name: git.push
+      inputs:
+        - name: candidate-revision
+      outputs:
+        - name: candidate-remote-proof
+          version: v1
+      timeout: 10m
+      maxAttempts: 2
+    - name: build-calculator
+      kind: Utility
+      order: 9
+      utility:
+        name: build.image
+      inputs:
+        - name: candidate-remote-proof
+        - name: candidate-revision
+      outputs:
+        - name: image-digest
+          version: v1
+      timeout: 30m
+      maxAttempts: 2

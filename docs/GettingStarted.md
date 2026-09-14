@@ -281,3 +281,90 @@ exact creation commands belong beside the components that consume them:
 Do not add placeholder Secret values to Kustomize packages. A component should
 reference a documented Secret name and key contract; the ordered installer
 creates the actual Secret.
+
+## 8. Submit the canonical workflow through the API
+
+The CLI is an operator client; it does not need to run as a Pod. Keep the
+workflow manifest and short-lived human token on the operator host, expose the
+cluster-internal API only through a loopback `kubectl port-forward`, and run
+`sovctl` locally. A CLI Pod would require mounting the same credentials and
+would add an unnecessary Kubernetes execution and credential boundary.
+
+Before this stage, the CRDs and control plane must be installed, all images
+used by steps 1–9 must be available to the cluster, the audit/Git/registry
+Secrets must exist, and the `mvp-default-policy` ConfigMap, `PolicyProfile`,
+and `sovereign-ai` Project must have been applied.
+
+Build and load every image used through step 9 on a k3s demo node:
+
+```console
+bash deploy/linux/build-images.sh
+bash deploy/linux/load-k3s-images.sh
+```
+
+Create the API TLS material and a 15-minute human submission token in a
+protected directory outside the repository. This updates only the API TLS and
+human-auth public-key Secrets; it never stores the private signing key or token
+in Kubernetes:
+
+```console
+mkdir -p /secure/sovereign-demo
+chmod 700 /secure/sovereign-demo
+bash deploy/linux/bootstrap-demo-auth.sh /secure/sovereign-demo
+```
+
+For a first install, create the auth material before applying the base package:
+
+```console
+kubectl apply -k config/crd/bases
+kubectl apply -k deploy/base
+kubectl -n sovereign-orchestrator-system rollout status deployment/sovereign-controller --timeout=3m
+kubectl -n sovereign-orchestrator-system rollout status deployment/sovereign-api --timeout=3m
+```
+
+Apply the policy bundle and demo API objects, then wait for Project validation:
+
+```console
+kubectl create configmap mvp-default-policy \
+  --namespace sovereign-orchestrator-system \
+  --from-file=policy.rego=internal/policy/mvp.rego \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f resources/ex-policy-profile.yaml
+kubectl apply -f resources/ex-project.yaml
+kubectl wait --for=condition=ConfigurationValid sovereignproject/sovereign-ai --timeout=3m
+```
+
+Submit the canonical steps 1–9 verification manifest and frozen change request. The script
+opens and closes a loopback port-forward and prints the assigned workflow ID. The bounded manifest is copied from the canonical definition through `build.image`; it intentionally omits unfinished steps 10–12:
+
+```console
+bash deploy/linux/submit-canonical-workflow.sh /secure/sovereign-demo sovereign-ai
+```
+
+The equivalent one-shot CLI command, while a port-forward is already running,
+is:
+
+```console
+go run ./cmd/cli \
+  --server 127.0.0.1:8080 \
+  --ca-file /secure/sovereign-demo/sovereign-api-ca.crt \
+  --server-name sovereign-api.sovereign-orchestrator-system.svc \
+  --token-file /secure/sovereign-demo/sovereign-human.jwt \
+  create workflow \
+  --project sovereign-ai \
+  --file resources/canonical-workflow-steps-1-9.yaml \
+  --change-request demo/change-requests/calculator-divide.v1.json
+```
+
+The API replaces the manifest's placeholder `projectRef` with the exact current
+Project name and UID, and records the authenticated token subject as the
+requester. If the token expires, rerun `bootstrap-demo-auth.sh`; it rotates the
+demo signing key, updates the mounted public key, and restarts an existing API
+Deployment.
+
+Watch the workflow and its typed artifacts with:
+
+```console
+kubectl get sovereignworkflows -A -w
+kubectl get stepattempts,artifacts,utilityoperations -A
+```

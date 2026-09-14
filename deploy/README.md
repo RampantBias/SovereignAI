@@ -23,27 +23,9 @@ Create PostgreSQL and that Secret in the order documented in
 [`../docs/GettingStarted.md`](../docs/GettingStarted.md) before applying the
 control plane.
 
-```powershell
-.\deploy\install.ps1 -Overlay smoke
-```
-
-Equivalent raw commands:
-
-```powershell
+```bash
 kubectl apply -k config/crd/bases
-kubectl apply -k deploy/overlays/smoke
 ```
-
-## Transfer To A Linux Test Server
-
-From this workstation:
-
-```powershell
-.\deploy\package.ps1
-scp .\dist\sovereign-ai-smoke-bundle.zip frank@your-server:/tmp/
-```
-
-On the Linux server:
 
 ```bash
 mkdir -p ~/sovereign-ai
@@ -51,9 +33,6 @@ unzip -o /tmp/sovereign-ai-smoke-bundle.zip -d ~/sovereign-ai
 cd ~/sovereign-ai
 bash deploy/linux/build-images.sh
 bash deploy/linux/load-k3s-images.sh
-bash deploy/linux/install.sh smoke
-bash deploy/linux/apply-smoke-workflow.sh success
-bash deploy/linux/watch-smoke.sh
 ```
 
 For a non-k3s cluster, push the images to a registry reachable by the cluster
@@ -77,15 +56,6 @@ kubectl -n sovereign-orchestrator-system logs deploy/sovereign-controller -f
 
 Remove control-plane workloads while keeping CRDs and workflow data:
 
-```powershell
-.\deploy\uninstall.ps1 -Overlay smoke
-```
-
-Remove control-plane workloads and CRDs:
-
-```powershell
-.\deploy\uninstall.ps1 -Overlay smoke -IncludeCrds
-```
-
 Workflow namespaces, PVCs, and external audit storage should be handled
 deliberately before a destructive purge flow is added.
+

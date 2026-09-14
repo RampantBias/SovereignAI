@@ -4,7 +4,19 @@
     "document": {
       "summary": "Add divide support",
       "description": "Add calculator division without regressing existing operations.",
-      "acceptanceCriteria": ["84 / 2 returns 42", "division by zero returns HTTP 422"],
+      "acceptanceCriteria": [
+  {
+    "id": "RQ-001",
+    "text": "84 / 2 returns 42",
+    "digest": "sha256:6ed7267c4acbd814ac73e6ff6fe256964162eee90ef24f2050da07a3d15687b9"
+  },
+  {
+    "id": "RQ-002",
+    "text": "division by zero returns HTTP 422",
+    "digest": "sha256:0e5b3e50389f2d1b27f3799b4572dba7e265431d39da48c37b40cce3ccd3e4f7"
+  }
+],
+      "acceptanceCriteriaSetDigest": "sha256:2195b987e6398348b51a1eb30b43922db985f5fb1e4949e3ae996624a2fef8d1",
       "repositoryURL": "https://git.example.test/calculator.git",
       "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -15,7 +27,26 @@
       "repositoryURL": "https://git.example.test/calculator.git",
       "requestedRevision": "main",
       "resolvedCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "utilityOperation": {"namespace": "workflow", "name": "initialize-001", "uid": "utility-operation-uid"}
+      "utilityOperation": {
+        "namespace": "workflow",
+        "name": "initialize-001",
+        "uid": "utility-operation-uid"
+      }
+    }
+  },
+  {
+    "contract": "branch-reference/v1",
+    "document": {
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "branch": "sovereign/workflow-uid",
+      "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "utilityOperation": {
+        "namespace": "workflow",
+        "name": "branch-001",
+        "uid": "utility-operation-uid"
+      },
+      "idempotencyKey": "workflow/workflow-uid/create-branch"
     }
   },
   {
@@ -26,43 +57,86 @@
       "repositoryRevisionDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "affectedPaths": [
-        {"path": "src/main.go", "action": "modify"},
-        {"path": "src/main_test.go", "action": "modify"}
+        {
+          "path": "src/main.go",
+          "action": "modify"
+        },
+        {
+          "path": "src/main_test.go",
+          "action": "modify"
+        }
       ],
-      "implementationSteps": ["Add divide dispatch", "Handle a zero divisor"],
-      "testStrategy": ["Run go test ./..."],
+      "implementationSteps": [
+        "Add divide dispatch",
+        "Handle a zero divisor"
+      ],
+      "testStrategy": [
+        "Run go test ./..."
+      ],
       "acceptanceMapping": [
-        {"criterionIndex": 1, "verification": "Exercise 84 divided by 2"},
-        {"criterionIndex": 2, "verification": "Exercise a zero right operand"}
+        {
+          "criterionIndex": 1,
+          "verification": "Exercise 84 divided by 2"
+        },
+        {
+          "criterionIndex": 2,
+          "verification": "Exercise a zero right operand"
+        }
       ],
-      "risks": ["Floating point edge cases"],
+      "risks": [
+        "Floating point edge cases"
+      ],
       "assumptions": []
+    }
+  },
+  {
+    "contract": "test-change-set/v1",
+    "document": {
+      "summary": "Replace the operation implementation",
+      "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "changeRequestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "implementationPlanDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "files": [
+        {
+          "path": "main_test.go",
+          "action": "modify",
+          "baseDigest": "sha256:01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee",
+          "resultDigest": "sha256:7aa7a5359173d05b63cfd682e3c38487f3cb4f7f1d60659fe59fab1505977d4c",
+          "resultContent": "new\n"
+        }
+      ]
     }
   },
   {
     "contract": "change-set/v1",
     "document": {
-      "format": "unified-diff",
       "summary": "Replace the operation implementation",
       "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "changeRequestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "implementationPlanDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "patch": "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-old\n+new\n",
-      "patchDigest": "sha256:44e2217ae8ff6faf34756c71b7b805ac2176d1a8f74c2f4a4f88a8423972a4d4",
-      "files": ["main.go"],
-      "byteCount": 81,
-      "lineCounts": {"added": 1, "deleted": 1}
+      "files": [
+        {
+          "path": "main.go",
+          "action": "modify",
+          "baseDigest": "sha256:01d09d19c2139a46aebfb577780d123d7396e97201bc7ead210a2ebff8239dee",
+          "resultDigest": "sha256:7aa7a5359173d05b63cfd682e3c38487f3cb4f7f1d60659fe59fab1505977d4c",
+          "resultContent": "new\n"
+        }
+      ]
     }
   },
   {
     "contract": "prepared-candidate/v1",
     "document": {
       "repositoryRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "testChangeSetDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "changeSetDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "branch": "sovereign/workflow-uid",
       "candidateTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "changedPaths": ["main.go"],
+      "changedPaths": [
+        "main.go"
+      ],
       "preparationCommandDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     }
   },
@@ -109,6 +183,16 @@
     }
   },
   {
+    "contract": "candidate-remote-proof/v1",
+    "document": {
+      "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repositoryURL": "https://git.example.test/calculator.git",
+      "ref": "refs/heads/sovereign/workflow-uid",
+      "observedCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verifiedAt": "2026-07-24T12:00:00Z"
+    }
+  },
+  {
     "contract": "image-digest/v1",
     "document": {
       "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -125,7 +209,11 @@
   {
     "contract": "validation-result/v1",
     "document": {
-      "validationRun": {"namespace": "workflow", "name": "validation-001", "uid": "validation-run-uid"},
+      "validationRun": {
+        "namespace": "workflow",
+        "name": "validation-001",
+        "uid": "validation-run-uid"
+      },
       "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "imageArtifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "candidateCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -134,18 +222,52 @@
       "imageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "infrastructureRevision": "infra-v1",
       "provider": "argocd/kustomize",
-      "application": {"namespace": "argocd", "name": "validation-001", "uid": "application-uid"},
+      "application": {
+        "namespace": "argocd",
+        "name": "validation-001",
+        "uid": "application-uid"
+      },
       "observedSourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "observedImageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "syncStatus": "Synced",
       "healthStatus": "Healthy",
       "endpointChecks": [
-        {"name": "healthz", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-        {"name": "add", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-        {"name": "subtract", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-        {"name": "multiply", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-        {"name": "divide", "outcome": "passed", "httpStatus": 200, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-        {"name": "division-by-zero", "outcome": "passed", "httpStatus": 422, "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+        {
+          "name": "healthz",
+          "outcome": "passed",
+          "httpStatus": 200,
+          "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "name": "add",
+          "outcome": "passed",
+          "httpStatus": 200,
+          "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "name": "subtract",
+          "outcome": "passed",
+          "httpStatus": 200,
+          "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "name": "multiply",
+          "outcome": "passed",
+          "httpStatus": 200,
+          "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "name": "divide",
+          "outcome": "passed",
+          "httpStatus": 200,
+          "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "name": "division-by-zero",
+          "outcome": "passed",
+          "httpStatus": 422,
+          "responseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
       ],
       "reviewInstructions": {
         "namespace": "workflow",
@@ -171,14 +293,48 @@
       "candidateTree": "cccccccccccccccccccccccccccccccccccccccc",
       "mergeCommit": "dddddddddddddddddddddddddddddddddddddddd",
       "mergeTree": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-      "approvalRequest": {"namespace": "workflow", "name": "approval-001", "uid": "approval-request-uid"},
-      "approvalDecision": {"namespace": "workflow", "name": "decision-001", "uid": "approval-decision-uid"},
-      "validationRun": {"namespace": "workflow", "name": "validation-001", "uid": "validation-run-uid"},
+      "approvalRequest": {
+        "namespace": "workflow",
+        "name": "approval-001",
+        "uid": "approval-request-uid"
+      },
+      "approvalDecision": {
+        "namespace": "workflow",
+        "name": "decision-001",
+        "uid": "approval-decision-uid"
+      },
+      "validationRun": {
+        "namespace": "workflow",
+        "name": "validation-001",
+        "uid": "validation-run-uid"
+      },
       "remoteProof": {
         "ref": "refs/heads/main",
         "observedCommit": "dddddddddddddddddddddddddddddddddddddddd",
         "verifiedAt": "2026-07-24T12:05:00Z"
       }
+    }
+  },
+  {
+    "contract": "merge-request/v1",
+    "document": {
+      "candidateRevisionDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "candidateRemoteProofDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "validationResultDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "repositoryURL": "https://github.com/example/calculator.git",
+      "provider": "github",
+      "number": 42,
+      "url": "https://github.com/example/calculator/pull/42",
+      "sourceBranch": "sovereign/workflow-uid",
+      "targetBranch": "main",
+      "candidateCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "open",
+      "utilityOperation": {
+        "namespace": "workflow",
+        "name": "request-001",
+        "uid": "request-uid"
+      },
+      "idempotencyKey": "workflow/workflow-uid/request"
     }
   }
 ]
