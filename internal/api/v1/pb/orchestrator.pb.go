@@ -1242,9 +1242,11 @@ func (x *GetContextSnapshotResponse) GetSnapshot() []byte {
 }
 
 type GetWorkflowLineageRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkflowId    string                 `protobuf:"bytes,1,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
-	EventId       string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowId string                 `protobuf:"bytes,1,opt,name=workflow_id,json=workflowId,proto3" json:"workflow_id,omitempty"`
+	EventId    string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	// Empty or stories preserves the audit-only projection; workflow adds live navigation.
+	View          string `protobuf:"bytes,3,opt,name=view,proto3" json:"view,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1289,6 +1291,13 @@ func (x *GetWorkflowLineageRequest) GetWorkflowId() string {
 func (x *GetWorkflowLineageRequest) GetEventId() string {
 	if x != nil {
 		return x.EventId
+	}
+	return ""
+}
+
+func (x *GetWorkflowLineageRequest) GetView() string {
+	if x != nil {
+		return x.View
 	}
 	return ""
 }
@@ -1442,11 +1451,12 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"r\n" +
 	"\x1aGetContextSnapshotResponse\x128\n" +
 	"\areceipt\x18\x01 \x01(\v2\x1e.api.v1.ContextSnapshotReceiptR\areceipt\x12\x1a\n" +
-	"\bsnapshot\x18\x02 \x01(\fR\bsnapshot\"W\n" +
+	"\bsnapshot\x18\x02 \x01(\fR\bsnapshot\"k\n" +
 	"\x19GetWorkflowLineageRequest\x12\x1f\n" +
 	"\vworkflow_id\x18\x01 \x01(\tR\n" +
 	"workflowId\x12\x19\n" +
-	"\bevent_id\x18\x02 \x01(\tR\aeventId\"E\n" +
+	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\x12\n" +
+	"\x04view\x18\x03 \x01(\tR\x04view\"E\n" +
 	"\x1aGetWorkflowLineageResponse\x12'\n" +
 	"\x0fprojection_json\x18\x01 \x01(\tR\x0eprojectionJson2\x8f\x06\n" +
 	"\x13OrchestratorService\x12L\n" +

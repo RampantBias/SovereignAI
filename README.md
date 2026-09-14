@@ -30,13 +30,13 @@ The September MVP is only aimed to experiment with the last hypothesis, while re
 
 ## What Works
 - Ability to create projects
-- Ability to create workflows with change requests from YAML definitions for *the Calculator project only*
+- Ability to create workflows with change requests from YAML definitions for *mostly limited to Golang projects at this time*
 - Workflow can transition between states for the defined contracts
 - Failure recovery at the step or workflow level (workflow level has limitations, see retry.md)
 - GPU Scheduling of inference workloads
-- Rudimentary observability, most of the focus being on lineage
+- Rudimentary observability, most of the focus being on lineage (remainder either not integrated here or not yet carried over)
 
-Workflow completion is still inconsistent. The biggest failure point is an agent being unable to effectively complete its task. This area is still a work in progress. 
+Workflow completion is fairly consistent, but can still encounter occasional failures under the advertised model.
 
 ## Intended MVP
 
@@ -102,6 +102,8 @@ would only work on the Calculator application and applications that are architec
 The custom harness is rudimentary and experimental, showing weeks of continual 'bandaids' on the design. It can fail often.
 
 The architecture documents describe the intended direction. Existing code should not be assumed to implement every documented guarantee.
+
+Much of the documentation is incomplete and disjointed. It's something that needs to catch up with where the architecture & operation actually is.
 
 ## Future Effort
 

@@ -132,12 +132,3 @@ The architecture should eventually be validated with repeatable fault injection:
 - disconnect human sessions.
 
 Tests should assert final state, absence of duplicate side effects, and required audit events—not only process survival.
-
-## Open failure decisions
-
-- **AUTHOR NOTE:** Select the exact September failure scenario and success criteria.
-- **AUTHOR NOTE:** Define default retry counts, backoff, timeout, and intervention thresholds.
-- **AUTHOR NOTE:** Define which audit or policy failures cause the platform to fail closed.
-- **AUTHOR NOTE:** Define workspace backup and corruption recovery expectations.
-- **AUTHOR NOTE:** Decide whether failed namespaces are retained for investigation or cleaned after a TTL.
-

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Workflow lineage</title>
+    <style>{{template "workflow.css"}}</style>
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="muted">Decision lineage · Workflow evidence</div>
+      <h1 id="title"></h1>
+      <div id="stamp" class="muted"></div>
+    </header>
+    <div class="route-bar">
+      <div id="route" class="route"></div>
+      <label class="reveal-control">
+        <input id="reveal" type="checkbox">
+        Show decision relationships
+      </label>
+    </div>
+
+    <!-- Each pane scrolls independently on presentation-sized screens. -->
+    <main>
+      <nav id="history-pane" class="navigation-pane" aria-label="Step attempts in execution order">
+        <div class="pane-heading">
+          <h2>Execution history</h2>
+          <div class="muted">Select a step attempt</div>
+        </div>
+        <div id="history"></div>
+        <div id="unstarted"></div>
+      </nav>
+
+      <nav id="checkpoint-pane" class="navigation-pane" aria-label="Recorded events">
+        <div id="event-heading" class="pane-heading" hidden>
+          <h2>Recorded events</h2>
+          <div id="checkpoint-context" class="muted"></div>
+        </div>
+        <div id="checkpoints"></div>
+      </nav>
+
+      <article id="detail" aria-live="polite" aria-label="Selected attempt evidence"></article>
+    </main>
+
+    <footer>
+      Live status and recorded evidence are separate. Ordering alone does not establish causation.
+      Regenerate and reload to refresh this snapshot. Context contents are retrieved separately.
+    </footer>
+    <script>
+      {{template "timestamps.js"}}
+      {{template "explanations.js"}}
+      {{template "workflow.js" .}}
+    </script>
+  </body>
+</html>

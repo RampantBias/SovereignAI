@@ -193,11 +193,3 @@ SovereignAI keeps four information sources distinct: Kubernetes current state, a
 | `buildHumanPod` | `HumanSession` resource and reconciler |
 | Git-related workflow ideas | Deterministic capability/utility jobs |
 | Prometheus scaffolding | Operational telemetry, separate from audit records |
-
-## Open architectural decisions
-
-- **AUTHOR NOTE:** Select the minimum CRD set for September versus types deferred to post-MVP.
-- **AUTHOR NOTE:** Decide whether workflow definitions are admitted directly as CRDs or submitted through an API that validates and materializes them.
-- **AUTHOR NOTE:** Define the persistence layer for artifacts and audit events after the PVC-based MVP.
-- **AUTHOR NOTE:** Define how project policy is authored and evaluated; Kubernetes admission policy may cover infrastructure constraints but not all workflow transitions.
-- **AUTHOR NOTE:** Define lifecycle and retention after completion: namespace TTL, artifact retention, audit retention, and validation teardown.

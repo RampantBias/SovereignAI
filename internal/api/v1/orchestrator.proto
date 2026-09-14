@@ -143,5 +143,7 @@ message GetContextSnapshotResponse {
 message GetWorkflowLineageRequest {
   string workflow_id = 1;
   string event_id = 2;
+  // Empty or stories preserves the audit-only projection; workflow adds live navigation.
+  string view = 3;
 }
 message GetWorkflowLineageResponse { string projection_json = 1; }

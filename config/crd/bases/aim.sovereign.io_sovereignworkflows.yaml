@@ -629,6 +629,50 @@ spec:
                     type: object
                   restartStep:
                     type: string
+                  retryObservation:
+                    description: |-
+                      WorkflowRetryObservation freezes when the controller verified the persisted
+                      replacement, separately from the earlier immutable recovery decision.
+                    properties:
+                      attempt:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      decisionEvent:
+                        type: string
+                      execution:
+                        properties:
+                          name:
+                            type: string
+                          uid:
+                            description: |-
+                              UID is a type that holds unique ID values, including UUIDs.  Because we
+                              don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                              intent and helps make sure that UIDs and names do not get conflated.
+                            type: string
+                        required:
+                        - name
+                        - uid
+                        type: object
+                      observedAt:
+                        format: date-time
+                        type: string
+                    required:
+                    - attempt
+                    - decisionEvent
+                    - execution
+                    - observedAt
+                    type: object
                   testReport:
                     description: |-
                       SelectedArtifact records the exact accepted artifact identity used for
