@@ -6,7 +6,7 @@ The project operates below agent frameworks such as LangGraph and LangChain. It 
 
 SovereignAI is designed first for sovereign, air-gapped, and regulated environments. The initial implementation runs local models on Kubernetes-managed GPU infrastructure.
 
-**Project status:** pre-alpha architectural prototype. The repository contains partially implemented controllers, APIs, CLI commands, GPU accounting, and agent-runtime scaffolding. Currently, the demo MVP can be executed, and will complete about 70% of the way, but there's still a chance for the agentic operations to repeatedly fail when using small models. The primary failures in the agentic operations are mostly with the harness methodology and MCP issues. 
+**Project status:** pre-alpha architectural prototype. The repository contains partially implemented controllers, APIs, CLI commands, GPU accounting, and agent-runtime scaffolding. Currently, the demo MVP can be executed, and will complete, but there's still a chance for the agentic operations to repeatedly fail and exhaust retries. The primary failures in the agentic operations are mostly with the harness methodology and MCP issues. 
 
 ## Why this exists
 
